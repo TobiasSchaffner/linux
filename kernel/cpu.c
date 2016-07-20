@@ -1277,9 +1277,13 @@ static int take_cpu_down(void *_param)
 	struct cpuhp_cpu_state *st = this_cpu_ptr(&cpuhp_state);
 	enum cpuhp_state target = max((int)st->target, CPUHP_AP_OFFLINE);
 	int err, cpu = smp_processor_id();
+	unsigned long flags;
 
 	/* Ensure this CPU doesn't handle any more interrupts. */
+	flags = hard_cond_local_irq_save();
+	hard_cond_local_irq_enable();
 	err = __cpu_disable();
+	hard_cond_local_irq_restore(flags);
 	if (err < 0)
 		return err;
 

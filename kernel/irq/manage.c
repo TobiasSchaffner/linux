@@ -61,7 +61,7 @@ static void __synchronize_hardirq(struct irq_desc *desc, bool sync_chip)
 			cpu_relax();
 
 		/* Ok, that indicated we're done: double-check carefully. */
-		guard(raw_spinlock_irqsave)(&desc->lock);
+		guard(hybrid_spinlock_irqsave)(&desc->lock);
 		inprogress = irqd_irq_inprogress(&desc->irq_data);
 
 		/*
@@ -467,7 +467,7 @@ static int __irq_set_affinity(unsigned int irq, const struct cpumask *mask,
 	if (!desc)
 		return -EINVAL;
 
-	guard(raw_spinlock_irqsave)(&desc->lock);
+	guard(hybrid_spinlock_irqsave)(&desc->lock);
 	return irq_set_affinity_locked(irq_desc_get_irq_data(desc), mask, force);
 }
 
@@ -525,7 +525,7 @@ static void irq_affinity_notify(struct work_struct *work)
 	if (!desc || !alloc_cpumask_var(&cpumask, GFP_KERNEL))
 		goto out;
 
-	scoped_guard(raw_spinlock_irqsave, &desc->lock) {
+	scoped_guard(hybrid_spinlock_irqsave, &desc->lock) {
 		if (irq_move_pending(&desc->irq_data))
 			irq_get_pending(cpumask, desc);
 		else
@@ -568,7 +568,7 @@ int irq_set_affinity_notifier(unsigned int irq, struct irq_affinity_notify *noti
 		INIT_WORK(&notify->work, irq_affinity_notify);
 	}
 
-	scoped_guard(raw_spinlock_irq, &desc->lock) {
+	scoped_guard(hybrid_spinlock_irq, &desc->lock) {
 		old_notify = desc->affinity_notify;
 		desc->affinity_notify = notify;
 	}
@@ -594,14 +594,14 @@ int irq_setup_affinity(struct irq_desc *desc)
 	struct cpumask *set = irq_default_affinity;
 	int node = irq_desc_get_node(desc);
 
-	static DEFINE_RAW_SPINLOCK(mask_lock);
+	static DEFINE_HYBRID_SPINLOCK(mask_lock);
 	static struct cpumask mask;
 
 	/* Excludes PER_CPU and NO_BALANCE interrupts */
 	if (!__irq_can_set_affinity(desc))
 		return 0;
 
-	guard(raw_spinlock)(&mask_lock);
+	guard(hybrid_spinlock)(&mask_lock);
 	/*
 	 * Preserve the managed affinity setting and a userspace affinity
 	 * setup, but make sure that one of the targets is online.
@@ -904,6 +904,52 @@ int irq_set_irq_wake(unsigned int irq, unsigned int on)
 }
 EXPORT_SYMBOL(irq_set_irq_wake);
 
+#ifdef CONFIG_IRQ_PIPELINE
+
+/**
+ *	irq_switch_oob - Control out-of-band setting for a registered IRQ descriptor
+ *	@irq:	interrupt to control
+ *	@on:	enable/disable pipelining
+ *
+ *	Enable/disable out-of-band handling for an IRQ. At least one
+ *	action must have been previously registered for such
+ *	interrupt. Enabling out-of-band handling is disallowed for
+ *	IRQs with threaded action(s).
+ *
+ *      The previously registered action(s) need(s) not bearing the
+ *      IRQF_OOB flag for the IRQ to be switched to out-of-band
+ *      handling. This call enables switching pre-installed IRQs from
+ *      in-band to out-of-band handling.
+ *
+ *      NOTE: This routine affects all action handlers sharing the
+ *      IRQ.
+ */
+int irq_switch_oob(unsigned int irq, bool on)
+{
+	scoped_irqdesc_get_and_lock(irq, 0) {
+		if (!scoped_irqdesc->action) {
+			return -EINVAL;
+		} else {
+			if (on) {
+				struct irqaction *action;
+				for_each_action_of_desc(scoped_irqdesc, action) {
+					if (action->thread_fn) {
+						return -EBUSY;
+					}
+				}
+				irq_settings_set_oob(scoped_irqdesc);
+			} else {
+				irq_settings_clr_oob(scoped_irqdesc);
+			}
+		}
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(irq_switch_oob);
+
+#endif /* CONFIG_IRQ_PIPELINE */
+
 /*
  * Internal function that tells the architecture code whether a
  * particular irq has been exclusively allocated or is available
@@ -915,7 +961,9 @@ bool can_request_irq(unsigned int irq, unsigned long irqflags)
 		struct irq_desc *desc = scoped_irqdesc;
 
 		if (irq_settings_can_request(desc)) {
-			if (!desc->action || irqflags & desc->action->flags & IRQF_SHARED)
+			if (!desc->action ||
+				((irqflags & desc->action->flags & IRQF_SHARED) &&
+				!((irqflags ^ desc->action->flags) & IRQF_OOB)))
 				return true;
 		}
 	}
@@ -1037,7 +1085,7 @@ static void irq_thread_check_affinity(struct irq_desc *desc, struct irqaction *a
 		return;
 	}
 
-	scoped_guard(raw_spinlock_irq, &desc->lock) {
+	scoped_guard(hybrid_spinlock_irq, &desc->lock) {
 		const struct cpumask *m;
 
 		m = irq_data_get_effective_affinity_mask(&desc->irq_data);
@@ -1209,7 +1257,7 @@ static void irq_wake_secondary(struct irq_desc *desc, struct irqaction *action)
 	if (WARN_ON_ONCE(!secondary))
 		return;
 
-	guard(raw_spinlock_irq)(&desc->lock);
+	guard(hybrid_spinlock_irq)(&desc->lock);
 	__irq_wake_thread(desc, secondary);
 }
 
@@ -1298,7 +1346,7 @@ void irq_wake_thread(unsigned int irq, void *dev_id)
 	if (!desc || WARN_ON(irq_settings_is_per_cpu_devid(desc)))
 		return;
 
-	guard(raw_spinlock_irqsave)(&desc->lock);
+	guard(hybrid_spinlock_irqsave)(&desc->lock);
 	for_each_action_of_desc(desc, action) {
 		if (action->dev_id == dev_id) {
 			if (action->thread)
@@ -1313,7 +1361,7 @@ static int irq_setup_forced_threading(struct irqaction *new)
 {
 	if (!force_irqthreads())
 		return 0;
-	if (new->flags & (IRQF_NO_THREAD | IRQF_PERCPU | IRQF_ONESHOT))
+	if (new->flags & (IRQF_NO_THREAD | IRQF_PERCPU | IRQF_ONESHOT | IRQF_OOB))
 		return 0;
 
 	/*
@@ -1487,6 +1535,21 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 
 	new->irq = irq;
 
+	ret = -EINVAL;
+	/*
+	 *  Out-of-band interrupts can be shared but not threaded.  We
+	 *  silently ignore the OOB setting if interrupt pipelining is
+	 *  disabled.
+	 */
+	if (!irqs_pipelined())
+		new->flags &= ~IRQF_OOB;
+	else if (new->flags & IRQF_OOB) {
+		if (new->thread_fn)
+			goto out_mput;
+		new->flags |= IRQF_NO_THREAD;
+		new->flags &= ~IRQF_ONESHOT;
+	}
+
 	/*
 	 * If the trigger type is not specified by the caller,
 	 * then use the default for this interrupt.
@@ -1507,10 +1570,8 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 	 */
 	nested = irq_settings_is_nested_thread(desc);
 	if (nested) {
-		if (!new->thread_fn) {
-			ret = -EINVAL;
+		if (!new->thread_fn)
 			goto out_mput;
-		}
 		/*
 		 * Replace the primary handler which was provided from
 		 * the driver for non nested interrupt handling by the
@@ -1594,7 +1655,7 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 		 * the same type (level, edge, polarity). So both flag
 		 * fields must have IRQF_SHARED set and the bits which
 		 * set the trigger type must match. Also all must
-		 * agree on ONESHOT.
+		 * agree on ONESHOT and OOB.
 		 * Interrupt lines used for NMIs cannot be shared.
 		 */
 		unsigned int oldtype;
@@ -1625,7 +1686,8 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 		}
 
 		if (!((old->flags & new->flags) & IRQF_SHARED) ||
-		    (oldtype != (new->flags & IRQF_TRIGGER_MASK)))
+		    (oldtype != (new->flags & IRQF_TRIGGER_MASK)) ||
+		    (old->flags ^ new->flags) & IRQF_OOB)
 			goto mismatch;
 
 		if ((old->flags & IRQF_ONESHOT) &&
@@ -1753,6 +1815,9 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 
 		if (new->flags & IRQF_ONESHOT)
 			desc->istate |= IRQS_ONESHOT;
+
+		if (new->flags & IRQF_OOB)
+			irq_settings_set_oob(desc);
 
 		/* Exclude IRQ from balancing if requested */
 		if (new->flags & IRQF_NOBALANCING) {
@@ -1898,6 +1963,8 @@ static struct irqaction *__free_irq(struct irq_desc *desc, void *dev_id)
 		irq_settings_clr_disable_unlazy(desc);
 		/* Only shutdown. Deactivate after synchronize_hardirq() */
 		irq_shutdown(desc);
+		/* Turn off OOB handling (after shutdown). */
+		irq_settings_clr_oob(desc);
 	}
 
 #ifdef CONFIG_SMP
@@ -1934,14 +2001,15 @@ static struct irqaction *__free_irq(struct irq_desc *desc, void *dev_id)
 
 #ifdef CONFIG_DEBUG_SHIRQ
 	/*
-	 * It's a shared IRQ -- the driver ought to be prepared for an IRQ
-	 * event to happen even now it's being freed, so let's make sure that
-	 * is so by doing an extra call to the handler ....
+	 * It's a shared IRQ (with in-band handler) -- the driver
+	 * ought to be prepared for an IRQ event to happen even now
+	 * it's being freed, so let's make sure that is so by doing an
+	 * extra call to the handler ....
 	 *
 	 * ( We do this after actually deregistering it, to make sure that a
 	 *   'real' IRQ doesn't run in parallel with our fake. )
 	 */
-	if (action->flags & IRQF_SHARED) {
+	if ((action->flags & (IRQF_SHARED|IRQF_OOB)) == IRQF_SHARED) {
 		local_irq_save(flags);
 		action->handler(irq, dev_id);
 		local_irq_restore(flags);
@@ -1971,7 +2039,7 @@ static struct irqaction *__free_irq(struct irq_desc *desc, void *dev_id)
 		 * There is no interrupt on the fly anymore. Deactivate it
 		 * completely.
 		 */
-		scoped_guard(raw_spinlock_irqsave, &desc->lock)
+		scoped_guard(hybrid_spinlock_irqsave, &desc->lock)
 			irq_domain_deactivate_irq(&desc->irq_data);
 
 		irq_release_resources(desc);
@@ -2067,7 +2135,7 @@ const void *free_nmi(unsigned int irq, void *dev_id)
 	if (WARN_ON(desc->depth == 0))
 		disable_nmi_nosync(irq);
 
-	guard(raw_spinlock_irqsave)(&desc->lock);
+	guard(hybrid_spinlock_irqsave)(&desc->lock);
 	irq_nmi_teardown(desc);
 	return __cleanup_nmi(irq, desc);
 }
@@ -2314,7 +2382,7 @@ int request_nmi(unsigned int irq, irq_handler_t handler,
 	if (retval)
 		goto err_irq_setup;
 
-	scoped_guard(raw_spinlock_irqsave, &desc->lock) {
+	scoped_guard(hybrid_spinlock_irqsave, &desc->lock) {
 		/* Setup NMI state */
 		desc->istate |= IRQS_NMI;
 		retval = irq_nmi_setup(desc);
@@ -2402,7 +2470,7 @@ static struct irqaction *__free_percpu_irq(unsigned int irq, void __percpu *dev_
 	if (!desc)
 		return NULL;
 
-	scoped_guard(raw_spinlock_irqsave, &desc->lock) {
+	scoped_guard(hybrid_spinlock_irqsave, &desc->lock) {
 		action_ptr = &desc->action;
 		for (;;) {
 			action = *action_ptr;
@@ -2523,8 +2591,10 @@ struct irqaction *create_percpu_irqaction(irq_handler_t handler, unsigned long f
  * the handler gets called with the interrupted CPU's instance of
  * that variable.
  */
-int request_percpu_irq_affinity(unsigned int irq, irq_handler_t handler, const char *devname,
-				const cpumask_t *affinity, void __percpu *dev_id)
+static int __request_percpu_irq_affinity(unsigned int irq, irq_handler_t handler,
+					unsigned long flags, const char *devname,
+					const cpumask_t *affinity,
+					void __percpu *dev_id)
 {
 	struct irqaction *action;
 	struct irq_desc *desc;
@@ -2538,7 +2608,7 @@ int request_percpu_irq_affinity(unsigned int irq, irq_handler_t handler, const c
 	    !irq_settings_is_per_cpu_devid(desc))
 		return -EINVAL;
 
-	action = create_percpu_irqaction(handler, 0, devname, affinity, dev_id);
+	action = create_percpu_irqaction(handler, flags, devname, affinity, dev_id);
 	if (!action)
 		return -ENOMEM;
 
@@ -2557,7 +2627,25 @@ int request_percpu_irq_affinity(unsigned int irq, irq_handler_t handler, const c
 
 	return retval;
 }
+
+int request_percpu_irq_affinity(unsigned int irq, irq_handler_t handler, const char *devname,
+				const cpumask_t *affinity, void __percpu *dev_id)
+{
+	return __request_percpu_irq_affinity(irq, handler, 0, devname, affinity, dev_id);
+}
 EXPORT_SYMBOL_GPL(request_percpu_irq_affinity);
+
+int request_percpu_irq_affinity_flags(unsigned int irq, irq_handler_t handler,
+				      unsigned long flags, const char *devname,
+				      const cpumask_t *affinity,
+				      void __percpu *dev_id)
+{
+	if (flags & ~(IRQF_TIMER|IRQF_OOB))
+		return -EINVAL;
+
+	return __request_percpu_irq_affinity(irq, handler, flags, devname, affinity, dev_id);
+}
+EXPORT_SYMBOL_GPL(request_percpu_irq_affinity_flags);
 
 /**
  * request_percpu_nmi - allocate a percpu interrupt line for NMI delivery
@@ -2617,7 +2705,7 @@ int request_percpu_nmi(unsigned int irq, irq_handler_t handler, const char *name
 	if (retval)
 		goto err_irq_setup;
 
-	scoped_guard(raw_spinlock_irqsave, &desc->lock)
+	scoped_guard(hybrid_spinlock_irqsave, &desc->lock)
 		desc->istate |= IRQS_NMI;
 	return 0;
 

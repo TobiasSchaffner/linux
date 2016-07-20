@@ -71,7 +71,7 @@ static unsigned int lan966x_oic_irq_startup(struct irq_data *data)
 	struct lan966x_oic_chip_regs *chip_regs = gc->private;
 	u32 map;
 
-	scoped_guard (raw_spinlock, &gc->lock) {
+	scoped_guard (hard_spinlock, &gc->lock) {
 		/* Map the source interrupt to the destination */
 		map = irq_reg_readl(gc, chip_regs->reg_off_map);
 		map |= data->mask;
@@ -93,7 +93,7 @@ static void lan966x_oic_irq_shutdown(struct irq_data *data)
 
 	ct->chip.irq_mask(data);
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 
 	/* Unmap the interrupt */
 	map = irq_reg_readl(gc, chip_regs->reg_off_map);

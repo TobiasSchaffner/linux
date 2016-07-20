@@ -117,7 +117,7 @@ static int liointc_set_type(struct irq_data *data, unsigned int type)
 	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(data);
 	u32 mask = data->mask;
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 	switch (type) {
 	case IRQ_TYPE_LEVEL_HIGH:
 		liointc_set_bit(gc, LIOINTC_REG_INTC_EDGE, mask, false);
@@ -156,7 +156,7 @@ static void liointc_resume(struct irq_chip_generic *gc)
 	struct liointc_priv *priv = gc->private;
 	int i;
 
-	guard(raw_spinlock_irqsave)(&gc->lock);
+	guard(hard_spinlock_irqsave)(&gc->lock);
 	/* Disable all at first */
 	writel(0xffffffff, gc->reg_base + LIOINTC_REG_INTC_DISABLE);
 	/* Restore map cache */

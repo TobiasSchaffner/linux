@@ -150,6 +150,21 @@ config IRQ_KUNIT_TEST
 
 	  If unsure, say N.
 
+# Interrupt pipeline
+config HAVE_IRQ_PIPELINE
+	bool
+
+config IRQ_PIPELINE
+	bool "Interrupt pipeline"
+	depends on HAVE_IRQ_PIPELINE
+	select IRQ_DOMAIN
+	select IRQ_DOMAIN_NOMAP
+	select IRQ_WORK
+	default n
+	help
+	  Activate this option if you want the interrupt pipeline to be
+	  compiled in.
+
 endmenu
 
 config GENERIC_IRQ_MULTI_HANDLER

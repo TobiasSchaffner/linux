@@ -169,7 +169,7 @@ static int stm32_irq_set_type(struct irq_data *d, unsigned int type)
 	u32 rtsr, ftsr;
 	int err;
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 
 	rtsr = irq_reg_readl(gc, stm32_bank->rtsr_ofst);
 	ftsr = irq_reg_readl(gc, stm32_bank->ftsr_ofst);
@@ -213,7 +213,7 @@ static void stm32_irq_suspend(struct irq_chip_generic *gc)
 {
 	struct stm32_exti_chip_data *chip_data = gc->private;
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 	stm32_chip_suspend(chip_data, gc->wake_active);
 }
 
@@ -221,7 +221,7 @@ static void stm32_irq_resume(struct irq_chip_generic *gc)
 {
 	struct stm32_exti_chip_data *chip_data = gc->private;
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 	stm32_chip_resume(chip_data, gc->mask_cache);
 }
 
@@ -259,7 +259,7 @@ static void stm32_irq_ack(struct irq_data *d)
 	struct stm32_exti_chip_data *chip_data = gc->private;
 	const struct stm32_exti_bank *stm32_bank = chip_data->reg_bank;
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 	irq_reg_writel(gc, d->mask, stm32_bank->rpr_ofst);
 }
 

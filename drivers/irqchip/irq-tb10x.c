@@ -43,7 +43,7 @@ static int tb10x_irq_set_type(struct irq_data *data, unsigned int flow_type)
 	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(data);
 	uint32_t mod, pol, im = data->mask;
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 
 	mod = ab_irqctl_readreg(gc, AB_IRQCTL_SRC_MODE) | im;
 	pol = ab_irqctl_readreg(gc, AB_IRQCTL_SRC_POLARITY) | im;
