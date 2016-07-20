@@ -326,6 +326,7 @@ static long change_pte_range(struct mmu_gather *tlb,
 	bool is_private_single_threaded;
 	bool prot_numa = cp_flags & MM_CP_PROT_NUMA;
 	bool uffd_wp = cp_flags & MM_CP_UFFD_WP;
+	unsigned long irq_flags;
 	int nr_ptes;
 
 	tlb_change_page_size(tlb, PAGE_SIZE);
@@ -371,6 +372,7 @@ static long change_pte_range(struct mmu_gather *tlb,
 
 			nr_ptes = mprotect_folio_pte_batch(folio, pte, oldpte, max_nr_ptes, flags);
 
+			irq_flags = hard_local_irq_save();
 			/*
 			 * Optimize for the small-folio common case by
 			 * special-casing it here. Compiler constant propagation
@@ -384,6 +386,8 @@ static long change_pte_range(struct mmu_gather *tlb,
 					nr_ptes, end, newprot, folio, page,
 					cp_flags);
 			}
+
+			hard_local_irq_restore(irq_flags);
 
 			pages += nr_ptes;
 		} else if (pte_none(oldpte)) {

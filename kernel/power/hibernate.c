@@ -340,6 +340,7 @@ static int create_image(int platform_mode)
 		goto Enable_cpus;
 
 	local_irq_disable();
+	hard_cond_local_irq_disable();
 
 	system_state = SYSTEM_SUSPEND;
 
@@ -373,6 +374,7 @@ static int create_image(int platform_mode)
 	syscore_resume();
 
  Enable_irqs:
+	hard_cond_local_irq_enable();
 	system_state = SYSTEM_RUNNING;
 	local_irq_enable();
 
@@ -535,6 +537,7 @@ static int resume_target_kernel(bool platform_mode)
 
 	local_irq_disable();
 	system_state = SYSTEM_SUSPEND;
+	hard_cond_local_irq_disable();
 
 	error = syscore_suspend();
 	if (error)
@@ -568,6 +571,7 @@ static int resume_target_kernel(bool platform_mode)
 	syscore_resume();
 
  Enable_irqs:
+	hard_cond_local_irq_enable();
 	system_state = SYSTEM_RUNNING;
 	local_irq_enable();
 
@@ -654,6 +658,7 @@ int hibernation_platform_enter(void)
 
 	local_irq_disable();
 	system_state = SYSTEM_SUSPEND;
+	hard_cond_local_irq_disable();
 
 	error = syscore_suspend();
 	if (error)
@@ -671,6 +676,7 @@ int hibernation_platform_enter(void)
  Power_up:
 	syscore_resume();
  Enable_irqs:
+	hard_cond_local_irq_enable();
 	system_state = SYSTEM_RUNNING;
 	local_irq_enable();
 

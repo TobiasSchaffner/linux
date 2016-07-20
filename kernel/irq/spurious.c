@@ -30,7 +30,7 @@ static bool try_one_irq(struct irq_desc *desc, bool force)
 	struct irqaction *action;
 	bool ret = false;
 
-	guard(raw_spinlock)(&desc->lock);
+	guard(hybrid_spinlock)(&desc->lock);
 
 	/*
 	 * PER_CPU, nested thread interrupts and interrupts explicitly
@@ -136,7 +136,7 @@ static inline int bad_action_ret(irqreturn_t action_ret)
 {
 	unsigned int r = action_ret;
 
-	if (likely(r <= (IRQ_HANDLED | IRQ_WAKE_THREAD)))
+	if (likely(r <= (IRQ_HANDLED | IRQ_WAKE_THREAD | (running_oob() ? IRQ_FORWARD : 0))))
 		return 0;
 	return 1;
 }
@@ -167,7 +167,7 @@ static void __report_bad_irq(struct irq_desc *desc, irqreturn_t action_ret)
 	 * with something else removing an action. It's ok to take
 	 * desc->lock here. See synchronize_irq().
 	 */
-	guard(raw_spinlock_irqsave)(&desc->lock);
+	guard(hybrid_spinlock_irqsave)(&desc->lock);
 	for_each_action_of_desc(desc, action) {
 		pr_err("[<%p>] %ps", action->handler, action->handler);
 		if (action->thread_fn)
