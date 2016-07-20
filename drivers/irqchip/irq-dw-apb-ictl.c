@@ -101,7 +101,7 @@ static void dw_apb_ictl_resume(struct irq_data *d)
 	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
 	struct irq_chip_type *ct = irq_data_get_chip_type(d);
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 	writel_relaxed(~0, gc->reg_base + ct->regs.enable);
 	writel_relaxed(*ct->mask_cache, gc->reg_base + ct->regs.mask);
 }

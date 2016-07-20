@@ -61,6 +61,24 @@
 #define __UNLOCK_IRQRESTORE(lock, flags, ...) \
   do { local_irq_restore(flags); __UNLOCK(lock, ##__VA_ARGS__); } while (0)
 
+#define __HARD_LOCK(lock) \
+  do { ___LOCK_##__VA_ARGS__(lock); } while (0)
+
+#define __HARD_LOCK_IRQ(lock) \
+  do { hard_local_irq_disable(); __HARD_LOCK(lock, ##__VA_ARGS__); } while (0)
+
+#define __HARD_LOCK_IRQSAVE(lock, flags) \
+  do { flags = hard_local_irq_save(); __HARD_LOCK(lock, ##__VA_ARGS__); } while (0)
+
+#define __HARD_UNLOCK(lock) \
+  do { ___UNLOCK_##__VA_ARGS__(lock); } while (0)
+
+#define __HARD_UNLOCK_IRQ(lock) \
+  do { hard_local_irq_enable(); __HARD_UNLOCK(lock, ##__VA_ARGS__); } while (0)
+
+#define __HARD_UNLOCK_IRQRESTORE(lock, flags) \
+  do { hard_local_irq_restore(flags); __HARD_UNLOCK(lock, ##__VA_ARGS__); } while (0)
+
 #define _raw_spin_lock(lock)			__LOCK(lock)
 #define _raw_spin_lock_nested(lock, subclass)	__LOCK(lock)
 #define _raw_read_lock(lock)			__LOCK(lock, shared)

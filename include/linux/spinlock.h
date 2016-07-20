@@ -102,21 +102,27 @@
 				   struct lock_class_key *key, short inner);
 
 # define raw_spin_lock_init(lock)					\
+	LOCK_ALTERNATIVES(lock,	spin_lock_init,				\
 do {									\
 	static struct lock_class_key __key;				\
 									\
-	__raw_spin_lock_init((lock), #lock, &__key, LD_WAIT_SPIN);	\
-} while (0)
+	__raw_spin_lock_init(__RAWLOCK(lock), #lock, &__key, LD_WAIT_SPIN); \
+} while (0))
 
 #else
 # define raw_spin_lock_init(lock)				\
-	do { *(lock) = __RAW_SPIN_LOCK_UNLOCKED(lock); } while (0)
+	LOCK_ALTERNATIVES(lock,	spin_lock_init,			\
+	do { *(__RAWLOCK(lock)) = __RAW_SPIN_LOCK_UNLOCKED(__RAWLOCK(lock)); } while (0))
 #endif
 
-#define raw_spin_is_locked(lock)	arch_spin_is_locked(&(lock)->raw_lock)
+#define raw_spin_is_locked(lock)		\
+	LOCK_ALTERNATIVES_RET(lock, spin_is_locked,	\
+	      arch_spin_is_locked(&(__RAWLOCK(lock))->raw_lock))
 
 #ifdef arch_spin_is_contended
-#define raw_spin_is_contended(lock)	arch_spin_is_contended(&(lock)->raw_lock)
+#define raw_spin_is_contended(lock)			\
+	LOCK_ALTERNATIVES_RET(lock, spin_is_contended,	\
+	      arch_spin_is_contended(&(__RAWLOCK(lock))->raw_lock))
 #else
 #define raw_spin_is_contended(lock)	(((void)(lock), 0))
 #endif /*arch_spin_is_contended*/
@@ -213,13 +219,18 @@ static inline void do_raw_spin_unlock(raw_spinlock_t *lock) __releases(lock)
  * various methods are defined as nops in the case they are not
  * required.
  */
-#define raw_spin_trylock(lock)	_raw_spin_trylock(lock)
+#define raw_spin_trylock(lock)		\
+	    LOCK_ALTERNATIVES_RET(lock,	\
+	    spin_trylock, _raw_spin_trylock(__RAWLOCK(lock)))
 
-#define raw_spin_lock(lock)	_raw_spin_lock(lock)
+#define raw_spin_lock(lock)	\
+	LOCK_ALTERNATIVES(lock, spin_lock, _raw_spin_lock(__RAWLOCK(lock)))
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
+
 # define raw_spin_lock_nested(lock, subclass) \
-	_raw_spin_lock_nested(lock, subclass)
+	LOCK_ALTERNATIVES(lock, spin_lock_nested, \
+		_raw_spin_lock_nested(__RAWLOCK(lock), subclass), subclass)
 
 # define raw_spin_lock_nest_lock(lock, nest_lock)			\
 	 do {								\
@@ -232,18 +243,20 @@ static inline void do_raw_spin_unlock(raw_spinlock_t *lock) __releases(lock)
  * warns about set-but-not-used variables when building with
  * CONFIG_DEBUG_LOCK_ALLOC=n and with W=1.
  */
-# define raw_spin_lock_nested(lock, subclass)		\
-	_raw_spin_lock(((void)(subclass), (lock)))
+# define raw_spin_lock_nested(lock, subclass)	\
+	LOCK_ALTERNATIVES(lock, spin_lock_nested, \
+		_raw_spin_lock(((void)(subclass), __RAWLOCK(lock))), subclass)
 # define raw_spin_lock_nest_lock(lock, nest_lock)	_raw_spin_lock(lock)
 #endif
 
 #if defined(CONFIG_SMP) || defined(CONFIG_DEBUG_SPINLOCK)
 
-#define raw_spin_lock_irqsave(lock, flags)			\
-	do {						\
-		typecheck(unsigned long, flags);	\
-		flags = _raw_spin_lock_irqsave(lock);	\
-	} while (0)
+#define raw_spin_lock_irqsave(lock, flags)				\
+	LOCK_ALTERNATIVES(lock, spin_lock_irqsave,			\
+	do {								\
+		typecheck(unsigned long, flags);			\
+		flags = _raw_spin_lock_irqsave(__RAWLOCK(lock));	\
+	} while (0), flags)
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 #define raw_spin_lock_irqsave_nested(lock, flags, subclass)		\
@@ -261,34 +274,46 @@ static inline void do_raw_spin_unlock(raw_spinlock_t *lock) __releases(lock)
 
 #else
 
-#define raw_spin_lock_irqsave(lock, flags)		\
-	do {						\
-		typecheck(unsigned long, flags);	\
-		_raw_spin_lock_irqsave(lock, flags);	\
-	} while (0)
+#define raw_spin_lock_irqsave(lock, flags)			\
+	LOCK_ALTERNATIVES(lock, spin_lock_irqsave,		\
+	do {							\
+		typecheck(unsigned long, flags);		\
+		_raw_spin_lock_irqsave(__RAWLOCK(lock), flags);	\
+	} while (0), flags)
 
 #define raw_spin_lock_irqsave_nested(lock, flags, subclass)	\
 	raw_spin_lock_irqsave(lock, flags)
 
 #endif
 
-#define raw_spin_lock_irq(lock)		_raw_spin_lock_irq(lock)
+#define raw_spin_lock_irq(lock)		       \
+	LOCK_ALTERNATIVES(lock, spin_lock_irq, \
+			  _raw_spin_lock_irq(__RAWLOCK(lock)))
 #define raw_spin_lock_bh(lock)		_raw_spin_lock_bh(lock)
-#define raw_spin_unlock(lock)		_raw_spin_unlock(lock)
-#define raw_spin_unlock_irq(lock)	_raw_spin_unlock_irq(lock)
+#define raw_spin_unlock(lock)		     \
+	LOCK_ALTERNATIVES(lock, spin_unlock, \
+			  _raw_spin_unlock(__RAWLOCK(lock)))
+#define raw_spin_unlock_irq(lock)	\
+	LOCK_ALTERNATIVES(lock, spin_unlock_irq, \
+			  _raw_spin_unlock_irq(__RAWLOCK(lock)))
 
-#define raw_spin_unlock_irqrestore(lock, flags)		\
-	do {							\
-		typecheck(unsigned long, flags);		\
-		_raw_spin_unlock_irqrestore(lock, flags);	\
-	} while (0)
+#define raw_spin_unlock_irqrestore(lock, flags)				\
+	LOCK_ALTERNATIVES(lock, spin_unlock_irqrestore,			\
+	do {								\
+		typecheck(unsigned long, flags);			\
+		_raw_spin_unlock_irqrestore(__RAWLOCK(lock), flags);	\
+	} while (0), flags)
 #define raw_spin_unlock_bh(lock)	_raw_spin_unlock_bh(lock)
 
 #define raw_spin_trylock_bh(lock)	_raw_spin_trylock_bh(lock)
 
-#define raw_spin_trylock_irq(lock)	_raw_spin_trylock_irq(lock)
+#define raw_spin_trylock_irq(lock)					\
+	LOCK_ALTERNATIVES_RET(lock,					\
+			spin_trylock_irq, _raw_spin_trylock_irq(lock))
 
-#define raw_spin_trylock_irqsave(lock, flags) _raw_spin_trylock_irqsave(lock, &(flags))
+#define raw_spin_trylock_irqsave(lock, flags)				\
+	LOCK_ALTERNATIVES_RET(lock, spin_trylock_irqsave,		\
+			_raw_spin_trylock_irqsave(lock, &(flags)), flags)
 
 #ifndef CONFIG_PREEMPT_RT
 /* Include rwlock functions for !RT */
@@ -304,8 +329,17 @@ static inline void do_raw_spin_unlock(raw_spinlock_t *lock) __releases(lock)
 # include <linux/spinlock_api_up.h>
 #endif
 
+/* Pull the lock types specific to the IRQ pipeline. */
+#ifdef CONFIG_IRQ_PIPELINE
+#include <linux/spinlock_pipeline.h>
+#endif
+
 /* Non PREEMPT_RT kernel, map to raw spinlocks: */
 #ifndef CONFIG_PREEMPT_RT
+
+#ifndef CONFIG_IRQ_PIPELINE
+static inline void check_spinlock_context(void) { }
+#endif
 
 /*
  * Map the spin_lock functions to the raw variants for PREEMPT_RT=n
@@ -313,6 +347,7 @@ static inline void do_raw_spin_unlock(raw_spinlock_t *lock) __releases(lock)
 
 static __always_inline raw_spinlock_t *spinlock_check(spinlock_t *lock)
 {
+	check_spinlock_context();
 	return &lock->rlock;
 }
 
@@ -583,6 +618,114 @@ DECLARE_LOCK_GUARD_1_ATTRS(raw_spinlock_irqsave_try, __acquires(_T), __releases(
 DEFINE_LOCK_GUARD_1(raw_spinlock_init, raw_spinlock_t, raw_spin_lock_init(_T->lock), /* */)
 DECLARE_LOCK_GUARD_1_ATTRS(raw_spinlock_init, __acquires(_T), __releases(*(raw_spinlock_t **)_T))
 #define class_raw_spinlock_init_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(raw_spinlock_init, _T)
+
+#ifdef CONFIG_IRQ_PIPELINE
+
+#define __force_raw(__lock)	((raw_spinlock_t *)(__lock))
+
+DEFINE_LOCK_GUARD_1(hard_spinlock, hard_spinlock_t,
+		    hard_spin_lock(__force_raw(_T->lock)),
+		    hard_spin_unlock(__force_raw(_T->lock)))
+DECLARE_LOCK_GUARD_1_ATTRS(hard_spinlock, __acquires(_T), __releases(*(hard_spinlock_t **)_T))
+#define class_hard_spinlock_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hard_spinlock, _T)
+
+DEFINE_LOCK_GUARD_1(hard_spinlock_irqsave, hard_spinlock_t,
+		    hard_spin_lock_irqsave(__force_raw(_T->lock), _T->flags),
+		    hard_spin_unlock_irqrestore(__force_raw(_T->lock), _T->flags),
+		    unsigned long flags)
+DECLARE_LOCK_GUARD_1_ATTRS(hard_spinlock_irqsave, __acquires(_T), __releases(*(hard_spinlock_t **)_T))
+#define class_hard_spinlock_irqsave_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hard_spinlock_irqsave, _T)
+
+DEFINE_LOCK_GUARD_1_COND(hard_spinlock_irqsave, _try,
+			 hard_spin_trylock_irqsave(__force_raw(_T->lock), _T->flags))
+DECLARE_LOCK_GUARD_1_ATTRS(hard_spinlock_irqsave_try, __acquires(_T), __releases(*(hard_spinlock_t **)_T))
+#define class_hard_spinlock_irqsave_try_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hard_spinlock_irqsave_try, _T)
+
+DEFINE_LOCK_GUARD_1(hard_spinlock_irq, hard_spinlock_t,
+		    hard_spin_lock_irq(__force_raw(_T->lock)),
+		    hard_spin_unlock_irq(__force_raw(_T->lock)))
+DECLARE_LOCK_GUARD_1_ATTRS(hard_spinlock_irq, __acquires(_T), __releases(*(hard_spinlock_t **)_T))
+#define class_hard_spinlock_irq_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hard_spinlock_irq, _T)
+
+////
+
+DEFINE_LOCK_GUARD_1(hybrid_spinlock, hybrid_spinlock_t,
+		    hybrid_spin_lock(__force_raw(_T->lock)),
+		    hybrid_spin_unlock(__force_raw(_T->lock)))
+DECLARE_LOCK_GUARD_1_ATTRS(hybrid_spinlock, __acquires(_T), __releases(*(hybrid_spinlock_t **)_T))
+#define class_hybrid_spinlock_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hybrid_spinlock, _T)
+
+DEFINE_LOCK_GUARD_1(hybrid_spinlock_irqsave, hybrid_spinlock_t,
+		    hybrid_spin_lock_irqsave(__force_raw(_T->lock), _T->flags),
+		    hybrid_spin_unlock_irqrestore(__force_raw(_T->lock), _T->flags),
+		    unsigned long flags)
+DECLARE_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irqsave, __acquires(_T), __releases(*(hybrid_spinlock_t **)_T))
+#define class_hybrid_spinlock_irqsave_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irqsave, _T)
+
+DEFINE_LOCK_GUARD_1_COND(hybrid_spinlock_irqsave, _try,
+			 hybrid_spin_trylock_irqsave(__force_raw(_T->lock), _T->flags))
+DECLARE_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irqsave_try, __acquires(_T), __releases(*(hybrid_spinlock_t **)_T))
+#define class_hybrid_spinlock_irqsave_try_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irqsave_try, _T)
+
+DEFINE_LOCK_GUARD_1(hybrid_spinlock_irq, hybrid_spinlock_t,
+		    hybrid_spin_lock_irq(__force_raw(_T->lock)),
+		    hybrid_spin_unlock_irq(__force_raw(_T->lock)))
+DECLARE_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irq, __acquires(_T), __releases(*(hybrid_spinlock_t **)_T))
+#define class_hybrid_spinlock_irq_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irq, _T)
+
+#undef __force_raw
+
+#else  /* !CONFIG_IRQ_PIPELINE */
+
+DEFINE_LOCK_GUARD_1(hard_spinlock, raw_spinlock_t,
+		    raw_spin_lock(_T->lock),
+		    raw_spin_unlock(_T->lock))
+DECLARE_LOCK_GUARD_1_ATTRS(hard_spinlock, __acquires(_T), __releases(*(raw_spinlock_t **)_T))
+#define class_hard_spinlock_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hard_spinlock, _T)
+
+DEFINE_LOCK_GUARD_1(hard_spinlock_irqsave, raw_spinlock_t,
+		    raw_spin_lock_irqsave(_T->lock, _T->flags),
+		    raw_spin_unlock_irqrestore(_T->lock, _T->flags),
+		    unsigned long flags)
+DECLARE_LOCK_GUARD_1_ATTRS(hard_spinlock_irqsave, __acquires(_T), __releases(*(raw_spinlock_t **)_T))
+#define class_hard_spinlock_irqsave_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hard_spinlock_irqsave, _T)
+
+DEFINE_LOCK_GUARD_1_COND(hard_spinlock_irqsave, _try,
+			 raw_spin_trylock_irqsave(_T->lock, _T->flags))
+DECLARE_LOCK_GUARD_1_ATTRS(hard_spinlock_irqsave_try, __acquires(_T), __releases(*(raw_spinlock_t **)_T))
+#define class_hard_spinlock_irqsave_try_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hard_spinlock_irqsave_try, _T)
+
+DEFINE_LOCK_GUARD_1(hard_spinlock_irq, raw_spinlock_t,
+		    raw_spin_lock_irq(_T->lock),
+		    raw_spin_unlock_irq(_T->lock))
+DECLARE_LOCK_GUARD_1_ATTRS(hard_spinlock_irq, __acquires(_T), __releases(*(raw_spinlock_t **)_T))
+#define class_hard_spinlock_irq_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hard_spinlock_irq, _T)
+
+DEFINE_LOCK_GUARD_1(hybrid_spinlock, raw_spinlock_t,
+		    raw_spin_lock(_T->lock),
+		    raw_spin_unlock(_T->lock))
+DECLARE_LOCK_GUARD_1_ATTRS(hybrid_spinlock, __acquires(_T), __releases(*(raw_spinlock_t **)_T))
+#define class_hybrid_spinlock_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hybrid_spinlock, _T)
+
+DEFINE_LOCK_GUARD_1(hybrid_spinlock_irqsave, raw_spinlock_t,
+		    raw_spin_lock_irqsave(_T->lock, _T->flags),
+		    raw_spin_unlock_irqrestore(_T->lock, _T->flags),
+		    unsigned long flags)
+DECLARE_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irqsave, __acquires(_T), __releases(*(raw_spinlock_t **)_T))
+#define class_hybrid_spinlock_irqsave_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irqsave, _T)
+
+DEFINE_LOCK_GUARD_1_COND(hybrid_spinlock_irqsave, _try,
+			 raw_spin_trylock_irqsave(_T->lock, _T->flags))
+DECLARE_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irqsave_try, __acquires(_T), __releases(*(raw_spinlock_t **)_T))
+#define class_hybrid_spinlock_irqsave_try_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irqsave_try, _T)
+
+DEFINE_LOCK_GUARD_1(hybrid_spinlock_irq, raw_spinlock_t,
+		    raw_spin_lock_irq(_T->lock),
+		    raw_spin_unlock_irq(_T->lock))
+DECLARE_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irq, __acquires(_T), __releases(*(raw_spinlock_t **)_T))
+#define class_hybrid_spinlock_irq_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(hybrid_spinlock_irq, _T)
+
+#endif  /* !CONFIG_IRQ_PIPELINE */
 
 DEFINE_LOCK_GUARD_1(spinlock, spinlock_t,
 		    spin_lock(_T->lock),
