@@ -769,9 +769,15 @@ inline void raise_softirq_irqoff(unsigned int nr)
 	 *
 	 * Otherwise we wake up ksoftirqd to make sure we
 	 * schedule the softirq soon.
+	 *
+	 * Dovetail: only set the softirq pending and trigger a
+	 * cpu-local work interrupt if running oob, the inband stage
+	 * will notice once execution resumes from the IRQ.
 	 */
-	if (!in_interrupt() && should_wake_ksoftirqd())
-		wakeup_softirqd();
+	if (running_oob())
+		irq_local_work_raise();
+	else if (!in_interrupt() && should_wake_ksoftirqd())
+			wakeup_softirqd();
 }
 
 void raise_softirq(unsigned int nr)

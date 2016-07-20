@@ -955,7 +955,7 @@ int pci_msix_write_tph_tag(struct pci_dev *pdev, unsigned int index, u16 tag)
 	if (!irq_desc)
 		return -ENXIO;
 
-	guard(raw_spinlock_irq)(&irq_desc->lock);
+	guard(hybrid_spinlock_irq)(&irq_desc->lock);
 	msi_desc = irq_data_get_msi_desc(&irq_desc->irq_data);
 	if (!msi_desc || msi_desc->pci.msi_attrib.is_virtual)
 		return -ENXIO;
