@@ -133,7 +133,7 @@ void suspend_device_irqs(void)
 
 		if (irq_settings_is_nested_thread(desc))
 			continue;
-		scoped_guard(raw_spinlock_irqsave, &desc->lock)
+		scoped_guard(hybrid_spinlock_irqsave, &desc->lock)
 			sync = suspend_device_irq(desc);
 
 		if (sync)
@@ -186,7 +186,7 @@ static void resume_irqs(bool want_early)
 		if (irq_settings_is_nested_thread(desc))
 			continue;
 
-		guard(raw_spinlock_irqsave)(&desc->lock);
+		guard(hybrid_spinlock_irqsave)(&desc->lock);
 		resume_irq(desc);
 	}
 }

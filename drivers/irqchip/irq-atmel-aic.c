@@ -78,7 +78,7 @@ static int aic_retrigger(struct irq_data *d)
 	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
 
 	/* Enable interrupt on AIC5 */
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 	irq_reg_writel(gc, d->mask, AT91_AIC_ISCR);
 
 	return 1;
@@ -105,7 +105,7 @@ static void aic_suspend(struct irq_data *d)
 {
 	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 	irq_reg_writel(gc, gc->mask_cache, AT91_AIC_IDCR);
 	irq_reg_writel(gc, gc->wake_active, AT91_AIC_IECR);
 }
@@ -114,7 +114,7 @@ static void aic_resume(struct irq_data *d)
 {
 	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 	irq_reg_writel(gc, gc->wake_active, AT91_AIC_IDCR);
 	irq_reg_writel(gc, gc->mask_cache, AT91_AIC_IECR);
 }
@@ -123,7 +123,7 @@ static void aic_pm_shutdown(struct irq_data *d)
 {
 	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 	irq_reg_writel(gc, 0xffffffff, AT91_AIC_IDCR);
 	irq_reg_writel(gc, 0xffffffff, AT91_AIC_ICCR);
 }
@@ -188,7 +188,7 @@ static int aic_irq_domain_xlate(struct irq_domain *d,
 
 	gc = dgc->gc[idx];
 
-	guard(raw_spinlock_irqsave)(&gc->lock);
+	guard(hard_spinlock_irqsave)(&gc->lock);
 	smr = irq_reg_readl(gc, AT91_AIC_SMR(*out_hwirq));
 	aic_common_set_priority(intspec[2], &smr);
 	irq_reg_writel(gc, smr, AT91_AIC_SMR(*out_hwirq));

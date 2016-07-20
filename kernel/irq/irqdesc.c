@@ -14,6 +14,7 @@
 #include <linux/kernel_stat.h>
 #include <linux/maple_tree.h>
 #include <linux/irqdomain.h>
+#include <linux/irq_pipeline.h>
 #include <linux/sysfs.h>
 #include <linux/string_choices.h>
 
@@ -267,7 +268,7 @@ static ssize_t chip_name_show(struct kobject *kobj, struct kobj_attribute *attr,
 {
 	struct irq_desc *desc = container_of(kobj, struct irq_desc, kobj);
 
-	guard(raw_spinlock_irq)(&desc->lock);
+	guard(hybrid_spinlock_irq)(&desc->lock);
 	if (desc->irq_data.chip && desc->irq_data.chip->name)
 		return sysfs_emit(buf, "%s\n", desc->irq_data.chip->name);
 	return 0;
@@ -278,7 +279,7 @@ static ssize_t hwirq_show(struct kobject *kobj, struct kobj_attribute *attr, cha
 {
 	struct irq_desc *desc = container_of(kobj, struct irq_desc, kobj);
 
-	guard(raw_spinlock_irq)(&desc->lock);
+	guard(hybrid_spinlock_irq)(&desc->lock);
 	if (desc->irq_data.domain)
 		return sysfs_emit(buf, "%lu\n", desc->irq_data.hwirq);
 	return 0;
@@ -289,7 +290,7 @@ static ssize_t type_show(struct kobject *kobj, struct kobj_attribute *attr, char
 {
 	struct irq_desc *desc = container_of(kobj, struct irq_desc, kobj);
 
-	guard(raw_spinlock_irq)(&desc->lock);
+	guard(hybrid_spinlock_irq)(&desc->lock);
 	return sysfs_emit(buf, "%s\n", irqd_is_level_type(&desc->irq_data) ? "level" : "edge");
 
 }
@@ -299,7 +300,7 @@ static ssize_t wakeup_show(struct kobject *kobj, struct kobj_attribute *attr, ch
 {
 	struct irq_desc *desc = container_of(kobj, struct irq_desc, kobj);
 
-	guard(raw_spinlock_irq)(&desc->lock);
+	guard(hybrid_spinlock_irq)(&desc->lock);
 	return sysfs_emit(buf, "%s\n", str_enabled_disabled(irqd_is_wakeup_set(&desc->irq_data)));
 }
 IRQ_ATTR_RO(wakeup);
@@ -308,7 +309,7 @@ static ssize_t name_show(struct kobject *kobj, struct kobj_attribute *attr, char
 {
 	struct irq_desc *desc = container_of(kobj, struct irq_desc, kobj);
 
-	guard(raw_spinlock_irq)(&desc->lock);
+	guard(hybrid_spinlock_irq)(&desc->lock);
 	if (desc->name)
 		return sysfs_emit(buf, "%s\n", desc->name);
 	return 0;
@@ -322,7 +323,7 @@ static ssize_t actions_show(struct kobject *kobj, struct kobj_attribute *attr, c
 	ssize_t ret = 0;
 	char *p = "";
 
-	scoped_guard(raw_spinlock_irq, &desc->lock) {
+	scoped_guard(hybrid_spinlock_irq, &desc->lock) {
 		for_each_action_of_desc(desc, action) {
 			ret += sysfs_emit_at(buf, ret, "%s%s", p, action->name);
 			p = ",";
@@ -628,7 +629,7 @@ static void free_desc(unsigned int irq)
 	struct irq_desc *desc = irq_to_desc(irq);
 	int cpu;
 
-	scoped_guard(raw_spinlock_irqsave, &desc->lock)
+	scoped_guard(hybrid_spinlock_irqsave, &desc->lock)
 		desc_set_defaults(irq, desc, irq_desc_get_node(desc), NULL, NULL);
 
 	for_each_possible_cpu(cpu)
@@ -665,6 +666,17 @@ void irq_mark_irq(unsigned int irq)
 
 #endif /* !CONFIG_SPARSE_IRQ */
 
+static inline bool is_hardirq(struct irq_desc *desc)
+{
+	if (!irqs_pipelined())
+		return in_hardirq();
+
+	if (in_pipeline() || desc->istate & IRQS_DEFERRED)
+		return true;
+
+	return false;
+}
+
 int handle_irq_desc(struct irq_desc *desc)
 {
 	struct irq_data *data;
@@ -673,7 +685,7 @@ int handle_irq_desc(struct irq_desc *desc)
 		return -EINVAL;
 
 	data = irq_desc_get_irq_data(desc);
-	if (WARN_ON_ONCE(!in_hardirq() && irqd_is_handle_enforce_irqctx(data)))
+	if (WARN_ON_ONCE(!is_hardirq(desc) && irqd_is_handle_enforce_irqctx(data)))
 		return -EPERM;
 
 	generic_handle_irq_desc(desc);
@@ -681,14 +693,18 @@ int handle_irq_desc(struct irq_desc *desc)
 }
 
 /**
- * generic_handle_irq - Invoke the handler for a particular irq
+ * generic_handle_irq - Handle a particular irq
  * @irq:	The irq number to handle
  *
  * Returns:	0 on success, or -EINVAL if conversion has failed
  *
  * 		This function must be called from an IRQ context with irq regs
  * 		initialized.
-  */
+ *
+ * The handler is invoked, unless we are entering the interrupt
+ * pipeline, in which case the incoming IRQ is only scheduled for
+ * deferred delivery.
+ */
 int generic_handle_irq(unsigned int irq)
 {
 	return handle_irq_desc(irq_to_desc(irq));
@@ -732,7 +748,10 @@ EXPORT_SYMBOL_GPL(generic_handle_irq_safe);
  */
 int generic_handle_domain_irq(struct irq_domain *domain, irq_hw_number_t hwirq)
 {
-	return handle_irq_desc(irq_resolve_mapping(domain, hwirq));
+	struct irq_desc *desc = irq_resolve_mapping(domain, hwirq);
+
+	return irqs_pipelined() ? generic_pipeline_irq_desc(desc)
+		: handle_irq_desc(desc);
 }
 EXPORT_SYMBOL_GPL(generic_handle_domain_irq);
 
@@ -780,7 +799,7 @@ int generic_handle_domain_nmi(struct irq_domain *domain, irq_hw_number_t hwirq)
 #ifdef CONFIG_SMP
 static bool demux_redirect_remote(struct irq_desc *desc)
 {
-	guard(raw_spinlock)(&desc->lock);
+	guard(hybrid_spinlock)(&desc->lock);
 	const struct cpumask *m = irq_data_get_effective_affinity_mask(&desc->irq_data);
 	unsigned int target_cpu = READ_ONCE(desc->redirect.target_cpu);
 

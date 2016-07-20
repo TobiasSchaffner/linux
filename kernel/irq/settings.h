@@ -18,6 +18,7 @@ enum {
 	_IRQ_DISABLE_UNLAZY	= IRQ_DISABLE_UNLAZY,
 	_IRQ_HIDDEN		= IRQ_HIDDEN,
 	_IRQ_NO_DEBUG		= IRQ_NO_DEBUG,
+	_IRQ_OOB		= IRQ_OOB,
 	_IRQ_PROC_VALID		= IRQ_RESERVED,
 	_IRQF_MODIFY_MASK	= IRQF_MODIFY_MASK,
 };
@@ -35,6 +36,7 @@ enum {
 #define IRQ_DISABLE_UNLAZY	GOT_YOU_MORON
 #define IRQ_HIDDEN		GOT_YOU_MORON
 #define IRQ_NO_DEBUG		GOT_YOU_MORON
+#define IRQ_OOB			GOT_YOU_MORON
 #define IRQ_RESERVED		GOT_YOU_MORON
 #undef IRQF_MODIFY_MASK
 #define IRQF_MODIFY_MASK	GOT_YOU_MORON
@@ -192,4 +194,19 @@ static inline void irq_settings_update_proc_valid(struct irq_desc *desc, u32 set
 {
 	desc->status_use_accessors &= ~_IRQ_PROC_VALID;
 	desc->status_use_accessors |= (set & _IRQ_PROC_VALID);
+}
+
+static inline bool irq_settings_is_oob(struct irq_desc *desc)
+{
+	return desc->status_use_accessors & _IRQ_OOB;
+}
+
+static inline void irq_settings_clr_oob(struct irq_desc *desc)
+{
+	desc->status_use_accessors &= ~_IRQ_OOB;
+}
+
+static inline void irq_settings_set_oob(struct irq_desc *desc)
+{
+	desc->status_use_accessors |= _IRQ_OOB;
 }

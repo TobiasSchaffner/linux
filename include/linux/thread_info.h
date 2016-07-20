@@ -59,6 +59,10 @@ enum syscall_work_bit {
 #define SYSCALL_WORK_SYSCALL_RSEQ_SLICE		BIT(SYSCALL_WORK_BIT_SYSCALL_RSEQ_SLICE)
 #endif
 
+struct irq_pipeline_state {
+	unsigned long flags;
+};
+
 #include <asm/thread_info.h>
 
 #ifndef TIF_NEED_RESCHED_LAZY
@@ -237,17 +241,18 @@ int arch_dup_task_struct(struct task_struct *dst,
  * If the arch defines a set of per-thread synchronous flags, provide
  * generic accessors to them.
  */
-static inline void set_ti_local_flags(struct thread_info *ti, unsigned int mask)
+static __always_inline
+void set_ti_local_flags(struct thread_info *ti, unsigned int mask)
 {
 	ti_local_flags(ti) |= mask;
 }
 
-static inline void set_thread_local_flags(unsigned int mask)
+static __always_inline void set_thread_local_flags(unsigned int mask)
 {
 	set_ti_local_flags(current_thread_info(), mask);
 }
 
-static inline
+static __always_inline
 int test_and_set_ti_local_flags(struct thread_info *ti, unsigned int mask)
 {
 	int old = ti_local_flags(ti) & mask;
@@ -255,18 +260,18 @@ int test_and_set_ti_local_flags(struct thread_info *ti, unsigned int mask)
 	return old != 0;
 }
 
-static inline int test_and_set_thread_local_flags(unsigned int mask)
+static __always_inline int test_and_set_thread_local_flags(unsigned int mask)
 {
 	return test_and_set_ti_local_flags(current_thread_info(), mask);
 }
 
-static inline
+static __always_inline
 void clear_ti_local_flags(struct thread_info *ti, unsigned int mask)
 {
 	ti_local_flags(ti) &= ~mask;
 }
 
-static inline
+static __always_inline
 int test_and_clear_ti_local_flags(struct thread_info *ti, unsigned int mask)
 {
 	int old = ti_local_flags(ti) & mask;
@@ -274,23 +279,23 @@ int test_and_clear_ti_local_flags(struct thread_info *ti, unsigned int mask)
 	return old != 0;
 }
 
-static inline int test_and_clear_thread_local_flags(unsigned int mask)
+static __always_inline int test_and_clear_thread_local_flags(unsigned int mask)
 {
 	return test_and_clear_ti_local_flags(current_thread_info(), mask);
 }
 
-static inline void clear_thread_local_flags(unsigned int mask)
+static __always_inline void clear_thread_local_flags(unsigned int mask)
 {
 	clear_ti_local_flags(current_thread_info(), mask);
 }
 
-static inline
+static __always_inline
 bool test_ti_local_flags(struct thread_info *ti, unsigned int mask)
 {
 	return (ti_local_flags(ti) & mask) != 0;
 }
 
-static inline bool test_thread_local_flags(unsigned int mask)
+static __always_inline bool test_thread_local_flags(unsigned int mask)
 {
 	return test_ti_local_flags(current_thread_info(), mask);
 }

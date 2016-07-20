@@ -111,7 +111,7 @@ static int sunxi_sc_nmi_set_type(struct irq_data *data, unsigned int flow_type)
 	unsigned int src_type;
 	unsigned int i;
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 
 	switch (flow_type & IRQF_TRIGGER_MASK) {
 	case IRQ_TYPE_EDGE_FALLING:

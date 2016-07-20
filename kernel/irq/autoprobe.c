@@ -43,7 +43,7 @@ unsigned long probe_irq_on(void)
 	 * flush such a longstanding irq before considering it as spurious.
 	 */
 	for_each_irq_desc_reverse(i, desc) {
-		guard(raw_spinlock_irq)(&desc->lock);
+		guard(hybrid_spinlock_irq)(&desc->lock);
 		if (!desc->action && irq_settings_can_probe(desc)) {
 			/*
 			 * Some chips need to know about probing in
@@ -64,7 +64,7 @@ unsigned long probe_irq_on(void)
 	 * happened in the previous stage, it may have masked itself)
 	 */
 	for_each_irq_desc_reverse(i, desc) {
-		guard(raw_spinlock_irq)(&desc->lock);
+		guard(hybrid_spinlock_irq)(&desc->lock);
 		if (!desc->action && irq_settings_can_probe(desc)) {
 			desc->istate |= IRQS_AUTODETECT | IRQS_WAITING;
 			if (irq_activate_and_startup(desc, IRQ_NORESEND))
@@ -81,7 +81,7 @@ unsigned long probe_irq_on(void)
 	 * Now filter out any obviously spurious interrupts
 	 */
 	for_each_irq_desc(i, desc) {
-		guard(raw_spinlock_irq)(&desc->lock);
+		guard(hybrid_spinlock_irq)(&desc->lock);
 		if (desc->istate & IRQS_AUTODETECT) {
 			/* It triggered already - consider it spurious. */
 			if (!(desc->istate & IRQS_WAITING)) {
@@ -116,7 +116,7 @@ unsigned int probe_irq_mask(unsigned long val)
 	int i;
 
 	for_each_irq_desc(i, desc) {
-		guard(raw_spinlock_irq)(&desc->lock);
+		guard(hybrid_spinlock_irq)(&desc->lock);
 		if (desc->istate & IRQS_AUTODETECT) {
 			if (i < 16 && !(desc->istate & IRQS_WAITING))
 				mask |= 1 << i;
@@ -154,7 +154,7 @@ int probe_irq_off(unsigned long val)
 	struct irq_desc *desc;
 
 	for_each_irq_desc(i, desc) {
-		guard(raw_spinlock_irq)(&desc->lock);
+		guard(hybrid_spinlock_irq)(&desc->lock);
 		if (desc->istate & IRQS_AUTODETECT) {
 			if (!(desc->istate & IRQS_WAITING)) {
 				if (!nr_of_irqs)

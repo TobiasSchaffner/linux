@@ -250,7 +250,8 @@ do { \
 
 #define preempt_enable_no_resched() sched_preempt_enable_no_resched()
 
-#define preemptible()	(preempt_count() == 0 && !irqs_disabled())
+#define preemptible()	(preempt_count() == 0 && \
+			 !hard_irqs_disabled() && !irqs_disabled())
 
 #ifdef CONFIG_PREEMPTION
 #define preempt_enable() \
@@ -321,6 +322,21 @@ do { \
 #define preemptible()				0
 
 #endif /* CONFIG_PREEMPT_COUNT */
+
+#ifdef CONFIG_IRQ_PIPELINE
+/*
+ * We legitimately need unlimited access to
+ * preempt_enable_no_resched_notrace() when pipelining interrupts,
+ * including from code which may be compiled in modules. Create an
+ * internal alias before this macro gets undefined below.
+ */
+static __always_inline void __preempt_enable_no_resched_notrace(void)
+{
+	preempt_enable_no_resched_notrace();
+}
+#else
+#define __preempt_enable_no_resched_notrace()	do { } while(0)
+#endif
 
 #ifdef MODULE
 /*

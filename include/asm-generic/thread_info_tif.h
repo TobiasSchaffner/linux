@@ -51,4 +51,7 @@
 #define TIF_HRTIMER_REARM	12       // re-arm the timer
 #define _TIF_HRTIMER_REARM	BIT(TIF_HRTIMER_REARM)
 
+#define TIF_RETUSER		13	// Dovetail: INBAND_TASK_RETUSER is pending
+#define _TIF_RETUSER		BIT(TIF_RETUSER)
+
 #endif /* _ASM_GENERIC_THREAD_INFO_TIF_H_ */

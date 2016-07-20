@@ -66,7 +66,7 @@ static int al_fic_irq_set_type(struct irq_data *data, unsigned int flow_type)
 	struct al_fic *fic = gc->private;
 	enum al_fic_state new_state;
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 
 	if (((flow_type & IRQ_TYPE_SENSE_MASK) != IRQ_TYPE_LEVEL_HIGH) &&
 	    ((flow_type & IRQ_TYPE_SENSE_MASK) != IRQ_TYPE_EDGE_RISING)) {

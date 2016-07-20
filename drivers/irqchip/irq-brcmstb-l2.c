@@ -98,7 +98,7 @@ static void __brcmstb_l2_intc_suspend(struct irq_data *d, bool save)
 	struct irq_chip_type *ct = irq_data_get_chip_type(d);
 	struct brcmstb_l2_intc_data *b = gc->private;
 
-	guard(raw_spinlock_irqsave)(&gc->lock);
+	guard(hard_spinlock_irqsave)(&gc->lock);
 	/* Save the current mask */
 	if (save)
 		b->saved_mask = irq_reg_readl(gc, ct->regs.mask);
@@ -126,7 +126,7 @@ static void brcmstb_l2_intc_resume(struct irq_data *d)
 	struct irq_chip_type *ct = irq_data_get_chip_type(d);
 	struct brcmstb_l2_intc_data *b = gc->private;
 
-	guard(raw_spinlock_irqsave)(&gc->lock);
+	guard(hard_spinlock_irqsave)(&gc->lock);
 	if (ct->chip.irq_ack) {
 		/* Clear unmasked non-wakeup interrupts */
 		irq_reg_writel(gc, ~b->saved_mask & ~gc->wake_active,

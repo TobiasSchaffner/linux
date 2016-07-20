@@ -83,7 +83,7 @@ static void ocelot_irq_unmask(struct irq_data *data)
 	unsigned int mask = data->mask;
 	u32 val;
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 	/*
 	 * Clear sticky bits for edge mode interrupts.
 	 * Serval has only one trigger register replication, but the adjacent

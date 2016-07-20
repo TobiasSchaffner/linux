@@ -50,7 +50,7 @@ static int show_irq_affinity(int type, struct seq_file *m)
 	struct irq_desc *desc = irq_to_desc((long)m->private);
 	const struct cpumask *mask;
 
-	guard(raw_spinlock_irq)(&desc->lock);
+	guard(hybrid_spinlock_irq)(&desc->lock);
 
 	switch (type) {
 	case AFFINITY:
@@ -90,7 +90,7 @@ static int irq_affinity_hint_proc_show(struct seq_file *m, void *v)
 	if (!zalloc_cpumask_var(&mask, GFP_KERNEL))
 		return -ENOMEM;
 
-	scoped_guard(raw_spinlock_irq, &desc->lock) {
+	scoped_guard(hybrid_spinlock_irq, &desc->lock) {
 		if (desc->affinity_hint)
 			cpumask_copy(mask, desc->affinity_hint);
 	}
@@ -302,7 +302,7 @@ static bool name_unique(unsigned int irq, struct irqaction *new_action)
 	struct irq_desc *desc = irq_to_desc(irq);
 	struct irqaction *action;
 
-	guard(raw_spinlock_irq)(&desc->lock);
+	guard(hybrid_spinlock_irq)(&desc->lock);
 	for_each_action_of_desc(desc, action) {
 		if ((action != new_action) && action->name &&
 		    !strcmp(new_action->name, action->name))
@@ -572,7 +572,7 @@ static int irq_seq_show(struct seq_file *p, void *v)
 	/* Enforce a visual gap */
 	seq_write(p, "  ", 2);
 
-	guard(raw_spinlock_irq)(&desc->lock);
+	guard(hybrid_spinlock_irq)(&desc->lock);
 	if (desc->irq_data.chip) {
 		if (desc->irq_data.chip->irq_print_chip)
 			desc->irq_data.chip->irq_print_chip(&desc->irq_data, p);
@@ -592,6 +592,9 @@ static int irq_seq_show(struct seq_file *p, void *v)
 
 	if (IS_ENABLED(CONFIG_GENERIC_IRQ_SHOW_LEVEL))
 		seq_printf(p, " %-8s", irqd_is_level_type(&desc->irq_data) ? "Level" : "Edge");
+
+	if (IS_ENABLED(CONFIG_IRQ_PIPELINE))
+		seq_printf(p, " %-3s", irq_settings_is_oob(desc) ? "oob" : "");
 
 	if (desc->name)
 		seq_printf(p, "-%-8s", desc->name);

@@ -2,12 +2,14 @@
 #ifndef LINUX_HARDIRQ_H
 #define LINUX_HARDIRQ_H
 
+#include <dovetail/thread_info_accessors.h>
 #include <linux/context_tracking_state.h>
 #include <linux/preempt.h>
 #include <linux/lockdep.h>
 #include <linux/ftrace_irq.h>
 #include <linux/sched.h>
 #include <linux/vtime.h>
+#include <asm-generic/irq_pipeline.h>
 #include <asm/hardirq.h>
 
 extern void synchronize_irq(unsigned int irq);
@@ -144,6 +146,7 @@ DECLARE_PER_CPU(unsigned int, nmi_nesting);
 
 #define nmi_enter()						\
 	do {							\
+		irq_pipeline_nmi_enter();			\
 		__nmi_enter();					\
 		lockdep_hardirq_enter();			\
 		ct_nmi_enter();					\
@@ -168,6 +171,12 @@ DECLARE_PER_CPU(unsigned int, nmi_nesting);
 		ct_nmi_exit();					\
 		lockdep_hardirq_exit();				\
 		__nmi_exit();					\
+		irq_pipeline_nmi_exit();			\
 	} while (0)
+
+static inline bool on_pipeline_entry(void)
+{
+	return irqs_pipelined() && in_pipeline();
+}
 
 #endif /* LINUX_HARDIRQ_H */

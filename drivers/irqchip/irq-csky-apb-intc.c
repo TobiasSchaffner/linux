@@ -50,7 +50,7 @@ static void irq_ck_mask_set_bit(struct irq_data *d)
 	unsigned long ifr = ct->regs.mask - 8;
 	u32 mask = d->mask;
 
-	guard(raw_spinlock)(&gc->lock);
+	guard(hard_spinlock)(&gc->lock);
 	*ct->mask_cache |= mask;
 	irq_reg_writel(gc, *ct->mask_cache, ct->regs.mask);
 	irq_reg_writel(gc, irq_reg_readl(gc, ifr) & ~mask, ifr);

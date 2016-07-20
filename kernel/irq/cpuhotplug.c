@@ -172,12 +172,15 @@ void irq_migrate_all_off_this_cpu(void)
 {
 	struct irq_desc *desc;
 	unsigned int irq;
+	unsigned long flags;
+
+	flags = hard_local_irq_save();
 
 	for_each_active_irq(irq) {
 		bool affinity_broken;
 
 		desc = irq_to_desc(irq);
-		scoped_guard(raw_spinlock, &desc->lock) {
+		scoped_guard(hybrid_spinlock, &desc->lock) {
 			affinity_broken = migrate_one_irq(desc);
 			if (affinity_broken && desc->affinity_notify)
 				irq_affinity_schedule_notify_work(desc);
@@ -187,6 +190,8 @@ void irq_migrate_all_off_this_cpu(void)
 					    irq, smp_processor_id());
 		}
 	}
+
+	hard_local_irq_restore(flags);
 }
 
 static bool hk_should_isolate(struct irq_data *data, unsigned int cpu)
@@ -238,7 +243,7 @@ int irq_affinity_online_cpu(unsigned int cpu)
 	irq_lock_sparse();
 	for_each_active_irq(irq) {
 		desc = irq_to_desc(irq);
-		scoped_guard(raw_spinlock_irq, &desc->lock)
+		scoped_guard(hybrid_spinlock_irq, &desc->lock)
 			irq_restore_affinity_of_irq(desc, cpu);
 	}
 	irq_unlock_sparse();
