@@ -792,7 +792,7 @@ config MM_ID
 
 menuconfig TRANSPARENT_HUGEPAGE
 	bool "Transparent Hugepage Support"
-	depends on HAVE_ARCH_TRANSPARENT_HUGEPAGE && !PREEMPT_RT
+	depends on HAVE_ARCH_TRANSPARENT_HUGEPAGE && !PREEMPT_RT && !DOVETAIL
 	select COMPACTION
 	select XARRAY_MULTI
 	select MM_ID
