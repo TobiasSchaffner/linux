@@ -1049,9 +1049,22 @@ static inline struct file *__fget_files_rcu(struct files_struct *files,
 		 * file_ref_get() gives us a full memory barrier. We
 		 * only really need an 'acquire' one to protect the
 		 * loads below, but we don't have that.
+		 *
+		 * Dovetail: don't retry when called from the oob
+		 * stage since doing so would be prone to deadlocking
+		 * if we manage to preempt the in-band context on its
+		 * way to clear the file entry into the fdtable after
+		 * the last reference was dropped (might take ages via
+		 * __fput_deferred()). That is ok, this just means
+		 * that oob callers never get a second chance to match
+		 * an incoming file that might be about to replace the
+		 * stale one at the same fdtable position.
 		 */
-		if (unlikely(!file_ref_get(&file->f_ref)))
+		if (unlikely(!file_ref_get(&file->f_ref))) {
+			if (running_oob())
+				return NULL;
 			continue;
+		}
 
 		/*
 		 * Such a race can take two forms:
@@ -1066,6 +1079,11 @@ static inline struct file *__fget_files_rcu(struct files_struct *files,
 		 *       hand-in-hand with 'fdt'.
 		 *
 		 * If so, we need to put our ref and try again.
+		 *
+		 * Dovetail: no issue with oob callers here, the
+		 * racing update(s) to the fdtable fully happened
+		 * already, we may loop safely to look at the new
+		 * situation.
 		 */
 		if (unlikely(file != rcu_dereference_raw(*fdentry)) ||
 		    unlikely(rcu_dereference_raw(files->fdt) != fdt)) {

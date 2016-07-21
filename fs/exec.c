@@ -34,6 +34,7 @@
 #include <linux/swap.h>
 #include <linux/string.h>
 #include <linux/init.h>
+#include <linux/irq_pipeline.h>
 #include <linux/sched/mm.h>
 #include <linux/sched/coredump.h>
 #include <linux/sched/exec_state.h>
@@ -847,6 +848,7 @@ static int exec_mmap(struct linux_binprm *bprm)
 	struct task_struct *tsk;
 	struct mm_struct *old_mm, *active_mm;
 	int ret;
+	unsigned long flags;
 
 	exec_state = alloc_task_exec_state(bprm->user_ns);
 	if (!exec_state)
@@ -880,6 +882,7 @@ static int exec_mmap(struct linux_binprm *bprm)
 
 	local_irq_disable();
 	active_mm = tsk->active_mm;
+	protect_inband_mm(flags);
 	tsk->active_mm = mm;
 	tsk->mm = mm;
 	sched_cache_exec_mmap(tsk, mm);
@@ -891,10 +894,17 @@ static int exec_mmap(struct linux_binprm *bprm)
 	 * lazy tlb mm refcounting when these are updated by context
 	 * switches. Not all architectures can handle irqs off over
 	 * activate_mm yet.
+	 *
+	 * irq_pipeline: activate_mm() allowing irqs off context is a
+	 * requirement. e.g. TLB shootdown must not involve IPIs. We
+	 * make sure protect_inband_mm() is in effect while switching
+	 * in and activating the new mm by forcing
+	 * CONFIG_ARCH_WANT_IRQS_OFF_ACTIVATE_MM on.
 	 */
 	if (!IS_ENABLED(CONFIG_ARCH_WANT_IRQS_OFF_ACTIVATE_MM))
 		local_irq_enable();
 	activate_mm(active_mm, mm);
+	unprotect_inband_mm(flags);
 	if (IS_ENABLED(CONFIG_ARCH_WANT_IRQS_OFF_ACTIVATE_MM))
 		local_irq_enable();
 	lru_gen_add_mm(mm);
@@ -1237,6 +1247,10 @@ int begin_new_exec(struct linux_binprm * bprm)
 
 	me->flags &= ~(PF_RANDOMIZE | PF_FORKNOEXEC |
 					PF_NOFREEZE | PF_NO_SETAFFINITY);
+
+	/* Tell Dovetail about the ongoing exec(). */
+	arch_dovetail_exec_prepare();
+
 	flush_thread();
 	me->personality &= ~bprm->per_clear;
 
