@@ -20,6 +20,7 @@
 #include <linux/pfn.h>
 #include <linux/percpu-refcount.h>
 #include <linux/bit_spinlock.h>
+#include <linux/dovetail.h>
 #include <linux/shrinker.h>
 #include <linux/resource.h>
 #include <linux/page_ext.h>
@@ -2652,6 +2653,15 @@ static inline bool folio_needs_cow_for_dma(struct vm_area_struct *vma,
 					  struct folio *folio)
 {
 	VM_BUG_ON(!(raw_read_seqcount(&vma->vm_mm->write_protect_seq) & 1));
+
+	/*
+	 * Dovetail: If the source mm belongs to a dovetailed process,
+	 * we don't want to impose the COW-induced latency on it: make
+	 * sure the child gets its own copy of the page.
+	 */
+	if (IS_ENABLED(CONFIG_DOVETAIL) &&
+	    mm_flags_test(MMF_DOVETAILED, vma->vm_mm))
+		return true;
 
 	if (!mm_flags_test(MMF_HAS_PINNED, vma->vm_mm))
 		return false;
