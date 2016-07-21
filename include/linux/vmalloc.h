@@ -326,6 +326,8 @@ pcpu_get_vm_areas(const unsigned long *offsets,
 static inline void pcpu_free_vm_areas(struct vm_struct **vms, int nr_vms) {}
 #endif
 
+void arch_advertise_page_mapping(unsigned long start, unsigned long end);
+
 #if defined(CONFIG_MMU) && defined(CONFIG_PRINTK)
 bool vmalloc_dump_obj(void *object);
 #else

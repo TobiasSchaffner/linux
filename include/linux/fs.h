@@ -47,6 +47,7 @@
 #include <linux/rw_hint.h>
 #include <linux/file_ref.h>
 #include <linux/unicode.h>
+#include <dovetail/fs.h>
 
 #include <asm/byteorder.h>
 #include <uapi/linux/fs.h>
@@ -61,6 +62,7 @@ struct kiocb;
 struct kobject;
 struct pipe_inode_info;
 struct poll_table_struct;
+struct oob_poll_wait;
 struct kstatfs;
 struct vm_area_struct;
 struct vfsmount;
@@ -1255,6 +1257,7 @@ static inline int ra_has_index(struct file_ra_state *ra, pgoff_t index)
  * @f_ra: file's readahead state
  * @f_freeptr: Pointer used by SLAB_TYPESAFE_BY_RCU file cache (don't touch.)
  * @f_ref: reference count
+ * @f_oob_state: Dovetail: state information for oob-enabled files
  */
 struct file {
 	spinlock_t			f_lock;
@@ -1296,6 +1299,7 @@ struct file {
 	};
 	file_ref_t			f_ref;
 	/* --- cacheline 3 boundary (192 bytes) --- */
+	struct oob_file_state		f_oob_state;
 } __randomize_layout
   __attribute__((aligned(4)));	/* lest something weird decides that 2 is OK */
 
@@ -1827,8 +1831,11 @@ int vfs_utimes(const struct path *path, struct timespec64 *times);
 #ifdef CONFIG_COMPAT
 extern long compat_ptr_ioctl(struct file *file, unsigned int cmd,
 					unsigned long arg);
+extern long compat_ptr_oob_ioctl(struct file *file, unsigned int cmd,
+				 unsigned long arg);
 #else
 #define compat_ptr_ioctl NULL
+#define compat_ptr_oob_ioctl NULL
 #endif
 
 /*
@@ -1937,6 +1944,11 @@ struct file_operations {
 	__poll_t (*poll) (struct file *, struct poll_table_struct *);
 	long (*unlocked_ioctl) (struct file *, unsigned int, unsigned long);
 	long (*compat_ioctl) (struct file *, unsigned int, unsigned long);
+	ssize_t (*oob_read) (struct file *, char __user *, size_t);
+	ssize_t (*oob_write) (struct file *, const char __user *, size_t);
+	long (*oob_ioctl) (struct file *, unsigned int, unsigned long);
+	long (*compat_oob_ioctl) (struct file *, unsigned int, unsigned long);
+	__poll_t (*oob_poll) (struct file *, struct oob_poll_wait *);
 	int (*mmap) (struct file *, struct vm_area_struct *);
 	int (*open) (struct inode *, struct file *);
 	int (*flush) (struct file *, fl_owner_t id);
