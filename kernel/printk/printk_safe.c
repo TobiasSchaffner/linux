@@ -9,6 +9,7 @@
 #include <linux/cpumask.h>
 #include <linux/printk.h>
 #include <linux/kprobes.h>
+#include <linux/irqstage.h>
 
 #include "internal.h"
 
@@ -79,6 +80,10 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	if (unlikely(kdb_trap_printk && kdb_printf_cpu < 0))
 		return vkdb_printf(KDB_MSGSRC_PRINTK, fmt, args);
 #endif
+
+	if (!printk_stage_safe())
+		return vprintk_deferred(fmt, args);
+
 	return vprintk_default(fmt, args);
 }
 EXPORT_SYMBOL(vprintk);
