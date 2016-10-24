@@ -9,6 +9,7 @@
 #include <linux/signal.h>
 #include <linux/mm.h>
 #include <linux/hardirq.h>
+#include <linux/irq_pipeline.h>
 #include <linux/init.h>
 #include <linux/kprobes.h>
 #include <linux/uaccess.h>
@@ -33,6 +34,53 @@ bool copy_from_kernel_nofault_allowed(const void *unsafe_src, size_t size)
 
 	return addr >= TASK_SIZE && ULONG_MAX - addr >= size;
 }
+
+#ifdef CONFIG_IRQ_PIPELINE
+/*
+ * We need to synchronize the virtual interrupt state with the hard
+ * interrupt state we received on entry, then turn hardirqs back on to
+ * allow code which does not require strict serialization to be
+ * preempted by an out-of-band activity.
+ */
+static inline
+unsigned long fault_entry(struct pt_regs *regs)
+{
+	unsigned long flags;
+
+	flags = hard_local_save_flags();
+
+	if (raw_irqs_disabled_flags(flags)) {
+		stall_inband();
+		trace_hardirqs_off();
+	}
+
+	hard_local_irq_enable();
+
+	return flags;
+}
+
+static inline void fault_exit(unsigned long flags)
+{
+	WARN_ON_ONCE(irq_pipeline_debug() && hard_irqs_disabled());
+
+	/*
+	 * We expect kentry_exit_pipelined() to clear the stall bit if
+	 * kentry_enter_pipelined() observed it that way.
+	 */
+	hard_local_irq_restore(flags);
+}
+
+#else	/* !CONFIG_IRQ_PIPELINE */
+
+static inline
+unsigned long fault_entry(struct pt_regs *regs)
+{
+	return 0;
+}
+
+static inline void fault_exit(unsigned long x) { }
+
+#endif	/* !CONFIG_IRQ_PIPELINE */
 
 /*
  * This is useful to dump out the page tables associated with
@@ -119,6 +167,7 @@ static void die_kernel_fault(const char *msg, struct mm_struct *mm,
 			     unsigned long addr, unsigned int fsr,
 			     struct pt_regs *regs)
 {
+	irq_pipeline_oops();
 	bust_spinlocks(1);
 	pr_alert("8<--- cut here ---\n");
 	pr_alert("Unable to handle kernel %s at virtual address %08lx when %s\n",
@@ -206,14 +255,22 @@ void do_bad_area(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 {
 	struct task_struct *tsk = current;
 	struct mm_struct *mm = tsk->active_mm;
+	unsigned long irqflags;
 
 	/*
 	 * If we are in kernel mode at this point, we
 	 * have no context to handle this fault with.
 	 */
-	if (user_mode(regs))
+	  if (user_mode(regs)) {
+		irqflags = fault_entry(regs);
 		__do_user_fault(addr, fsr, SIGSEGV, SEGV_MAPERR, regs);
-	else
+		fault_exit(irqflags);
+	  } else
+		/*
+		 * irq_pipeline: kernel faults are either quickly
+		 * recoverable via fixup, or lethal. In both cases, we
+		 * can skip the interrupt state synchronization.
+		 */
 		__do_kernel_fault(mm, addr, fsr, regs);
 }
 
@@ -307,6 +364,8 @@ static int __kprobes
 do_kernel_address_page_fault(struct mm_struct *mm, unsigned long addr,
 			     unsigned int fsr, struct pt_regs *regs)
 {
+	unsigned long irqflags;
+
 	if (user_mode(regs)) {
 		/*
 		 * Fault from user mode for a kernel space address. User mode
@@ -316,7 +375,9 @@ do_kernel_address_page_fault(struct mm_struct *mm, unsigned long addr,
 		 * Note that __do_user_fault() will enable interrupts.
 		 */
 		harden_branch_predictor();
+		irqflags = fault_entry(regs);
 		__do_user_fault(addr, fsr, SIGSEGV, SEGV_MAPERR, regs);
+		fault_exit(irqflags);
 	} else {
 		/*
 		 * Fault from kernel mode. Enable interrupts if they were
@@ -340,6 +401,7 @@ do_page_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 {
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
+	unsigned long irqflags;
 	int sig, code;
 	vm_fault_t fault;
 	unsigned int flags = FAULT_FLAG_DEFAULT;
@@ -354,6 +416,8 @@ do_page_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	 */
 	if (addr >= TASK_SIZE)
 		return do_kernel_address_page_fault(mm, addr, fsr, regs);
+
+	irqflags = fault_entry(regs);
 
 	/* Enable interrupts if they were enabled in the parent context. */
 	if (interrupts_enabled(regs))
@@ -454,7 +518,7 @@ retry:
 	if (fault_signal_pending(fault, regs)) {
 		if (!user_mode(regs))
 			goto no_context;
-		return 0;
+		goto out;
 	}
 
 	/* The fault is fully completed (including releasing mmap lock) */
@@ -473,7 +537,7 @@ done:
 
 	/* Handle the "normal" case first */
 	if (likely(!(fault & VM_FAULT_ERROR)))
-		return 0;
+		goto out;
 
 	code = SEGV_MAPERR;
 bad_area:
@@ -491,7 +555,7 @@ bad_area:
 		 * got oom-killed)
 		 */
 		pagefault_out_of_memory();
-		return 0;
+		goto out;
 	}
 
 	if (fault & VM_FAULT_SIGBUS) {
@@ -510,10 +574,13 @@ bad_area:
 	}
 
 	__do_user_fault(addr, fsr, sig, code, regs);
-	return 0;
+	goto out;
 
 no_context:
 	__do_kernel_fault(mm, addr, fsr, regs);
+out:
+	fault_exit(ARM_TRAP_ACCESS, regs, irqflags);
+
 	return 0;
 }
 #else					/* CONFIG_MMU */
@@ -549,6 +616,8 @@ static int __kprobes
 do_translation_fault(unsigned long addr, unsigned int fsr,
 		     struct pt_regs *regs)
 {
+	WARN_ON_ONCE(irqs_pipelined() && !hard_irqs_disabled());
+
 	if (addr < TASK_SIZE)
 		return do_page_fault(addr, fsr, regs);
 
@@ -576,6 +645,8 @@ do_translation_fault(unsigned long addr, unsigned int fsr,
 static int
 do_sect_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 {
+	unsigned long irqflags;
+
 	/*
 	 * If this is a kernel address, but from user mode, then userspace
 	 * is trying bad stuff. Invoke the branch predictor handling.
@@ -584,7 +655,9 @@ do_sect_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	if (addr >= TASK_SIZE && user_mode(regs))
 		harden_branch_predictor();
 
+	irqflags = fault_entry(regs);
 	do_bad_area(addr, fsr, regs);
+	fault_exit(irqflags);
 
 	return 0;
 }
@@ -633,11 +706,14 @@ asmlinkage void
 do_DataAbort(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 {
 	const struct fsr_info *inf = fsr_info + fsr_fs(fsr);
+	unsigned long irqflags;
 
 	if (!inf->fn(addr, fsr & ~FSR_LNX_PF, regs))
 		return;
 
-	if (likely(user_mode(regs)))
+	irqflags = fault_entry(regs);
+
+	if (likely(user_mode(regs)) && running_inband())
 		local_irq_enable();
 
 	pr_alert("8<--- cut here ---\n");
@@ -655,6 +731,7 @@ do_DataAbort(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 
 	arm_notify_die("", regs, inf->sig, inf->code, (void __user *)addr,
 		       fsr, 0);
+	fault_exit(irqflags);
 }
 
 void __init
@@ -674,11 +751,14 @@ asmlinkage void
 do_PrefetchAbort(unsigned long addr, unsigned int ifsr, struct pt_regs *regs)
 {
 	const struct fsr_info *inf = ifsr_info + fsr_fs(ifsr);
+	unsigned long irqflags;
 
 	if (!inf->fn(addr, ifsr | FSR_LNX_PF, regs))
 		return;
 
-	if (likely(user_mode(regs)))
+	irqflags = fault_entry(regs);
+
+	if (likely(user_mode(regs)) && running_inband())
 		local_irq_enable();
 
 	pr_alert("8<--- cut here ---\n");
@@ -687,6 +767,7 @@ do_PrefetchAbort(unsigned long addr, unsigned int ifsr, struct pt_regs *regs)
 
 	arm_notify_die("", regs, inf->sig, inf->code, (void __user *)addr,
 		       ifsr, 0);
+	fault_exit(irqflags);
 }
 
 /*

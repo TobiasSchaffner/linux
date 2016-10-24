@@ -39,6 +39,7 @@ struct task_struct;
 
 DECLARE_PER_CPU(struct task_struct *, __entry_task);
 
+#include <dovetail/thread_info.h>
 #include <asm/types.h>
 #include <asm/traps.h>
 
@@ -74,6 +75,7 @@ struct thread_info {
 #ifdef CONFIG_ARM_THUMBEE
 	unsigned long		thumbee_state;	/* ThumbEE Handler Base register */
 #endif
+	struct irq_pipeline_state	irq_pipeline_state;
 };
 
 #define INIT_THREAD_INFO(tsk)						\
@@ -179,6 +181,11 @@ extern int vfp_restore_user_hwstate(struct user_vfp *,
 #define _TIF_WORK_MASK		(_TIF_NEED_RESCHED | _TIF_SIGPENDING | \
 				 _TIF_NOTIFY_RESUME | _TIF_UPROBE | \
 				 _TIF_NOTIFY_SIGNAL)
+
+/*
+ * Local (synchronous) thread flags.
+ */
+#define _TLF_OOB		0x0001
 
 #endif /* __KERNEL__ */
 #endif /* __ASM_ARM_THREAD_INFO_H */
