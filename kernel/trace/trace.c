@@ -1730,6 +1730,8 @@ unsigned int tracing_gen_ctx_irq_test(unsigned int irqs_status)
 
 	if (pc & NMI_MASK)
 		trace_flags |= TRACE_FLAG_NMI;
+	if (running_oob())
+		trace_flags |= TRACE_FLAG_NMI;
 	if (pc & HARDIRQ_MASK)
 		trace_flags |= TRACE_FLAG_HARDIRQ;
 	if (in_serving_softirq())
@@ -1741,7 +1743,10 @@ unsigned int tracing_gen_ctx_irq_test(unsigned int irqs_status)
 		trace_flags |= TRACE_FLAG_NEED_RESCHED;
 	if (test_preempt_need_resched())
 		trace_flags |= TRACE_FLAG_PREEMPT_RESCHED;
-	if (IS_ENABLED(CONFIG_ARCH_HAS_PREEMPT_LAZY) && tif_test_bit(TIF_NEED_RESCHED_LAZY))
+	if (irqs_pipelined()) {
+		if (hard_irqs_disabled())
+			trace_flags |= TRACE_FLAG_IRQS_HARDOFF;
+	} else if (IS_ENABLED(CONFIG_ARCH_HAS_PREEMPT_LAZY) && tif_test_bit(TIF_NEED_RESCHED_LAZY))
 		trace_flags |= TRACE_FLAG_NEED_RESCHED_LAZY;
 	return (trace_flags << 16) | (min_t(unsigned int, pc & 0xff, 0xf)) |
 		(min_t(unsigned int, migration_disable_value(), 0xf)) << 4;
