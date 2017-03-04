@@ -480,6 +480,7 @@ seq_print_ip_sym(struct trace_seq *s, unsigned long ip, unsigned long sym_flags)
  */
 int trace_print_lat_fmt(struct trace_seq *s, struct trace_entry *entry)
 {
+	unsigned char flags;
 	char hardsoft_irq;
 	char need_resched;
 	char irqs_off;
@@ -494,12 +495,24 @@ int trace_print_lat_fmt(struct trace_seq *s, struct trace_entry *entry)
 	bh_off = entry->flags & TRACE_FLAG_BH_OFF;
 
 	irqs_off =
+		(entry->flags & (TRACE_FLAG_IRQS_OFF|TRACE_FLAG_IRQS_HARDOFF)) ==
+		(TRACE_FLAG_IRQS_OFF|TRACE_FLAG_IRQS_HARDOFF) ? '*' :
+		(entry->flags & TRACE_FLAG_IRQS_HARDOFF) ? '#' :
 		(entry->flags & TRACE_FLAG_IRQS_OFF && bh_off) ? 'D' :
 		(entry->flags & TRACE_FLAG_IRQS_OFF) ? 'd' :
 		bh_off ? 'b' :
 		'.';
 
-	switch (entry->flags & (TRACE_FLAG_NEED_RESCHED | TRACE_FLAG_NEED_RESCHED_LAZY |
+	/*
+	 * Dovetail: TRACE_FLAG_IRQS_HARDOFF has to piggyback on
+	 * TRACE_FLAG_NEED_RESCHED_LAZY unfortunately, so make sure
+	 * not to ever match the latter if interrupts are pipelined.
+	 */
+	flags = entry->flags;
+	if (irqs_pipelined())
+		flags &= ~TRACE_FLAG_IRQS_HARDOFF;
+
+	switch (flags & (TRACE_FLAG_NEED_RESCHED | TRACE_FLAG_NEED_RESCHED_LAZY |
 				TRACE_FLAG_PREEMPT_RESCHED)) {
 	case TRACE_FLAG_NEED_RESCHED | TRACE_FLAG_NEED_RESCHED_LAZY | TRACE_FLAG_PREEMPT_RESCHED:
 		need_resched = 'B';
@@ -528,6 +541,7 @@ int trace_print_lat_fmt(struct trace_seq *s, struct trace_entry *entry)
 	}
 
 	hardsoft_irq =
+		irqs_pipelined() && nmi ? '~' :
 		(nmi && hardirq)     ? 'Z' :
 		nmi                  ? 'z' :
 		(hardirq && softirq) ? 'H' :
