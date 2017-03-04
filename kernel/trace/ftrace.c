@@ -6294,13 +6294,18 @@ static unsigned long hash_count(struct ftrace_hash *hash)
 }
 
 /**
- * hash_add - adds two struct ftrace_hash and returns the result
+ * ftraceçhash_add - adds two struct ftrace_hash and returns the result
  * @a: struct ftrace_hash object
  * @b: struct ftrace_hash object
  *
  * Returns struct ftrace_hash object on success, NULL on error.
+ *
+ * Dovetail: renamed from hash_add() to ftrace_hash_add() to work
+ * around a conflict with the generic hash_add() in
+ * linux/hashtable.h. Our changeset introducing clocksource_user_mmio
+ * raises this issue by pulling linux/hashtable.h into the namespace.
  */
-static struct ftrace_hash *hash_add(struct ftrace_hash *a, struct ftrace_hash *b)
+static struct ftrace_hash *ftrace_hash_add(struct ftrace_hash *a, struct ftrace_hash *b)
 {
 	struct ftrace_func_entry *entry;
 	struct ftrace_hash *add;
@@ -6375,11 +6380,11 @@ int update_ftrace_direct_add(struct ftrace_ops *ops, struct ftrace_hash *hash)
 	}
 
 	err = -ENOMEM;
-	new_filter_hash = hash_add(old_filter_hash, hash);
+	new_filter_hash = ftrace_hash_add(old_filter_hash, hash);
 	if (!new_filter_hash)
 		goto out_unlock;
 
-	new_direct_functions = hash_add(direct_functions, hash);
+	new_direct_functions = ftrace_hash_add(direct_functions, hash);
 	if (!new_direct_functions)
 		goto out_unlock;
 
@@ -7661,10 +7666,10 @@ static int ftrace_process_locs(struct module *mod,
 	 * reason to cause large interrupt latencies while we do it.
 	 */
 	if (!mod)
-		local_irq_save(flags);
+		flags = hard_local_irq_save();
 	ftrace_update_code(mod, start_pg);
 	if (!mod)
-		local_irq_restore(flags);
+		hard_local_irq_restore(flags);
 	ret = 0;
  out:
 	mutex_unlock(&ftrace_lock);
@@ -8351,9 +8356,9 @@ void __init ftrace_init(void)
 	unsigned long count, flags;
 	int ret;
 
-	local_irq_save(flags);
+	flags = hard_local_irq_save();
 	ret = ftrace_dyn_arch_init();
-	local_irq_restore(flags);
+	hard_local_irq_restore(flags);
 	if (ret)
 		goto failed;
 

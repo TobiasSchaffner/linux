@@ -287,7 +287,7 @@ function_stack_trace_call(unsigned long ip, unsigned long parent_ip,
 	 * Need to use raw, since this must be called before the
 	 * recursive protection is performed.
 	 */
-	local_irq_save(flags);
+	flags = hard_local_irq_save();
 	parent_ip = function_get_true_parent_ip(parent_ip, fregs);
 	cpu = raw_smp_processor_id();
 	data = per_cpu_ptr(tr->array_buffer.data, cpu);
@@ -304,7 +304,7 @@ function_stack_trace_call(unsigned long ip, unsigned long parent_ip,
 	}
 
 	local_dec(&data->disabled);
-	local_irq_restore(flags);
+	hard_local_irq_restore(flags);
 }
 
 static inline bool is_repeat_check(struct trace_array *tr,
