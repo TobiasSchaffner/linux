@@ -571,7 +571,7 @@ static __always_inline irqreturn_t timer_handler(const int access,
 	if (ctrl & ARCH_TIMER_CTRL_IT_STAT) {
 		ctrl |= ARCH_TIMER_CTRL_IT_MASK;
 		arch_timer_reg_write_cp15(access, ARCH_TIMER_REG_CTRL, ctrl);
-		evt->event_handler(evt);
+		clockevents_handle_event(evt);
 		return IRQ_HANDLED;
 	}
 
@@ -677,7 +677,7 @@ static void __arch_timer_setup(struct clock_event_device *clk)
 	typeof(clk->set_next_event) sne;
 	u64 max_delta;
 
-	clk->features = CLOCK_EVT_FEAT_ONESHOT;
+	clk->features = CLOCK_EVT_FEAT_ONESHOT | CLOCK_EVT_FEAT_PIPELINE;
 
 	arch_timer_check_ool_workaround(ate_match_local_cap_id, NULL);
 
@@ -838,6 +838,7 @@ static int arch_timer_starting_cpu(unsigned int cpu)
 	enable_percpu_irq(arch_timer_ppi[arch_timer_uses_ppi], flags);
 
 	if (arch_timer_has_nonsecure_ppi()) {
+		clk->irq = arch_timer_ppi[ARCH_TIMER_PHYS_NONSECURE_PPI];
 		flags = check_ppi_trigger(arch_timer_ppi[ARCH_TIMER_PHYS_NONSECURE_PPI]);
 		enable_percpu_irq(arch_timer_ppi[ARCH_TIMER_PHYS_NONSECURE_PPI],
 				  flags);
