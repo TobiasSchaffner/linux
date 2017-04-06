@@ -20,6 +20,14 @@ extern void __init tick_init(void);
 extern void tick_suspend_local(void);
 /* Should be core only, but XEN resume magic and ARM BL switcher require it */
 extern void tick_resume_local(void);
+
+#ifdef CONFIG_IRQ_PIPELINE
+int tick_install_proxy(void (*setup_proxy)(struct clock_proxy_device *dev),
+		const struct cpumask *cpumask);
+void tick_uninstall_proxy(const struct cpumask *cpumask);
+void tick_notify_proxy(void);
+#endif
+
 #else /* CONFIG_GENERIC_CLOCKEVENTS */
 static inline void tick_init(void) { }
 static inline void tick_suspend_local(void) { }
