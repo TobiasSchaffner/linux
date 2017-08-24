@@ -12,6 +12,7 @@
 
 #include <linux/errno.h>
 #include <linux/hardirq.h>
+#include <linux/irq_pipeline.h>
 #include <linux/init.h>
 #include <linux/irq.h>
 #include <linux/irqchip.h>
