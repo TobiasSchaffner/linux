@@ -77,6 +77,7 @@ void arch_setup_new_exec(void);
 #define TIF_SECCOMP		11	/* syscall secure computing */
 #define TIF_SYSCALL_EMU		12	/* syscall emulation active */
 #define TIF_PATCH_PENDING	13	/* pending live patching update */
+#define TIF_RETUSER		17	/* INBAND_TASK_RETUSER is pending */
 #define TIF_MEMDIE		18	/* is terminating due to OOM killer */
 #define TIF_FREEZE		19
 #define TIF_RESTORE_SIGMASK	20
@@ -104,6 +105,7 @@ void arch_setup_new_exec(void);
 #define _TIF_SYSCALL_EMU	(1 << TIF_SYSCALL_EMU)
 #define _TIF_PATCH_PENDING	(1 << TIF_PATCH_PENDING)
 #define _TIF_UPROBE		(1 << TIF_UPROBE)
+#define _TIF_RETUSER		(1 << TIF_RETUSER)
 #define _TIF_SINGLESTEP		(1 << TIF_SINGLESTEP)
 #define _TIF_32BIT		(1 << TIF_32BIT)
 #define _TIF_SVE		(1 << TIF_SVE)
@@ -129,5 +131,10 @@ void arch_setup_new_exec(void);
 	.preempt_count	= INIT_PREEMPT_COUNT,				\
 	INIT_SCS							\
 }
+
+/*
+ * Local (synchronous) thread flags.
+ */
+#define _TLF_OOB		0x0001
 
 #endif /* __ASM_THREAD_INFO_H */
