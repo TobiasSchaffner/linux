@@ -25,6 +25,7 @@
 #include <linux/seq_file.h>
 #include <linux/irq.h>
 #include <linux/irqchip/arm-gic-v3.h>
+#include <linux/irq_pipeline.h>
 #include <linux/percpu.h>
 #include <linux/clockchips.h>
 #include <linux/completion.h>
@@ -64,7 +65,7 @@ struct secondary_data secondary_data;
 /* Number of CPUs which aren't online, but looping in kernel text. */
 static int cpus_stuck_in_kernel;
 
-static int ipi_irq_base __ro_after_init;
+int ipi_irq_base __ro_after_init;
 static int nr_ipi __ro_after_init = NR_IPI;
 
 struct ipi_descs {
@@ -264,6 +265,7 @@ asmlinkage notrace void secondary_start_kernel(void)
 	 * unmask IRQ and FIQ at the same time.
 	 */
 	local_daif_restore(DAIF_PROCCTX);
+	local_irq_enable_full();
 
 	/*
 	 * OK, it's off to the idle thread for us
@@ -826,6 +828,8 @@ static const char *ipi_types[MAX_IPI] __tracepoint_string = {
 
 static void smp_cross_call(const struct cpumask *target, unsigned int ipinr);
 
+static unsigned int get_ipi_count(int ipi, unsigned int cpu);
+
 unsigned long irq_err_count;
 
 int arch_show_interrupts(struct seq_file *p, int prec)
@@ -836,7 +840,7 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 		seq_printf(p, "%*s%u:%s", prec - 1, "IPI", i,
 			   prec >= 4 ? " " : "");
 		for_each_online_cpu(cpu)
-			seq_printf(p, "%10u ", irq_desc_kstat_cpu(get_ipi_desc(cpu, i), cpu));
+			seq_printf(p, "%10u ", get_ipi_count(i, cpu));
 		seq_printf(p, "      %s\n", ipi_types[i]);
 	}
 
@@ -909,20 +913,27 @@ static void __noreturn ipi_cpu_crash_stop(unsigned int cpu, struct pt_regs *regs
 #endif
 }
 
-static void arm64_send_ipi(const cpumask_t *mask, unsigned int nr)
+struct ipi_index {
+	unsigned int sgi;
+};
+
+static inline struct ipi_index mkipi_inband(unsigned int ipi,
+					    const struct cpumask *target);
+
+static void arm64_send_ipi(const cpumask_t *mask, struct ipi_index ipi)
 {
 	unsigned int cpu;
 
 	if (!percpu_ipi_descs)
-		__ipi_send_mask(get_ipi_desc(0, nr), mask);
+		__ipi_send_mask(get_ipi_desc(0, ipi.sgi), mask);
 	else
 		for_each_cpu(cpu, mask)
-			__ipi_send_single(get_ipi_desc(cpu, nr), cpu);
+			__ipi_send_single(get_ipi_desc(cpu, ipi.sgi), cpu);
 }
 
 static void arm64_backtrace_ipi(cpumask_t *mask)
 {
-	arm64_send_ipi(mask, IPI_CPU_BACKTRACE);
+	arm64_send_ipi(mask, mkipi_inband(IPI_CPU_BACKTRACE, mask));
 }
 
 void arch_trigger_cpumask_backtrace(const cpumask_t *mask, int exclude_cpu)
@@ -953,7 +964,7 @@ void kgdb_roundup_cpus(void)
 #endif
 
 /*
- * Main handler for inter-processor interrupts
+ * Main handler for inter-processor interrupts on the in-band stage.
  */
 static void do_handle_IPI(int ipinr)
 {
@@ -1014,6 +1025,127 @@ static void do_handle_IPI(int ipinr)
 		trace_ipi_exit(ipi_types[ipinr]);
 }
 
+#ifdef CONFIG_IRQ_PIPELINE
+
+static DEFINE_PER_CPU(unsigned long, ipi_messages);
+
+static DEFINE_PER_CPU(unsigned int [MAX_IPI], ipi_counts);
+
+static inline struct ipi_index mkipi_inband(unsigned int ipi,
+					    const struct cpumask *target)
+{
+	unsigned int cpu;
+
+	WARN_ON(ipi >= MAX_IPI);
+
+	/* regular in-band IPI (multiplexed over SGI0). */
+	for_each_cpu(cpu, target)
+		set_bit(ipi, &per_cpu(ipi_messages, cpu));
+
+	/* Write barrier: Make sure ipi_message is set before raising the IPI */
+	wmb();
+
+	/* Multiplex inband IPIs via SGI0 */
+	return (struct ipi_index){ .sgi = 0 };
+}
+
+static inline struct ipi_index mkipi_oob(unsigned int ipi)
+{
+	WARN_ON(ipi < OOB_IPI_OFFSET || ipi > OOB_IPI_OFFSET + OOB_NR_IPI - 1);
+	return (struct ipi_index){ .sgi = ipi };
+}
+
+static inline void map_oob_ipis(int cpu, int ipi_offset)
+{
+	int ipi;
+
+	ipi_offset = ipi_irq_base + (cpu * ipi_offset);
+
+	for (ipi = OOB_IPI_OFFSET; ipi < OOB_NR_IPI + OOB_IPI_OFFSET; ipi++)
+		get_ipi_desc(cpu, ipi) = irq_to_desc(ipi_offset + ipi);
+}
+
+static void ipi_setup_oob_sgi(void)
+{
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		map_oob_ipis(cpu, 0);
+}
+
+static void ipi_setup_oob_lpi(int ncpus)
+{
+	int cpu;
+
+	for (cpu = 0; cpu < ncpus; cpu++)
+		map_oob_ipis(cpu, nr_ipi);
+}
+
+static irqreturn_t ipi_handler(int irq, void *data)
+{
+	unsigned long *pmsg;
+	unsigned int ipinr;
+
+	/*
+	 * Decode in-band IPIs (0..NR_IPI - 1) multiplexed over
+	 * SGI0. Out-of-band IPIs (SGI1, SGI2) have their own
+	 * individual handler.
+	 */
+	pmsg = raw_cpu_ptr(&ipi_messages);
+	while (*pmsg) {
+		ipinr = ffs(*pmsg) - 1;
+		clear_bit(ipinr, pmsg);
+		__this_cpu_inc(ipi_counts[ipinr]);
+		do_handle_IPI(ipinr);
+	}
+
+	return IRQ_HANDLED;
+}
+
+static unsigned int get_ipi_count(int ipi, unsigned int cpu)
+{
+	return per_cpu(ipi_counts, cpu)[ipi];
+}
+
+static const char *oob_ipi_types[OOB_NR_IPI + 1] __tracepoint_string = {
+	[0]	= "Inband IPI (you should not see this!)",
+	[1]	= "OOB timer IPI",
+	[2]	= "OOB reschedule IPI",
+	[3]	= "OOB function call IPI",
+};
+
+void irq_send_oob_ipi(unsigned int irq, const struct cpumask *target)
+{
+	unsigned int ipi = irq - ipi_irq_base;
+
+	WARN_ON(ipi < OOB_IPI_OFFSET);
+
+	/* Out-of-band IPI (SGI1-3). */
+	trace_ipi_raise(target, oob_ipi_types[ipi]);
+	arm64_send_ipi(target, mkipi_oob(ipi));
+}
+EXPORT_SYMBOL_GPL(irq_send_oob_ipi);
+
+#else
+
+static inline struct ipi_index mkipi_inband(unsigned int ipi,
+					    const struct cpumask *target)
+{
+	WARN_ON(ipi >= MAX_IPI);
+	return (struct ipi_index){ .sgi = ipi };
+}
+
+static inline struct ipi_index mkipi_oob(unsigned int ipi)
+{
+	WARN_ON_ONCE(1);
+}
+
+static inline void ipi_setup_oob_sgi(void)
+{ }
+
+static inline void ipi_setup_oob_lpi(int ncpus)
+{ }
+
 static irqreturn_t ipi_handler(int irq, void *data)
 {
 	unsigned int ipi = (irq - ipi_irq_base) % nr_ipi;
@@ -1022,15 +1154,24 @@ static irqreturn_t ipi_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+static unsigned int get_ipi_count(int ipi, unsigned int cpu)
+{
+  	struct irq_desc *desc = get_ipi_desc(cpu, ipi);
+	return irq_desc_kstat_cpu(desc, cpu);
+}
+
+#endif /* CONFIG_IRQ_PIPELINE */
+
 static void smp_cross_call(const struct cpumask *target, unsigned int ipinr)
 {
 	trace_ipi_raise(target, ipi_types[ipinr]);
-	arm64_send_ipi(target, ipinr);
+	arm64_send_ipi(target, mkipi_inband(ipinr, target));
 }
 
 static bool ipi_should_be_nmi(enum ipi_msg_type ipi)
 {
-	if (!system_uses_irq_prio_masking())
+	/* IRQ pipeline: see the reasoning in set_smp_ipi_range(). */
+	if (irqs_pipelined() || !system_uses_irq_prio_masking())
 		return false;
 
 	switch (ipi) {
@@ -1129,20 +1270,42 @@ static void ipi_setup_lpi(int ipi, int ncpus)
 
 void __init set_smp_ipi_range_percpu(int ipi_base, int n, int ncpus)
 {
-	int i;
+	int i, inband_nr_ipi;
 
 	WARN_ON(n < MAX_IPI);
 	nr_ipi = min(n, MAX_IPI);
 
+	/*
+	 * irq_pipeline: the in-band stage traps SGI0 only, over which
+	 * IPI messages are mutiplexed. Other SGIs are available for
+	 * delivering out-of-band IPIs directly.  When pipelining is
+	 * enabled, in-band IPIs are never delivered by NMIs
+	 * (ipi_should_be_nmi() prevents this), so that we don't
+	 * depend on the sanity of their handlers latency-wise - at
+	 * the expense of KGDB not being able to preempt a CPU running
+	 * with hard irqs off ATM.
+	 */
+	inband_nr_ipi = irqs_pipelined() ? 1 : nr_ipi;
 	percpu_ipi_descs = !!ncpus;
 	ipi_irq_base = ipi_base;
 
-	for (i = 0; i < nr_ipi; i++) {
+	for (i = 0; i < inband_nr_ipi; i++) {
 		if (!percpu_ipi_descs)
 			ipi_setup_sgi(i);
 		else
 			ipi_setup_lpi(i, ncpus);
 	}
+
+	/*
+	 * irq_pipeline: although a single IPI will be requested for
+	 * in-band operations, all IPI descriptors have to be mapped,
+	 * so that arm64_send_ipi() can issue out-of-band IPIs as
+	 * well.
+	 */
+	if (!percpu_ipi_descs)
+		ipi_setup_oob_sgi();
+	else
+		ipi_setup_oob_lpi(ncpus);
 
 	/* Setup the boot CPU immediately */
 	ipi_setup(smp_processor_id());
