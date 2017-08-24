@@ -16,6 +16,7 @@
 #include <linux/sched.h>
 #include <linux/sched/debug.h>
 #include <linux/thread_info.h>
+#include <linux/irq_pipeline.h>
 
 #include <asm/cpufeature.h>
 #include <asm/daifflags.h>
@@ -30,6 +31,107 @@
 #include <asm/sysreg.h>
 #include <asm/system_misc.h>
 
+#ifdef CONFIG_IRQ_PIPELINE
+
+static void do_interrupt_handler(struct pt_regs *regs,
+				void (*handler)(struct pt_regs *));
+
+static void arm64_enter_from_user_mode(struct pt_regs *regs);
+
+static void arm64_exit_to_user_mode(struct pt_regs *regs);
+
+/*
+ * When interrupt pipelining is enabled, a companion core might switch
+ * contexts over the irq stack, therefore subsequent interrupts might
+ * be taken over sibling stack contexts. So we need a not so subtle
+ * way of figuring out whether the irq stack was actually exited,
+ * which cannot depend on the current task pointer. Instead, we track
+ * the interrupt nesting depth for a CPU in irq_nesting.
+ */
+DEFINE_PER_CPU(int, irq_nesting);
+
+static __always_inline bool arm64_push_irq(void)
+{
+	/* True means non-nested, inner irq. */
+	return this_cpu_inc_return(irq_nesting) == 1;
+}
+
+static __always_inline void arm64_pop_irq(void)
+{
+	this_cpu_dec(irq_nesting);
+}
+
+static noinstr void arm64_pipeline_el0_irq(struct pt_regs *regs,
+				void (*handler)(struct pt_regs *))
+{
+	struct irq_stage_data *prevd;
+
+	arm64_enter_from_user_mode(regs);
+	instrumentation_begin();
+	/* Prep for handling, switching oob if needed. */
+	prevd = handle_irq_pipelined_prepare(regs);
+	do_interrupt_handler(regs, handler);
+	/* Done, unwind now. */
+	handle_irq_pipelined_finish(prevd, regs);
+	instrumentation_end();
+	arm64_exit_to_user_mode(regs);
+}
+
+static noinstr void arm64_pipeline_el1_irq(struct pt_regs *regs,
+				void (*handler)(struct pt_regs *))
+{
+	struct irq_stage_data *prevd;
+	irqentry_state_t state;
+
+	if (unlikely(running_oob() || irqs_disabled())) {
+		mte_check_tfsr_entry();
+		mte_disable_tco_entry(current);
+		instrumentation_begin();
+		prevd = handle_irq_pipelined_prepare(regs);
+		do_interrupt_handler(regs, handler);
+		handle_irq_pipelined_finish(prevd, regs);
+		instrumentation_end();
+		mte_check_tfsr_exit();
+		return;
+	}
+
+	/* In-band stage on entry, accepting interrupts. */
+	state = irqentry_enter(regs);
+	mte_check_tfsr_entry();
+	mte_disable_tco_entry(current);
+	instrumentation_begin();
+	prevd = handle_irq_pipelined_prepare(regs);
+	do_interrupt_handler(regs, handler);
+	trace_hardirqs_on();
+	unstall_inband_nocheck();
+	handle_irq_pipelined_finish(prevd, regs);
+	stall_inband_nocheck();
+	trace_hardirqs_off();
+	instrumentation_end();
+	mte_check_tfsr_exit();
+	irqentry_exit(regs, state);
+}
+
+#else  /* !CONFIG_IRQ_PIPELINE */
+
+static __always_inline bool arm64_push_irq(void)
+{
+	return on_thread_stack();
+}
+
+static __always_inline void arm64_pop_irq(void)
+{ }
+
+static  __always_inline void arm64_pipeline_el0_irq(struct pt_regs *regs,
+						void (*handler)(struct pt_regs *))
+{ }
+
+static  __always_inline void arm64_pipeline_el1_irq(struct pt_regs *regs,
+						void (*handler)(struct pt_regs *))
+{ }
+
+#endif	/* !CONFIG_IRQ_PIPELINE */
+
 /*
  * Handle IRQ/context state management when entering from kernel mode.
  * Before this function is called it is not safe to call regular kernel code,
@@ -40,6 +142,15 @@ static noinstr irqentry_state_t enter_from_kernel_mode(struct pt_regs *regs)
 	irqentry_state_t state;
 
 	state = irqentry_enter(regs);
+
+	/*
+	 * Our caller is going to inherit the hardware interrupt state
+	 * from the trapped context once we have returned: if running
+	 * in-band, align the stall bit on the upcoming state.
+	 */
+	if (running_inband() && interrupts_enabled(regs))
+		unstall_inband_nocheck();
+
 	mte_check_tfsr_entry();
 	mte_disable_tco_entry(current);
 
@@ -65,7 +176,14 @@ static void noinstr exit_to_kernel_mode(struct pt_regs *regs,
  */
 static __always_inline void arm64_enter_from_user_mode(struct pt_regs *regs)
 {
-	enter_from_user_mode(regs);
+	if (running_inband()) {
+		WARN_ON_ONCE(irq_pipeline_debug() && irqs_disabled());
+		stall_inband_nocheck();
+		enter_from_user_mode(regs);
+		trace_hardirqs_on();
+		unstall_inband_nocheck();
+	}
+
 	mte_disable_tco_entry(current);
 }
 
@@ -77,8 +195,17 @@ static __always_inline void arm64_enter_from_user_mode(struct pt_regs *regs)
 
 static __always_inline void arm64_exit_to_user_mode(struct pt_regs *regs)
 {
-	local_irq_disable();
-	exit_to_user_mode_prepare_legacy(regs);
+	if (irqs_pipelined()) {
+		hard_local_irq_disable();
+		if (running_inband()) {
+			stall_inband_nocheck();
+			trace_hardirqs_off();
+			exit_to_user_mode_prepare_legacy(regs);
+		}
+	} else {
+		local_irq_disable();
+		exit_to_user_mode_prepare_legacy(regs);
+	}
 	local_daif_mask();
 	mte_check_tfsr_exit();
 	exit_to_user_mode();
@@ -131,10 +258,12 @@ static void do_interrupt_handler(struct pt_regs *regs,
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
-	if (on_thread_stack())
+	if (arm64_push_irq())
 		call_on_irq_stack(regs, handler);
 	else
 		handler(regs);
+
+	arm64_pop_irq();
 
 	set_irq_regs(old_regs);
 }
@@ -499,6 +628,7 @@ static __always_inline void __el1_irq(struct pt_regs *regs,
 
 	exit_to_kernel_mode(regs, state);
 }
+
 static void noinstr el1_interrupt(struct pt_regs *regs,
 				  void (*handler)(struct pt_regs *))
 {
@@ -506,6 +636,8 @@ static void noinstr el1_interrupt(struct pt_regs *regs,
 
 	if (IS_ENABLED(CONFIG_ARM64_PSEUDO_NMI) && regs_irqs_disabled(regs))
 		__el1_pnmi(regs, handler);
+	else if (irqs_pipelined())
+		arm64_pipeline_el1_irq(regs, handler);
 	else
 		__el1_irq(regs, handler);
 }
@@ -805,18 +937,22 @@ asmlinkage void noinstr el0t_64_sync_handler(struct pt_regs *regs)
 static void noinstr el0_interrupt(struct pt_regs *regs,
 				  void (*handler)(struct pt_regs *))
 {
-	arm64_enter_from_user_mode(regs);
-
 	write_sysreg(DAIF_PROCCTX_NOIRQ, daif);
 
 	if (regs->pc & BIT(55))
 		arm64_apply_bp_hardening();
 
-	irq_enter_rcu();
-	do_interrupt_handler(regs, handler);
-	irq_exit_rcu();
+	if (irqs_pipelined()) {
+		arm64_pipeline_el0_irq(regs, handler);
+	} else {
+		arm64_enter_from_user_mode(regs);
 
-	arm64_exit_to_user_mode(regs);
+		irq_enter_rcu();
+		do_interrupt_handler(regs, handler);
+		irq_exit_rcu();
+
+		arm64_exit_to_user_mode(regs);
+	}
 }
 
 static void noinstr __el0_irq_handler_common(struct pt_regs *regs)
