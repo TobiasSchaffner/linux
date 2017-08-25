@@ -190,7 +190,8 @@ static int __init sunxi_sc_nmi_irq_init(struct device_node *node,
 	gc->chip_types[0].chip.irq_set_type	= sunxi_sc_nmi_set_type;
 	gc->chip_types[0].chip.flags		= IRQCHIP_EOI_THREADED |
 						  IRQCHIP_EOI_IF_HANDLED |
-						  IRQCHIP_SKIP_SET_WAKE;
+						  IRQCHIP_SKIP_SET_WAKE |
+						  IRQCHIP_PIPELINE_SAFE;
 	gc->chip_types[0].regs.ack		= data->reg_offs.pend;
 	gc->chip_types[0].regs.mask		= data->reg_offs.enable;
 	gc->chip_types[0].regs.type		= data->reg_offs.ctrl;
