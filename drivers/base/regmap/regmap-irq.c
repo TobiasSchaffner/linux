@@ -325,6 +325,7 @@ static const struct irq_chip regmap_irq_chip = {
 	.irq_set_wake		= regmap_irq_set_wake,
 	.irq_request_resources  = regmap_irq_reqres,
 	.irq_release_resources  = regmap_irq_relres,
+	.flags			= IRQCHIP_PIPELINE_SAFE,
 };
 
 static inline int read_sub_irq_data(struct regmap_irq_chip_data *data,
