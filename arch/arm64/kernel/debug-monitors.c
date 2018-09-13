@@ -10,6 +10,7 @@
 #include <linux/cpu.h>
 #include <linux/debugfs.h>
 #include <linux/hardirq.h>
+#include <linux/irqstage.h>
 #include <linux/init.h>
 #include <linux/ptrace.h>
 #include <linux/kprobes.h>
