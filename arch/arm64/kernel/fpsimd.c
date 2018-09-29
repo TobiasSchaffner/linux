@@ -206,6 +206,33 @@ static inline void sme_free(struct task_struct *t) { }
 
 static void fpsimd_bind_task_to_cpu(void);
 
+#ifdef CONFIG_DOVETAIL
+
+#define get_cpu_fpsimd_context(__flags)			\
+	do {						\
+		(__flags) = hard_preempt_disable();	\
+	} while (0)
+
+#define put_cpu_fpsimd_context(__flags)			\
+	do {						\
+		hard_preempt_enable(__flags);		\
+	} while (0)
+
+void fpsimd_restore_current_oob(void)
+{
+	/*
+	 * Restore the fpsimd context for the current task as it
+	 * resumes from dovetail_context_switch(), which always happen
+	 * on the out-of-band stage. Skip this for kernel threads
+	 * which have no such context but always bear
+	 * TIF_FOREIGN_FPSTATE.
+	 */
+	if (current->mm)
+		fpsimd_restore_current_state();
+}
+
+#else  /* !CONFIG_DOVETAIL */
+
 /*
  * Claim ownership of the CPU FPSIMD context for use by the calling context.
  *
@@ -218,24 +245,24 @@ static void fpsimd_bind_task_to_cpu(void);
  * half processing is always in thread context on RT kernels so it
  * implicitly prevents bottom half processing as well.
  */
-static void get_cpu_fpsimd_context(void)
-{
-	if (!IS_ENABLED(CONFIG_PREEMPT_RT)) {
-		/*
-		 * The softirq subsystem lacks a true unmask/mask API, and
-		 * re-enabling softirq processing using local_bh_enable() will
-		 * not only unmask softirqs, it will also result in immediate
-		 * delivery of any pending softirqs.
-		 * This is undesirable when running with IRQs disabled, but in
-		 * that case, there is no need to mask softirqs in the first
-		 * place, so only bother doing so when IRQs are enabled.
-		 */
-		if (!irqs_disabled())
-			local_bh_disable();
-	} else {
-		preempt_disable();
-	}
-}
+#define get_cpu_fpsimd_context(__flags)							\
+	do {										\
+		if (!IS_ENABLED(CONFIG_PREEMPT_RT)) {					\
+			/*								\
+		 	 * The softirq subsystem lacks a true unmask/mask API, and	\
+		 	 * re-enabling softirq processing using local_bh_enable() will	\
+		 	 * not only unmask softirqs, it will also result in immediate	\
+		 	 * delivery of any pending softirqs.				\
+		 	 * This is undesirable when running with IRQs disabled, but in	\
+		 	 * that case, there is no need to mask softirqs in the first	\
+		 	 * place, so only bother doing so when IRQs are enabled.	\
+		 	 */								\
+			if (!irqs_disabled())						\
+				local_bh_disable();					\
+		} else									\
+			preempt_disable();						\
+		(void)(__flags);							\
+	} while (0)
 
 /*
  * Release the CPU FPSIMD context.
@@ -244,15 +271,17 @@ static void get_cpu_fpsimd_context(void)
  * previously called, with no call to put_cpu_fpsimd_context() in the
  * meantime.
  */
-static void put_cpu_fpsimd_context(void)
-{
-	if (!IS_ENABLED(CONFIG_PREEMPT_RT)) {
-		if (!irqs_disabled())
-			local_bh_enable();
-	} else {
-		preempt_enable();
-	}
-}
+#define put_cpu_fpsimd_context(__flags)			\
+	do {						\
+		if (!IS_ENABLED(CONFIG_PREEMPT_RT)) {	\
+			if (!irqs_disabled())		\
+				local_bh_enable();	\
+		} else					\
+			preempt_enable();		\
+		(void)(__flags);			\
+	} while (0)
+
+#endif	/* !CONFIG_DOVETAIL */
 
 unsigned int task_get_vl(const struct task_struct *task, enum vec_type type)
 {
@@ -366,6 +395,7 @@ static void task_fpsimd_load(void)
 	WARN_ON(!system_supports_fpsimd());
 	WARN_ON(preemptible());
 	WARN_ON(test_thread_flag(TIF_KERNEL_FPSTATE));
+	WARN_ON_ONCE(dovetail_debug() && !hard_irqs_disabled());
 
 	if (system_supports_sve() || system_supports_sme()) {
 		switch (current->thread.fp_type) {
@@ -454,6 +484,7 @@ static void fpsimd_save_user_state(void)
 
 	WARN_ON(!system_supports_fpsimd());
 	WARN_ON(preemptible());
+	WARN_ON_ONCE(dovetail_debug() && !hard_irqs_disabled());
 
 	if (test_thread_flag(TIF_FOREIGN_FPSTATE))
 		return;
@@ -502,6 +533,7 @@ static void fpsimd_save_user_state(void)
 			 * re-enter user with corrupt state.
 			 * There's no way to recover, so kill it:
 			 */
+			hard_cond_local_irq_enable();
 			force_signal_inject(SIGKILL, SI_KERNEL, 0, 0);
 			return;
 		}
@@ -668,12 +700,15 @@ static inline void fpsimd_to_sve(struct task_struct *task)
 	unsigned int vq;
 	struct arm64_sve_state *sst = task->thread.sve_state;
 	struct user_fpsimd_state const *fst = &task->thread.uw.fpsimd_state;
+	unsigned long flags;
 
 	if (!system_supports_sve() && !system_supports_sme())
 		return;
 
+	flags = hard_cond_local_irq_save();
 	vq = sve_vq_from_vl(thread_get_cur_vl(&task->thread));
 	__fpsimd_to_sve(sst, fst, vq);
+	hard_cond_local_irq_restore(flags);
 }
 
 /*
@@ -694,16 +729,19 @@ static inline void sve_to_fpsimd(struct task_struct *task)
 	struct user_fpsimd_state *fst = &task->thread.uw.fpsimd_state;
 	unsigned int i;
 	__uint128_t const *p;
+	unsigned long flags;
 
 	if (!system_supports_sve() && !system_supports_sme())
 		return;
 
+	flags = hard_cond_local_irq_save();
 	vl = thread_get_cur_vl(&task->thread);
 	vq = sve_vq_from_vl(vl);
 	for (i = 0; i < SVE_NUM_ZREGS; ++i) {
 		p = (__uint128_t const *)ZREG(sst, vq, i);
 		fst->vregs[i] = arm64_le128_to_cpu(*p);
 	}
+	hard_cond_local_irq_restore(flags);
 }
 
 static inline void __fpsimd_zero_vregs(struct user_fpsimd_state *fpsimd)
@@ -1310,6 +1348,8 @@ void sme_suspend_exit(void)
  */
 void do_sve_acc(unsigned long esr, struct pt_regs *regs)
 {
+	unsigned long flags;
+
 	oob_trap_notify(ARM64_TRAP_SVE, regs);
 
 	/* Even if we chose not to use SVE, the hardware could still trap: */
@@ -1324,7 +1364,7 @@ void do_sve_acc(unsigned long esr, struct pt_regs *regs)
 		goto out;
 	}
 
-	get_cpu_fpsimd_context();
+	get_cpu_fpsimd_context(flags);
 
 	if (test_and_set_thread_flag(TIF_SVE))
 		WARN_ON(1); /* SVE access shouldn't have trapped */
@@ -1348,7 +1388,7 @@ void do_sve_acc(unsigned long esr, struct pt_regs *regs)
 		fpsimd_flush_task_state(current);
 	}
 
-	put_cpu_fpsimd_context();
+	put_cpu_fpsimd_context(flags);
 out:
 	oob_trap_unwind(ARM64_TRAP_SVE, regs);
 }
@@ -1447,6 +1487,8 @@ void sme_enable_dvmsync(void)
  */
 void do_sme_acc(unsigned long esr, struct pt_regs *regs)
 {
+	unsigned long flags;
+
 	oob_trap_notify(ARM64_TRAP_SME, regs);
 
 	/* Even if we chose not to use SME, the hardware could still trap: */
@@ -1471,7 +1513,7 @@ void do_sme_acc(unsigned long esr, struct pt_regs *regs)
 		goto out;
 	}
 
-	get_cpu_fpsimd_context();
+	get_cpu_fpsimd_context(flags);
 
 	/* With TIF_SME userspace shouldn't generate any traps */
 	if (test_and_set_thread_flag(TIF_SME))
@@ -1486,7 +1528,7 @@ void do_sme_acc(unsigned long esr, struct pt_regs *regs)
 		fpsimd_flush_task_state(current);
 	}
 
-	put_cpu_fpsimd_context();
+	put_cpu_fpsimd_context(flags);
 out:
 	oob_trap_unwind(ARM64_TRAP_SME, regs);
 }
@@ -1561,6 +1603,7 @@ static void fpsimd_save_kernel_state(struct task_struct *task)
 	};
 
 	BUG_ON(!cpu_fp_state.st);
+	WARN_ON_ONCE(dovetail_debug() && !hard_irqs_disabled());
 
 	fpsimd_save_state(task->thread.kernel_fpsimd_state);
 	fpsimd_bind_state_to_cpu(&cpu_fp_state);
@@ -1596,7 +1639,7 @@ void fpsimd_thread_switch(struct task_struct *next)
 	if (!system_supports_fpsimd())
 		return;
 
-	WARN_ON_ONCE(!irqs_disabled());
+	WARN_ON_ONCE(!hard_irqs_disabled());
 
 	/* Save unsaved fpsimd state, if any: */
 	if (test_thread_flag(TIF_KERNEL_FPSTATE))
@@ -1662,11 +1705,12 @@ void fpsimd_flush_thread(void)
 {
 	struct arm64_sve_state *sve_state = NULL;
 	struct arm64_sme_state *sme_state = NULL;
+	unsigned long flags;
 
 	if (!system_supports_fpsimd())
 		return;
 
-	get_cpu_fpsimd_context();
+	get_cpu_fpsimd_context(flags);
 
 	fpsimd_flush_task_state(current);
 	memset(&current->thread.uw.fpsimd_state, 0,
@@ -1698,7 +1742,7 @@ void fpsimd_flush_thread(void)
 
 	current->thread.fp_type = FP_STATE_FPSIMD;
 
-	put_cpu_fpsimd_context();
+	put_cpu_fpsimd_context(flags);
 	kfree(sve_state);
 	kfree(sme_state);
 }
@@ -1709,12 +1753,14 @@ void fpsimd_flush_thread(void)
  */
 void fpsimd_preserve_current_state(void)
 {
+	unsigned long flags;
+
 	if (!system_supports_fpsimd())
 		return;
 
-	get_cpu_fpsimd_context();
+	get_cpu_fpsimd_context(flags);
 	fpsimd_save_user_state();
-	put_cpu_fpsimd_context();
+	put_cpu_fpsimd_context(flags);
 }
 
 /*
@@ -1760,11 +1806,14 @@ static void fpsimd_bind_task_to_cpu(void)
 void fpsimd_bind_state_to_cpu(struct cpu_fp_state *state)
 {
 	struct cpu_fp_state *last = this_cpu_ptr(&fpsimd_last_state);
+	unsigned long flags;
 
 	WARN_ON(!system_supports_fpsimd());
-	WARN_ON(!in_softirq() && !irqs_disabled());
+	WARN_ON(running_inband() && !in_softirq() && !irqs_disabled());
 
+	flags = hard_cond_local_irq_save();
 	*last = *state;
+	hard_cond_local_irq_restore(flags);
 }
 
 /*
@@ -1775,6 +1824,8 @@ void fpsimd_bind_state_to_cpu(struct cpu_fp_state *state)
  */
 void fpsimd_restore_current_state(void)
 {
+	unsigned long flags;
+
 	/*
 	 * TIF_FOREIGN_FPSTATE is set on the init task and copied by
 	 * arch_dup_task_struct() regardless of whether FP/SIMD is detected.
@@ -1799,14 +1850,14 @@ void fpsimd_restore_current_state(void)
 		return;
 	}
 
-	get_cpu_fpsimd_context();
+	get_cpu_fpsimd_context(flags);
 
 	if (test_and_clear_thread_flag(TIF_FOREIGN_FPSTATE)) {
 		task_fpsimd_load();
 		fpsimd_bind_task_to_cpu();
 	}
 
-	put_cpu_fpsimd_context();
+	put_cpu_fpsimd_context(flags);
 }
 
 void fpsimd_update_current_state(struct user_fpsimd_state const *state)
@@ -1849,13 +1900,15 @@ void fpsimd_flush_task_state(struct task_struct *t)
 
 void fpsimd_save_and_flush_current_state(void)
 {
+	unsigned long flags;
+
 	if (!system_supports_fpsimd())
 		return;
 
-	get_cpu_fpsimd_context();
+	get_cpu_fpsimd_context(flags);
 	fpsimd_save_user_state();
 	fpsimd_flush_task_state(current);
-	put_cpu_fpsimd_context();
+	put_cpu_fpsimd_context(flags);
 }
 
 /*
@@ -1869,10 +1922,10 @@ void fpsimd_save_and_flush_cpu_state(void)
 	if (!system_supports_fpsimd())
 		return;
 	WARN_ON(preemptible());
-	local_irq_save(flags);
+	flags = hard_local_irq_save();
 	fpsimd_save_user_state();
 	fpsimd_flush_cpu_state();
-	local_irq_restore(flags);
+	hard_local_irq_restore(flags);
 }
 
 #ifdef CONFIG_KERNEL_MODE_NEON
@@ -1901,6 +1954,8 @@ void fpsimd_save_and_flush_cpu_state(void)
  */
 void kernel_neon_begin(struct user_fpsimd_state *state)
 {
+	unsigned long flags;
+
 	if (WARN_ON(!system_supports_fpsimd()))
 		return;
 
@@ -1908,7 +1963,7 @@ void kernel_neon_begin(struct user_fpsimd_state *state)
 
 	BUG_ON(!may_use_simd());
 
-	get_cpu_fpsimd_context();
+	get_cpu_fpsimd_context(flags);
 
 	/* Save unsaved fpsimd state, if any: */
 	if (test_thread_flag(TIF_KERNEL_FPSTATE)) {
@@ -1949,7 +2004,7 @@ void kernel_neon_begin(struct user_fpsimd_state *state)
 	/* Invalidate any task state remaining in the fpsimd regs: */
 	fpsimd_flush_cpu_state();
 
-	put_cpu_fpsimd_context();
+	put_cpu_fpsimd_context(flags);
 }
 EXPORT_SYMBOL_GPL(kernel_neon_begin);
 
@@ -1967,6 +2022,8 @@ EXPORT_SYMBOL_GPL(kernel_neon_begin);
  */
 void kernel_neon_end(struct user_fpsimd_state *state)
 {
+	unsigned long flags;
+
 	if (!system_supports_fpsimd())
 		return;
 
@@ -1979,7 +2036,9 @@ void kernel_neon_end(struct user_fpsimd_state *state)
 	 * running in softirq context on non-PREEMPT_RT.
 	 */
 	if (!IS_ENABLED(CONFIG_PREEMPT_RT) && in_serving_softirq()) {
+		flags = hard_cond_local_irq_save();
 		fpsimd_load_state(state);
+		hard_cond_local_irq_restore(flags);
 	} else {
 		clear_thread_flag(TIF_KERNEL_FPSTATE);
 		WARN_ON(current->thread.kernel_fpsimd_state != state);
@@ -2112,6 +2171,42 @@ void cpu_enable_fpsimd(const struct arm64_cpu_capabilities *__always_unused p)
 	write_sysreg(read_sysreg(CPACR_EL1) | enable, CPACR_EL1);
 	isb();
 }
+
+#ifdef CONFIG_DOVETAIL
+
+/*
+ * Holds the in-kernel fpu state when preempted by a task running on the
+ * out-of-band stage.
+ */
+static DEFINE_PER_CPU(struct user_fpsimd_state, in_kernel_fpstate);
+
+void fpsimd_suspend_inband(void)
+{
+	struct user_fpsimd_state *kfpu = this_cpu_ptr(&in_kernel_fpstate);
+
+	/*
+	 * If TIF_KERNEL_FPSTATE is set, we are dealing with the preemption of an
+	 * inband kernel context currently using the fpu by a thread which resumes
+	 * on the oob stage.
+	 */
+	if (test_thread_flag(TIF_KERNEL_FPSTATE)) {
+		fpsimd_save_state(kfpu);
+		set_thread_local_flags(_TLF_KERNEL_FPU_PREEMPTED);
+	}
+}
+
+void fpsimd_resume_inband(void)
+{
+	struct user_fpsimd_state *kfpu = this_cpu_ptr(&in_kernel_fpstate);
+
+	if (test_thread_local_flags(_TLF_KERNEL_FPU_PREEMPTED)) {
+		fpsimd_load_state(kfpu);
+		clear_thread_local_flags(_TLF_KERNEL_FPU_PREEMPTED);
+	}
+
+}
+
+#endif
 
 /*
  * FP/SIMD support code initialisation.
