@@ -79,6 +79,7 @@ void arch_setup_new_exec(void);
 #define TIF_SECCOMP		11	/* syscall secure computing */
 #define TIF_SYSCALL_EMU		12	/* syscall emulation active */
 #define TIF_PATCH_PENDING	13	/* pending live patching update */
+#define TIF_KERNEL_FP_PREEMPTED	15	/* Dovetail: kernel mode FPSIMD section preempted by OOB */
 #define TIF_MAYDAY		16	/* Emergency trap pending */
 #define TIF_RETUSER		17	/* INBAND_TASK_RETUSER is pending */
 #define TIF_MEMDIE		18	/* is terminating due to OOM killer */
@@ -139,9 +140,10 @@ void arch_setup_new_exec(void);
 /*
  * Local (synchronous) thread flags.
  */
-#define _TLF_OOB		0x0001
-#define _TLF_DOVETAIL		0x0002
-#define _TLF_OFFSTAGE		0x0004
-#define _TLF_OOBTRAP		0x0008
+#define _TLF_OOB			0x0001
+#define _TLF_DOVETAIL			0x0002
+#define _TLF_OFFSTAGE			0x0004
+#define _TLF_OOBTRAP			0x0008
+#define _TLF_KERNEL_FPU_PREEMPTED	0x0010	/* Dovetail: kernel mode FPSIMD section preempted by OOB */
 
 #endif /* __ASM_THREAD_INFO_H */
