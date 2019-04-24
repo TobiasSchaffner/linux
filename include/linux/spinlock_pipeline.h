@@ -11,6 +11,7 @@
 #endif
 
 #include <dovetail/spinlock.h>
+#include <dovetail/thread_info_accessors.h>
 
 #define hard_spin_lock_irqsave(__rlock, __flags)		\
 	do {							\

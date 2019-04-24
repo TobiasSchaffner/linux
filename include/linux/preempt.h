@@ -512,6 +512,41 @@ static __always_inline void preempt_enable_nested(void)
 DEFINE_LOCK_GUARD_0(preempt, preempt_disable(), preempt_enable())
 DEFINE_LOCK_GUARD_0(preempt_notrace, preempt_disable_notrace(), preempt_enable_notrace())
 
+#ifdef CONFIG_IRQ_PIPELINE
+
+unsigned long hard_preempt_disable(void);
+void hard_preempt_enable(unsigned long flags);
+unsigned long hard_bh_disable(void);
+void hard_bh_enable(unsigned long flags);
+
+#else  /* !CONFIG_IRQ_PIPELINE */
+
+#define hard_preempt_disable()		\
+({					\
+	preempt_disable();		\
+	0;				\
+})
+
+#define hard_preempt_enable(__flags)	\
+	do {				\
+		preempt_enable();	\
+		(void)(__flags);	\
+	} while (0)
+
+#define hard_bh_disable()		\
+({					\
+	local_bh_disable();		\
+	0;				\
+})
+
+#define hard_bh_enable(__flags)		\
+	do {				\
+		local_bh_enable();	\
+		(void)(__flags);	\
+	} while (0)
+
+#endif	/* !CONFIG_IRQ_PIPELINE */
+
 #ifdef CONFIG_PREEMPT_DYNAMIC
 
 extern bool preempt_model_none(void);

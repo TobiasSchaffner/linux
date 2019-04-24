@@ -1823,14 +1823,15 @@ static inline void fixup_percpu_data(void)
 	 */
 	WARN_ON(!hard_irqs_disabled());
 
-	memcpy(&per_cpu(irq_map_array, 0)[0], &bootup_irq_map,
-	       sizeof(struct irq_event_map));
+	/* We get rid of any strict __percpu address space check, this is ok. */
+	memcpy((void *)(__force unsigned long)&per_cpu(irq_map_array, 0)[0],
+	       &bootup_irq_map, sizeof(struct irq_event_map));
 
 	for_each_possible_cpu(cpu) {
 		p = &per_cpu(irq_pipeline, cpu);
 		p->stages[0].stage = &inband_stage;
-		p->stages[0].log.map = &per_cpu(irq_map_array, cpu)[0];
-		p->stages[1].log.map = &per_cpu(irq_map_array, cpu)[1];
+		p->stages[0].log.map = (void *)(__force unsigned long)&per_cpu(irq_map_array, cpu)[0];
+		p->stages[1].log.map = (void *)(__force unsigned long)&per_cpu(irq_map_array, cpu)[1];
 #ifdef CONFIG_DEBUG_IRQ_PIPELINE
 		p->stages[0].cpu = cpu;
 		p->stages[1].cpu = cpu;

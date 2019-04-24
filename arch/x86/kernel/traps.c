@@ -423,8 +423,12 @@ noinstr bool handle_bug(struct pt_regs *regs)
 	 * Since we're emulating a CALL with exceptions, restore the interrupt
 	 * state to what it was at the exception site.
 	 */
-	if (regs->flags & X86_EFLAGS_IF)
-		raw_local_irq_enable();
+	if (regs->flags & X86_EFLAGS_IF) {
+		if (running_oob())
+			hard_local_irq_enable();
+		else
+			local_irq_enable_full();
+	}
 
 	switch (ud_type) {
 	case BUG_UD1_WARN:
@@ -472,7 +476,7 @@ noinstr bool handle_bug(struct pt_regs *regs)
 	}
 
 	if (regs->flags & X86_EFLAGS_IF)
-		raw_local_irq_disable();
+		hard_local_irq_disable();
 	instrumentation_end();
 
 	return handled;

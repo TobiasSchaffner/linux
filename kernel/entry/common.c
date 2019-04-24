@@ -48,7 +48,13 @@ static __always_inline unsigned long __exit_to_user_mode_loop(struct pt_regs *re
 	 */
 	while (ti_work & EXIT_TO_USER_MODE_WORK_LOOP) {
 
-		local_irq_enable();
+		local_irq_enable_full();
+
+		/*
+		 * Check that local_irq_enable_exit_to_user() does the
+		 * right thing when pipelining.
+		 */
+		WARN_ON_ONCE(irq_pipeline_debug() && hard_irqs_disabled());
 
 		if (ti_work & (_TIF_NEED_RESCHED | _TIF_NEED_RESCHED_LAZY)) {
 			if (!rseq_grant_slice_extension(ti_work, TIF_SLICE_EXT_DENY))
@@ -77,11 +83,12 @@ static __always_inline unsigned long __exit_to_user_mode_loop(struct pt_regs *re
 		 * might have changed while interrupts and preemption was
 		 * enabled above.
 		 */
-		local_irq_disable();
+		local_irq_disable_full();
 
 		/* Check if any of the above work has queued a deferred wakeup */
 		tick_nohz_user_enter_prepare();
 
+		WARN_ON_ONCE(irq_pipeline_debug() && !hard_irqs_disabled());
 		ti_work = read_thread_flags();
 	}
 
@@ -112,6 +119,16 @@ noinstr irqentry_state_t irqentry_enter(struct pt_regs *regs)
 		irqentry_state_t ret = {
 			.exit_rcu = false,
 		};
+
+#ifdef CONFIG_IRQ_PIPELINE
+		if (running_oob()) {
+			WARN_ON_ONCE(irq_pipeline_debug() && oob_irqs_disabled());
+			ret.stage_info = IRQENTRY_OOB;
+			return ret;
+		}
+
+		ret.stage_info = IRQENTRY_INBAND_UNSTALLED;
+#endif
 
 		irqentry_enter_from_user_mode(regs);
 		return ret;
@@ -161,6 +178,9 @@ void dynamic_irqentry_exit_cond_resched(void)
 
 noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 {
+	if (running_oob())
+		return;
+
 	if (user_mode(regs))
 		irqentry_exit_to_user_mode(regs);
 	else

@@ -58,6 +58,7 @@
 struct task_struct;
 #include <asm/cpufeature.h>
 #include <linux/atomic.h>
+#include <dovetail/thread_info.h>
 
 struct thread_info {
 	unsigned long		flags;		/* low level flags */
@@ -66,6 +67,7 @@ struct thread_info {
 #ifdef CONFIG_SMP
 	u32			cpu;		/* current CPU */
 #endif
+	struct irq_pipeline_state	irq_pipeline_state;
 };
 
 #define INIT_THREAD_INFO(tsk)			\
@@ -207,6 +209,9 @@ static inline int arch_within_stack_frames(const void * const stack,
  * have to worry about atomic accesses.
  */
 #define TS_COMPAT		0x0002	/* 32bit syscall active (64BIT)*/
+#define TS_OOB			0x0004	/* Thread is running out-of-band */
+
+#define _TLF_OOB		TS_OOB
 
 #ifndef __ASSEMBLER__
 #ifdef CONFIG_COMPAT
