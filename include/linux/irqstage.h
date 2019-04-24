@@ -155,8 +155,8 @@ struct irq_stage_data *this_staged(struct irq_stage *stage)
  * CPU. Additionally, if the target stage is known at build time,
  * consider using this_{inband, oob}_staged() instead.
  */
-static __always_inline
-struct irq_stage_data *percpu_inband_staged(struct irq_stage *stage, int cpu)
+static __always_inline struct irq_stage_data *
+percpu_inband_staged(struct irq_stage *stage, int cpu)
 {
 	return &per_cpu(irq_pipeline.stages, cpu)[stage->index];
 }
@@ -267,7 +267,8 @@ static __always_inline bool oob_stage_present(void)
  * (i.e. logged) on the current CPU for the given stage. Hard IRQs
  * must be disabled.
  */
-static __always_inline int stage_irqs_pending(struct irq_stage_data *pd)
+static __always_inline
+int stage_irqs_pending(struct irq_stage_data *pd)
 {
 	return pd->log.index_0 != 0;
 }

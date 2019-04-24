@@ -158,6 +158,7 @@ static int shstk_setup(void)
 {
 	struct thread_shstk *shstk = &current->thread.shstk;
 	unsigned long addr, size;
+	unsigned long flags;
 
 	/* Already enabled */
 	if (features_enabled(ARCH_SHSTK_SHSTK))
@@ -172,10 +173,10 @@ static int shstk_setup(void)
 	if (IS_ERR_VALUE(addr))
 		return PTR_ERR((void *)addr);
 
-	fpregs_lock_and_load();
+	flags = fpregs_lock_and_load();
 	wrmsrq(MSR_IA32_PL3_SSP, addr + size);
 	wrmsrq(MSR_IA32_U_CET, CET_SHSTK_EN);
-	fpregs_unlock();
+	fpregs_unlock(flags);
 
 	shstk->base = addr;
 	shstk->size = size;
@@ -236,52 +237,55 @@ unsigned long shstk_alloc_thread_stack(struct task_struct *tsk, u64 clone_flags,
 static unsigned long get_user_shstk_addr(void)
 {
 	unsigned long long ssp;
+	unsigned long flags;
 
-	fpregs_lock_and_load();
+	flags = fpregs_lock_and_load();
 
 	rdmsrq(MSR_IA32_PL3_SSP, ssp);
 
-	fpregs_unlock();
+	fpregs_unlock(flags);
 
 	return ssp;
 }
 
 int shstk_pop(u64 *val)
 {
+	unsigned long flags;
 	int ret = 0;
 	u64 ssp;
 
 	if (!features_enabled(ARCH_SHSTK_SHSTK))
 		return -ENOTSUPP;
 
-	fpregs_lock_and_load();
+	flags = fpregs_lock_and_load();
 
 	rdmsrq(MSR_IA32_PL3_SSP, ssp);
 	if (val && get_user(*val, (__user u64 *)ssp))
 		ret = -EFAULT;
 	else
 		wrmsrq(MSR_IA32_PL3_SSP, ssp + SS_FRAME_SIZE);
-	fpregs_unlock();
+	fpregs_unlock(flags);
 
 	return ret;
 }
 
 int shstk_push(u64 val)
 {
+	unsigned long flags;
 	u64 ssp;
 	int ret;
 
 	if (!features_enabled(ARCH_SHSTK_SHSTK))
 		return -ENOTSUPP;
 
-	fpregs_lock_and_load();
+	flags = fpregs_lock_and_load();
 
 	rdmsrq(MSR_IA32_PL3_SSP, ssp);
 	ssp -= SS_FRAME_SIZE;
 	ret = write_user_shstk_64((__user void *)ssp, val);
 	if (!ret)
 		wrmsrq(MSR_IA32_PL3_SSP, ssp);
-	fpregs_unlock();
+	fpregs_unlock(flags);
 
 	return ret;
 }
@@ -388,6 +392,7 @@ out_err:
 int setup_signal_shadow_stack(struct ksignal *ksig)
 {
 	void __user *restorer = ksig->ka.sa.sa_restorer;
+	unsigned long flags;
 	unsigned long ssp;
 	int err;
 
@@ -412,15 +417,16 @@ int setup_signal_shadow_stack(struct ksignal *ksig)
 	if (unlikely(err))
 		return -EFAULT;
 
-	fpregs_lock_and_load();
+	flags = fpregs_lock_and_load();
 	wrmsrq(MSR_IA32_PL3_SSP, ssp);
-	fpregs_unlock();
+	fpregs_unlock(flags);
 
 	return 0;
 }
 
 int restore_signal_shadow_stack(void)
 {
+	unsigned long flags;
 	unsigned long ssp;
 	int err;
 
@@ -436,9 +442,9 @@ int restore_signal_shadow_stack(void)
 	if (unlikely(err))
 		return err;
 
-	fpregs_lock_and_load();
+	flags = fpregs_lock_and_load();
 	wrmsrq(MSR_IA32_PL3_SSP, ssp);
-	fpregs_unlock();
+	fpregs_unlock(flags);
 
 	return 0;
 }
@@ -483,6 +489,7 @@ void shstk_free(struct task_struct *tsk)
 
 static int wrss_control(bool enable)
 {
+	unsigned long flags;
 	u64 msrval;
 
 	if (!cpu_feature_enabled(X86_FEATURE_USER_SHSTK))
@@ -500,7 +507,7 @@ static int wrss_control(bool enable)
 	if (features_enabled(ARCH_SHSTK_WRSS) == enable)
 		return 0;
 
-	fpregs_lock_and_load();
+	flags = fpregs_lock_and_load();
 	rdmsrq(MSR_IA32_U_CET, msrval);
 
 	if (enable) {
@@ -517,13 +524,15 @@ static int wrss_control(bool enable)
 	wrmsrq(MSR_IA32_U_CET, msrval);
 
 unlock:
-	fpregs_unlock();
+	fpregs_unlock(flags);
 
 	return 0;
 }
 
 static int shstk_disable(void)
 {
+	unsigned long flags;
+
 	if (!cpu_feature_enabled(X86_FEATURE_USER_SHSTK))
 		return -EOPNOTSUPP;
 
@@ -531,11 +540,11 @@ static int shstk_disable(void)
 	if (!features_enabled(ARCH_SHSTK_SHSTK))
 		return 0;
 
-	fpregs_lock_and_load();
+	flags = fpregs_lock_and_load();
 	/* Disable WRSS too when disabling shadow stack */
 	wrmsrq(MSR_IA32_U_CET, 0);
 	wrmsrq(MSR_IA32_PL3_SSP, 0);
-	fpregs_unlock();
+	fpregs_unlock(flags);
 
 	shstk_free(current);
 	features_clr(ARCH_SHSTK_SHSTK | ARCH_SHSTK_WRSS);

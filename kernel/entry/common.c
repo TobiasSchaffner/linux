@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include <linux/irq-entry-common.h>
+#include <linux/irq_pipeline.h>
 #include <linux/resume_user_mode.h>
 #include <linux/highmem.h>
 #include <linux/jump_label.h>
@@ -49,6 +50,12 @@ static __always_inline unsigned long __exit_to_user_mode_loop(struct pt_regs *re
 
 		local_irq_enable_exit_to_user(ti_work);
 
+		/*
+		 * Check that local_irq_enable_exit_to_user() does the
+		 * right thing when pipelining.
+		 */
+		WARN_ON_ONCE(irq_pipeline_debug() && hard_irqs_disabled());
+
 		if (ti_work & (_TIF_NEED_RESCHED | _TIF_NEED_RESCHED_LAZY)) {
 			if (!rseq_grant_slice_extension(ti_work & TIF_SLICE_EXT_DENY))
 				schedule();
@@ -79,6 +86,7 @@ static __always_inline unsigned long __exit_to_user_mode_loop(struct pt_regs *re
 		/* Check if any of the above work has queued a deferred wakeup */
 		tick_nohz_user_enter_prepare();
 
+		WARN_ON_ONCE(irq_pipeline_debug() && !hard_irqs_disabled());
 		ti_work = read_thread_flags();
 	}
 
@@ -107,12 +115,37 @@ noinstr irqentry_state_t irqentry_enter(struct pt_regs *regs)
 {
 	irqentry_state_t ret = {
 		.exit_rcu = false,
+#ifdef CONFIG_IRQ_PIPELINE
+		.stage_info = IRQENTRY_INBAND_STALLED,
+#endif
 	};
 
+#ifdef CONFIG_IRQ_PIPELINE
+	if (running_oob()) {
+		WARN_ON_ONCE(irq_pipeline_debug() && oob_irqs_disabled());
+		ret.stage_info = IRQENTRY_OOB;
+		return ret;
+	}
+#endif
+
 	if (user_mode(regs)) {
+#ifdef CONFIG_IRQ_PIPELINE
+		ret.stage_info = IRQENTRY_INBAND_UNSTALLED;
+#endif
 		irqentry_enter_from_user_mode(regs);
 		return ret;
 	}
+
+#ifdef CONFIG_IRQ_PIPELINE
+	/*
+	 * IRQ pipeline: If we trapped from kernel space, the virtual
+	 * state may or may not match the hardware state. Since hard
+	 * irqs are off on entry, we have to stall the in-band
+	 * stage. Keep note of the unstalled state on entry through.
+	 */
+	if (!test_and_stall_inband_nocheck())
+		ret.stage_info = IRQENTRY_INBAND_UNSTALLED;
+#endif
 
 	/*
 	 * If this entry hit the idle task invoke ct_irq_enter() whether
@@ -210,31 +243,107 @@ void dynamic_irqentry_exit_cond_resched(void)
 #endif
 #endif
 
+#ifdef CONFIG_IRQ_PIPELINE
+
+static inline
+bool irqexit_may_preempt_schedule(irqentry_state_t state,
+				struct pt_regs *regs)
+{
+	return state.stage_info == IRQENTRY_INBAND_UNSTALLED;
+}
+
+#else
+
+static inline
+bool irqexit_may_preempt_schedule(irqentry_state_t state,
+				struct pt_regs *regs)
+{
+	return !regs_irqs_disabled(regs);
+}
+
+#endif
+
+#ifdef CONFIG_IRQ_PIPELINE
+
+static bool irqentry_syncstage(irqentry_state_t state) /* inband, hard irqs off */
+{
+	/*
+	 * If pipelining interrupts, enable in-band IRQs then
+	 * synchronize the interrupt log on exit if:
+	 *
+	 * - the inband stage was NOT stalled on kernel entry.
+	 *
+	 * - we entered the kernel over the oob stage, thus had to go
+	 * through a stage migration (e.g. so that some inband handler
+	 * could deal with a CPU exception).
+	 *
+	 * We run before preempt_schedule_irq() may be called later on
+	 * by preemptible kernels, so that any rescheduling request
+	 * triggered by in-band IRQ handlers is considered.
+	 */
+	if (state.stage_info == IRQENTRY_INBAND_UNSTALLED ||
+		state.stage_info == IRQENTRY_OOB) {
+		unstall_inband_nocheck();
+		synchronize_pipeline_on_irq();
+		stall_inband_nocheck();
+		return true;
+	}
+
+	return false;
+}
+
+static void irqentry_unstall(void)
+{
+	unstall_inband_nocheck();
+}
+
+#else
+
+static bool irqentry_syncstage(irqentry_state_t state)
+{
+	return false;
+}
+
+static void irqentry_unstall(void)
+{
+}
+
+#endif
+
 noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 {
+	bool synchronized;
+
+	if (running_oob())
+		return;
+
 	lockdep_assert_irqs_disabled();
 
 	/* Check whether this returns to user mode */
 	if (user_mode(regs)) {
 		irqentry_exit_to_user_mode(regs);
-	} else if (!regs_irqs_disabled(regs)) {
+		return;
+	}
+
+	instrumentation_begin();
+	synchronized = irqentry_syncstage(state);
+
+	if (irqexit_may_preempt_schedule(state, regs)) {
 		/*
 		 * If RCU was not watching on entry this needs to be done
 		 * carefully and needs the same ordering of lockdep/tracing
 		 * and RCU as the return to user mode path.
 		 */
 		if (state.exit_rcu) {
-			instrumentation_begin();
 			/* Tell the tracer that IRET will enable interrupts */
 			trace_hardirqs_on_prepare();
 			lockdep_hardirqs_on_prepare();
 			instrumentation_end();
 			ct_irq_exit();
 			lockdep_hardirqs_on(CALLER_ADDR0);
-			return;
+			goto out;
 		}
 
-		instrumentation_begin();
 		if (IS_ENABLED(CONFIG_PREEMPTION))
 			irqentry_exit_cond_resched();
 
@@ -242,6 +351,7 @@ noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 		trace_hardirqs_on();
 		instrumentation_end();
 	} else {
+		instrumentation_end();
 		/*
 		 * IRQ flags state is correct already. Just tell RCU if it
 		 * was not watching on entry.
@@ -249,6 +359,9 @@ noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 		if (state.exit_rcu)
 			ct_irq_exit();
 	}
+out:
+	if (synchronized)
+		irqentry_unstall();
 }
 
 irqentry_state_t noinstr irqentry_nmi_enter(struct pt_regs *regs)
