@@ -134,7 +134,7 @@ static int smp_stop_nmi_callback(unsigned int val, struct pt_regs *regs)
 /*
  * this function calls the 'stop' function on all other CPUs in the system.
  */
-DEFINE_IDTENTRY_SYSVEC(sysvec_reboot)
+DEFINE_IDTENTRY_SYSVEC_PIPELINED_NORETURN(REBOOT_VECTOR, sysvec_reboot)
 {
 	apic_eoi();
 	x86_virt_emergency_disable_virtualization_cpu();
@@ -230,10 +230,10 @@ static void native_stop_other_cpus(int wait)
 			udelay(1);
 	}
 
-	local_irq_save(flags);
+	flags = hard_local_irq_save();
 	disable_local_APIC();
 	mcheck_cpu_clear(this_cpu_ptr(&cpu_info));
-	local_irq_restore(flags);
+	hard_local_irq_restore(flags);
 
 	/*
 	 * Ensure that the cpus_stop_mask cache lines are invalidated on
@@ -246,7 +246,8 @@ static void native_stop_other_cpus(int wait)
  * Reschedule call back. KVM uses this interrupt to force a cpu out of
  * guest mode.
  */
-DEFINE_IDTENTRY_SYSVEC_SIMPLE(sysvec_reschedule_ipi)
+DEFINE_IDTENTRY_SYSVEC_SIMPLE_PIPELINED(RESCHEDULE_VECTOR,
+					sysvec_reschedule_ipi)
 {
 	apic_eoi();
 	trace_reschedule_entry(RESCHEDULE_VECTOR);
@@ -255,7 +256,8 @@ DEFINE_IDTENTRY_SYSVEC_SIMPLE(sysvec_reschedule_ipi)
 	trace_reschedule_exit(RESCHEDULE_VECTOR);
 }
 
-DEFINE_IDTENTRY_SYSVEC(sysvec_call_function)
+DEFINE_IDTENTRY_SYSVEC_PIPELINED(CALL_FUNCTION_VECTOR,
+				 sysvec_call_function)
 {
 	apic_eoi();
 	trace_call_function_entry(CALL_FUNCTION_VECTOR);
@@ -264,7 +266,8 @@ DEFINE_IDTENTRY_SYSVEC(sysvec_call_function)
 	trace_call_function_exit(CALL_FUNCTION_VECTOR);
 }
 
-DEFINE_IDTENTRY_SYSVEC(sysvec_call_function_single)
+DEFINE_IDTENTRY_SYSVEC_PIPELINED(CALL_FUNCTION_SINGLE_VECTOR,
+				 sysvec_call_function_single)
 {
 	apic_eoi();
 	trace_call_function_single_entry(CALL_FUNCTION_SINGLE_VECTOR);
@@ -272,6 +275,17 @@ DEFINE_IDTENTRY_SYSVEC(sysvec_call_function_single)
 	generic_smp_call_function_single_interrupt();
 	trace_call_function_single_exit(CALL_FUNCTION_SINGLE_VECTOR);
 }
+
+#ifdef CONFIG_IRQ_PIPELINE
+
+void irq_send_oob_ipi(unsigned int ipi,
+		const struct cpumask *cpumask)
+{
+	__apic_send_IPI_mask(cpumask, apicm_irq_vector(ipi));
+}
+EXPORT_SYMBOL_GPL(irq_send_oob_ipi);
+
+#endif
 
 static int __init nonmi_ipi_setup(char *str)
 {

@@ -225,10 +225,10 @@ void native_apic_icr_write(u32 low, u32 id)
 {
 	unsigned long flags;
 
-	local_irq_save(flags);
+	flags = hard_local_irq_save();
 	apic_write(APIC_ICR2, SET_XAPIC_DEST_FIELD(id));
 	apic_write(APIC_ICR, low);
-	local_irq_restore(flags);
+	hard_local_irq_restore(flags);
 }
 
 u64 native_apic_icr_read(void)
@@ -277,6 +277,9 @@ int lapic_get_maxlvt(void)
 static void __setup_APIC_LVTT(unsigned int clocks, int oneshot, int irqen)
 {
 	unsigned int lvtt_value, tmp_value;
+	unsigned long flags;
+
+	flags = hard_cond_local_irq_save();
 
 	lvtt_value = LOCAL_TIMER_VECTOR;
 	if (!oneshot)
@@ -305,6 +308,8 @@ static void __setup_APIC_LVTT(unsigned int clocks, int oneshot, int irqen)
 		 * According to Intel, MFENCE can do the serialization here.
 		 */
 		asm volatile("mfence" : : : "memory");
+		hard_cond_local_irq_restore(flags);
+		printk_once(KERN_DEBUG "TSC deadline timer enabled\n");
 		return;
 	}
 
@@ -318,6 +323,8 @@ static void __setup_APIC_LVTT(unsigned int clocks, int oneshot, int irqen)
 
 	if (!oneshot)
 		apic_write(APIC_TMICT, clocks / APIC_DIVISOR);
+
+	hard_cond_local_irq_restore(flags);
 }
 
 /*
@@ -420,6 +427,10 @@ static int lapic_next_event(unsigned long delta, struct clock_event_device *evt)
 
 static int lapic_next_deadline(unsigned long delta, struct clock_event_device *evt)
 {
+	unsigned long flags;
+
+	flags = hard_local_irq_save();
+
 	/*
 	 * There is no weak_wrmsr_fence() required here as all of this is purely
 	 * CPU local. Avoid the [ml]fence overhead.
@@ -427,17 +438,21 @@ static int lapic_next_deadline(unsigned long delta, struct clock_event_device *e
 	u64 tsc = rdtsc();
 
 	native_wrmsrq(MSR_IA32_TSC_DEADLINE, tsc + (((u64) delta) * TSC_DIVISOR));
+
+	hard_local_irq_restore(flags);
 	return 0;
 }
 
 static int lapic_timer_shutdown(struct clock_event_device *evt)
 {
+	unsigned long flags;
 	unsigned int v;
 
 	/* Lapic used as dummy for broadcast ? */
 	if (evt->features & CLOCK_EVT_FEAT_DUMMY)
 		return 0;
 
+	flags = hard_local_irq_save();
 	v = apic_read(APIC_LVTT);
 	v |= (APIC_LVT_MASKED | LOCAL_TIMER_VECTOR);
 	apic_write(APIC_LVTT, v);
@@ -454,6 +469,7 @@ static int lapic_timer_shutdown(struct clock_event_device *evt)
 	else
 		apic_write(APIC_TMICT, 0);
 
+	hard_local_irq_restore(flags);
 	return 0;
 }
 
@@ -1058,7 +1074,8 @@ static void local_apic_timer_interrupt(void)
  * [ if a single-CPU system runs an SMP kernel then we call the local
  *   interrupt as well. Thus we cannot inline the local irq ... ]
  */
-DEFINE_IDTENTRY_SYSVEC(sysvec_apic_timer_interrupt)
+DEFINE_IDTENTRY_SYSVEC_PIPELINED(LOCAL_TIMER_VECTOR,
+				 sysvec_apic_timer_interrupt)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
@@ -2134,7 +2151,7 @@ static noinline void handle_spurious_interrupt(u8 vector)
 	if (v & (1 << (vector & 0x1f))) {
 		pr_info("Spurious interrupt (vector 0x%02x) on CPU#%d. Acked\n",
 			vector, smp_processor_id());
-		apic_eoi();
+		__apic_eoi();
 	} else {
 		pr_info("Spurious interrupt (vector 0x%02x) on CPU#%d. Not pending!\n",
 			vector, smp_processor_id());
@@ -2152,18 +2169,23 @@ out:
  * trigger on an entry which is routed to the common_spurious idtentry
  * point.
  */
-DEFINE_IDTENTRY_IRQ(spurious_interrupt)
+DEFINE_IDTENTRY_IRQ_PIPELINED(spurious_interrupt)
 {
 	handle_spurious_interrupt(vector);
 }
 
-DEFINE_IDTENTRY_SYSVEC(sysvec_spurious_apic_interrupt)
+DEFINE_IDTENTRY_SYSVEC_PIPELINED(SPURIOUS_APIC_VECTOR,
+				 sysvec_spurious_apic_interrupt)
 {
 	handle_spurious_interrupt(SPURIOUS_APIC_VECTOR);
 }
 
 /*
  * This interrupt should never happen with our APIC/SMP architecture
+ *
+ * irq_pipeline: same as spurious_interrupt, would run directly out of
+ * the IDT, no deferral via the interrupt log which means that only
+ * the hardware IRQ state is considered for masking.
  */
 DEFINE_IDTENTRY_SYSVEC(sysvec_error_interrupt)
 {
@@ -2185,7 +2207,7 @@ DEFINE_IDTENTRY_SYSVEC(sysvec_error_interrupt)
 	if (lapic_get_maxlvt() > 3)	/* Due to the Pentium erratum 3AP. */
 		apic_write(APIC_ESR, 0);
 	v = apic_read(APIC_ESR);
-	apic_eoi();
+	__apic_eoi();
 	atomic_inc(&irq_err_count);
 
 	apic_pr_debug("APIC error on CPU%d: %02x", smp_processor_id(), v);
