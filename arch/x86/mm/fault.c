@@ -795,7 +795,7 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
 	 * User mode accesses just cause a SIGSEGV.
 	 * It's possible to have interrupts off here:
 	 */
-	local_irq_enable();
+	local_irq_enable_full();
 
 	/*
 	 * Valid to do another page fault here because this one came
@@ -821,6 +821,8 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
 		force_sig_pkuerr((void __user *)address, pkey);
 	else
 		force_sig_fault(SIGSEGV, si_code, (void __user *)address);
+
+	local_irq_disable_full();
 }
 
 static noinline void
@@ -1477,7 +1479,7 @@ handle_page_fault(struct pt_regs *regs, unsigned long error_code,
 	 * page fault handling might have reenabled interrupts,
 	 * make sure to disable them again.
 	 */
-	local_irq_disable();
+	local_irq_disable_full();
 }
 
 DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
