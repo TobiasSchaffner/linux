@@ -39,6 +39,14 @@
 				 SYSCALL_WORK_SYSCALL_USER_DISPATCH |	\
 				 SYSCALL_WORK_SYSCALL_EXIT_TRAP)
 
+/*
+ * Status codes of syscall entry when Dovetail is enabled. Must not
+ * conflict with valid syscall numbers. And with -1 which seccomp uses
+ * to skip an syscall.
+ */
+#define EXIT_SYSCALL_OOB	(-2)
+#define EXIT_SYSCALL_TAIL	(-3)
+
 /**
  * arch_ptrace_report_syscall_permit_entry - Architecture specific wrapper for
  *					     ptrace_report_syscall_permit_entry()
@@ -141,12 +149,31 @@ static __always_inline long syscall_trace_enter(struct pt_regs *regs, unsigned l
 static __always_inline bool syscall_enter_from_user_mode_work(struct pt_regs *regs, long *syscall)
 {
 	unsigned long work = READ_ONCE(current_thread_info()->syscall_work);
+	int ret;
+
+	/*
+	 * Pipeline the syscall to the companion core if the current
+	 * task wants this. Compiled out if not dovetailing.
+	 */
+	ret = pipeline_syscall(*syscall, regs);
+	if (ret > 0) {
+		/* out-of-band, bail out. */
+		*syscall =  EXIT_SYSCALL_OOB;
+		return false;
+	}
+	if (ret < 0) {
+		/* in-band, tail work only. */
+		*syscall = EXIT_SYSCALL_TAIL;
+		return false;
+	}
 
 	if (!(work & SYSCALL_WORK_ENTER))
 		return true;
 
-	if (unlikely(!syscall_trace_enter(regs, work, *syscall)))
+	if (unlikely(!syscall_trace_enter(regs, work, *syscall))) {
+		*syscall = -1;
 		return false;
+	}
 
 	/* Reread the syscall number as it might have been modified */
 	*syscall = syscall_get_nr(current, regs);

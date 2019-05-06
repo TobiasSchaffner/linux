@@ -160,11 +160,27 @@ __visible noinstr void do_int80_emulation(struct pt_regs *regs)
 
 	nr = syscall_32_enter(regs);
 
-	local_irq_enable();
+	syscall_enter_from_user_enable_irqs();
 
-	if (likely(syscall_enter_from_user_mode_work(regs, &nr)))
+	if (syscall_enter_from_user_mode_work(regs, &nr))
 		do_syscall_32_irqs_on(regs, nr);
+	else if (dovetailing()) {
+		if (nr == EXIT_SYSCALL_OOB) {
+			hard_local_irq_disable();
+			instrumentation_end();
+			return;
+		}
 
+		if (nr == EXIT_SYSCALL_TAIL)
+			goto done;
+
+		if (nr == -1)
+			goto done;
+
+		do_syscall_32_irqs_on(regs, nr);
+	}
+
+done:
 	instrumentation_end();
 	syscall_exit_to_user_mode(regs);
 }
@@ -224,9 +240,25 @@ DEFINE_FREDENTRY_RAW(int80_emulation)
 	nr = syscall_32_enter(regs);
 
 	local_irq_enable();
-	if (likely(syscall_enter_from_user_mode_work(regs, &nr)))
+	if (syscall_enter_from_user_mode_work(regs, &nr))
 		do_syscall_32_irqs_on(regs, nr);
+	else if (dovetailing()) {
+		if (nr == EXIT_SYSCALL_OOB) {
+			hard_local_irq_disable();
+			instrumentation_end();
+			return;
+		}
 
+		if (nr == EXIT_SYSCALL_TAIL)
+			goto done;
+
+		if (nr == -1)
+			goto done;
+
+		do_syscall_32_irqs_on(regs, nr);
+	}
+
+done:
 	instrumentation_end();
 	syscall_exit_to_user_mode(regs);
 }
@@ -244,13 +276,30 @@ __visible noinstr void do_int80_syscall_32(struct pt_regs *regs)
 	 * orig_ax, the int return value truncates it. This matches
 	 * the semantics of syscall_get_nr().
 	 */
-	if (likely(syscall_enter_from_user_mode_randomize_stack(regs, &nr))) {
+	if (syscall_enter_from_user_mode_randomize_stack(regs, &nr)) {
 		instrumentation_begin();
 
 		do_syscall_32_irqs_on(regs, nr);
 
 		instrumentation_end();
+	} else if (dovetailing()) {
+		if (nr == EXIT_SYSCALL_OOB) {
+			hard_local_irq_disable();
+			return;
+		}
+
+		if (nr == EXIT_SYSCALL_TAIL)
+			goto done;
+
+		if (nr == -1)
+			goto done;
+
+		instrumentation_begin();
+		do_syscall_32_irqs_on(regs, nr);
+		instrumentation_end();
 	}
+
+done:
 	syscall_exit_to_user_mode(regs);
 }
 #endif /* !CONFIG_IA32_EMULATION */
@@ -263,7 +312,7 @@ static noinstr bool __do_fast_syscall_32(struct pt_regs *regs)
 	enter_from_user_mode_randomize_stack(regs);
 
 	instrumentation_begin();
-	local_irq_enable();
+	syscall_enter_from_user_enable_irqs();
 	/* Fetch EBP from where the vDSO stashed it. */
 	if (IS_ENABLED(CONFIG_X86_64)) {
 		/*
@@ -287,9 +336,25 @@ static noinstr bool __do_fast_syscall_32(struct pt_regs *regs)
 		return false;
 	}
 
-	if (likely(syscall_enter_from_user_mode_work(regs, &nr)))
+	if (syscall_enter_from_user_mode_work(regs, &nr))
 		do_syscall_32_irqs_on(regs, nr);
+	else if (dovetailing()) {
+		if (nr == EXIT_SYSCALL_OOB) {
+			instrumentation_end();
+			hard_local_irq_disable();
+			return true;
+		}
 
+		if (nr == EXIT_SYSCALL_TAIL)
+			goto done;
+
+		if (nr == -1)
+			goto done;
+
+		do_syscall_32_irqs_on(regs, nr);
+	}
+
+done:
 	instrumentation_end();
 	syscall_exit_to_user_mode(regs);
 	return true;
