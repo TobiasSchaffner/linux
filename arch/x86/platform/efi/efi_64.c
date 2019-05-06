@@ -435,12 +435,20 @@ void __init efi_dump_pagetable(void)
  */
 static void efi_enter_mm(void)
 {
+	unsigned long flags;
+
+	protect_inband_mm(flags);
 	efi_prev_mm = use_temporary_mm(&efi_mm);
+	unprotect_inband_mm(flags);
 }
 
 static void efi_leave_mm(void)
 {
+	unsigned long flags;
+
+	protect_inband_mm(flags);
 	unuse_temporary_mm(efi_prev_mm);
+	unprotect_inband_mm(flags);
 }
 
 void arch_efi_call_virt_setup(void)
