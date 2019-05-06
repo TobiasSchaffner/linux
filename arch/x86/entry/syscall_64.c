@@ -89,6 +89,15 @@ __visible noinstr bool do_syscall_64(struct pt_regs *regs, int nr)
 	add_random_kstack_offset();
 	nr = syscall_enter_from_user_mode(regs, nr);
 
+	if (dovetailing()) {
+		if (nr == EXIT_SYSCALL_OOB) {
+			hard_local_irq_disable();
+			goto done;
+		}
+		if (nr == EXIT_SYSCALL_TAIL)
+			goto done_inband;
+	}
+
 	instrumentation_begin();
 
 	if (!do_syscall_x64(regs, nr) && !do_syscall_x32(regs, nr) && nr != -1) {
@@ -97,7 +106,9 @@ __visible noinstr bool do_syscall_64(struct pt_regs *regs, int nr)
 	}
 
 	instrumentation_end();
+done_inband:
 	syscall_exit_to_user_mode(regs);
+done:
 
 	/*
 	 * Check that the register state is valid for using SYSRET to exit
