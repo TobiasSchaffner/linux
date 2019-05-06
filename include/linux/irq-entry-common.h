@@ -200,6 +200,21 @@ void arch_do_signal_or_restart(struct pt_regs *regs);
 /* Handle pending TIF work */
 unsigned long exit_to_user_mode_loop(struct pt_regs *regs, unsigned long ti_work);
 
+static __always_inline bool do_retuser(unsigned long ti_work)
+{
+#ifdef CONFIG_DOVETAIL
+	if (ti_work & _TIF_RETUSER) {
+		hard_local_irq_enable();
+		inband_retuser_notify();
+		hard_local_irq_disable();
+		/* RETUSER might have switched oob */
+		return running_inband();
+	}
+#endif
+
+	return false;
+}
+
 /**
  * __exit_to_user_mode_prepare - call exit_to_user_mode_loop() if required
  * @regs:	Pointer to pt_regs on entry stack
@@ -223,11 +238,16 @@ static __always_inline void __exit_to_user_mode_prepare(struct pt_regs *regs)
 	/* Flush pending rcuog wakeup before the last need_resched() check */
 	tick_nohz_user_enter_prepare();
 
+again:
 	ti_work = read_thread_flags();
 	if (unlikely(ti_work & EXIT_TO_USER_MODE_WORK))
 		ti_work = exit_to_user_mode_loop(regs, ti_work);
 
 	arch_exit_to_user_mode_prepare(regs, ti_work);
+	
+	/* Dovetail: Fire pending RETUSER request. */
+	if (do_retuser(ti_work))
+		goto again;
 }
 
 static __always_inline void __exit_to_user_mode_validate(void)
