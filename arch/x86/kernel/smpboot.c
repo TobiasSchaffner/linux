@@ -50,6 +50,7 @@
 #include <linux/memblock.h>
 #include <linux/err.h>
 #include <linux/nmi.h>
+#include <linux/irqstage.h>
 #include <linux/tboot.h>
 #include <linux/gfp.h>
 #include <linux/cpuidle.h>

@@ -31,6 +31,7 @@ config X86_64
 	select ARCH_SUPPORTS_HUGE_PFNMAP if TRANSPARENT_HUGEPAGE
 	select HAVE_ARCH_SOFT_DIRTY
 	select HAVE_IRQ_PIPELINE
+	select HAVE_DOVETAIL
 	select MODULES_USE_ELF_RELA
 	select NEED_DMA_MAP_STATE
 	select SWIOTLB
@@ -919,6 +920,7 @@ config INTEL_TDX_GUEST
 
 endif # HYPERVISOR_GUEST
 
+source "kernel/Kconfig.dovetail"
 source "arch/x86/Kconfig.cpu"
 
 config HPET_TIMER
