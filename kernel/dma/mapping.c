@@ -159,6 +159,8 @@ dma_addr_t dma_map_phys(struct device *dev, phys_addr_t phys, size_t size,
 	bool is_mmio = attrs & DMA_ATTR_MMIO;
 	dma_addr_t addr = DMA_MAPPING_ERROR;
 
+	check_inband_stage();
+
 	BUG_ON(!valid_dma_direction(dir));
 
 	if (WARN_ON_ONCE(!dev->dma_mask))
@@ -207,6 +209,8 @@ void dma_unmap_phys(struct device *dev, dma_addr_t addr, size_t size,
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 	bool is_mmio = attrs & DMA_ATTR_MMIO;
 
+	check_inband_stage();
+
 	BUG_ON(!valid_dma_direction(dir));
 	if (dma_map_direct(dev, ops) ||
 	    (!is_mmio && arch_dma_unmap_phys_direct(dev, addr + size)))
@@ -235,6 +239,8 @@ static int __dma_map_sg_attrs(struct device *dev, struct scatterlist *sg,
 {
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 	int ents;
+
+	check_inband_stage();
 
 	BUG_ON(!valid_dma_direction(dir));
 
@@ -339,6 +345,8 @@ void dma_unmap_sg_attrs(struct device *dev, struct scatterlist *sg,
 				      unsigned long attrs)
 {
 	const struct dma_map_ops *ops = get_dma_ops(dev);
+
+	check_inband_stage();
 
 	BUG_ON(!valid_dma_direction(dir));
 	trace_dma_unmap_sg(dev, sg, nents, dir, attrs);
