@@ -13,4 +13,6 @@ void __init vdso_setup_data_pages(void);
 static inline void vdso_setup_data_pages(void) { }
 #endif /* CONFIG_HAVE_GENERIC_VDSO */
 
+int vdso_install_private_mapping(unsigned long addr, unsigned long len);
+
 #endif /* _LINUX_VDSO_DATASTORE_H */
