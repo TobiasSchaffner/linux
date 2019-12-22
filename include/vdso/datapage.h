@@ -113,7 +113,31 @@ struct vdso_clock {
 		struct vdso_timestamp	basetime[VDSO_BASES];
 		struct timens_offset	offset[VDSO_BASES];
 	};
+#ifdef CONFIG_GENERIC_VDSO_CLOCKSOURCE
+	u32			cs_type_seq;
+	char			cs_mmdev[16];
+#endif
 };
+
+#if defined(CONFIG_GENERIC_VDSO_CLOCKSOURCE) && !defined(ENABLE_COMPAT_VDSO)
+
+#include <uapi/linux/clocksource.h>
+
+struct clksrc_info;
+
+typedef u64 vdso_read_cycles_t(const struct clksrc_info *info);
+
+struct clksrc_info {
+	vdso_read_cycles_t *read_cycles;
+	struct clksrc_user_mmio_info mmio;
+};
+
+struct vdso_priv_data {
+	u32 current_cs_type_seq;
+	struct clksrc_info clksrc_info[CLOCKSOURCE_VDSO_MMIO + CLKSRC_USER_MMIO_MAX];
+};
+
+#endif	/* CONFIG_GENERIC_VDSO_CLOCKSOURCE && !ENABLE_COMPAT_VDSO */
 
 /**
  * struct vdso_time_data - vdso datapage representation
@@ -167,10 +191,12 @@ struct vdso_rng_data {
 extern struct vdso_time_data vdso_u_time_data __attribute__((visibility("hidden")));
 extern struct vdso_rng_data vdso_u_rng_data __attribute__((visibility("hidden")));
 extern struct vdso_arch_data vdso_u_arch_data __attribute__((visibility("hidden")));
+extern struct vdso_priv_data vdso_u_priv_data __attribute__((visibility("hidden")));
 
 extern struct vdso_time_data *vdso_k_time_data;
 extern struct vdso_rng_data *vdso_k_rng_data;
 extern struct vdso_arch_data *vdso_k_arch_data;
+extern struct vdso_priv_data *vdso_k_priv_data;
 
 #define VDSO_ARCH_DATA_SIZE ALIGN(sizeof(struct vdso_arch_data), PAGE_SIZE)
 #define VDSO_ARCH_DATA_PAGES (VDSO_ARCH_DATA_SIZE >> PAGE_SHIFT)
@@ -209,13 +235,22 @@ enum vdso_pages {
 #define __vdso_u_arch_data
 #endif
 
-#define VDSO_VVAR_SYMS						\
-	PROVIDE(vdso_u_data = . - __VDSO_PAGES * PAGE_SIZE);	\
-	PROVIDE(vdso_u_time_data = vdso_u_data);		\
-	__vdso_u_rng_data					\
-	__vdso_u_arch_data					\
-
+#define VDSO_VVAR_SYMS							\
+	PROVIDE(vdso_u_priv = . - __VDSO_PAGES * PAGE_SIZE);		\
+	PROVIDE(vdso_u_priv_data = vdso_u_priv);			\
+	PROVIDE(vdso_u_data = vdso_u_priv + VDSO_ARCH_PRIV_SIZE);	\
+	PROVIDE(vdso_u_time_data = vdso_u_data);			\
+	__vdso_u_rng_data						\
+	__vdso_u_arch_data
 
 #endif /* !__ASSEMBLY__ */
+
+#ifdef CONFIG_VDSO_PRIVATE_DATA
+#include <asm/vdso/private.h>
+#else
+#define __VDSO_PRIV_PAGES	0
+#endif
+
+#define VDSO_ARCH_PRIV_SIZE (__VDSO_PRIV_PAGES * PAGE_SIZE)
 
 #endif /* __VDSO_DATAPAGE_H */

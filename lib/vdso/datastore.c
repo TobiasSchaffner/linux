@@ -3,6 +3,7 @@
 #include <linux/linkage.h>
 #include <linux/mmap_lock.h>
 #include <linux/mm.h>
+#include <linux/mman.h>
 #include <linux/time_namespace.h>
 #include <linux/types.h>
 #include <linux/vdso_datastore.h>
@@ -36,6 +37,15 @@ static union {
 } vdso_arch_data_store __page_aligned_data;
 struct vdso_arch_data *vdso_k_arch_data = &vdso_arch_data_store.data;
 #endif /* CONFIG_ARCH_HAS_VDSO_ARCH_DATA */
+
+#ifdef CONFIG_VDSO_PRIVATE_DATA
+static union {
+	struct vdso_priv_data	data;
+	u8			page[VDSO_ARCH_PRIV_SIZE];
+} vdso_priv_data_store __page_aligned_data;
+struct vdso_priv_data *vdso_k_priv_data = &vdso_priv_data_store.data;
+static_assert(sizeof(vdso_priv_data_store) == VDSO_ARCH_PRIV_SIZE);
+#endif /* CONFIG_VDSO_PRIVATE_DATA */
 
 static vm_fault_t vvar_fault(const struct vm_special_mapping *sm,
 			     struct vm_area_struct *vma, struct vm_fault *vmf)
@@ -102,6 +112,20 @@ struct vm_area_struct *vdso_install_vvar_mapping(struct mm_struct *mm, unsigned 
 					VM_READ | VM_MAYREAD | VM_IO | VM_DONTDUMP |
 					VM_PFNMAP | VM_SEALED_SYSMAP,
 					&vdso_vvar_mapping);
+}
+
+int vdso_install_private_mapping(unsigned long addr, unsigned long len)
+{
+	unsigned long unused;
+
+	addr = do_mmap(NULL, addr, len, PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED,
+			0, 0, &unused, NULL);
+
+	if (WARN_ON_ONCE(IS_ERR_VALUE(addr)))
+		return (int)addr;
+
+	return 0;
 }
 
 #ifdef CONFIG_TIME_NS

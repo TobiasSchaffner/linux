@@ -120,6 +120,7 @@ struct clocksource {
 	int			rating;
 	enum clocksource_ids	id;
 	enum vdso_clock_mode	vdso_clock_mode;
+  	enum clocksource_vdso_type vdso_type;
 	unsigned long		flags;
 	struct clocksource_base *base;
 
