@@ -11,6 +11,14 @@ config GENERIC_GETTIMEOFDAY
 	  Each architecture that enables this feature has to
 	  provide the fallback implementation.
 
+config GENERIC_VDSO_CLOCKSOURCE
+        select CLKSRC_MMIO
+	select VDSO_PRIVATE_DATA
+	bool
+	help
+	   Enables access to clocksources via the vDSO based on
+	   generic MMIO operations.
+
 config GENERIC_VDSO_OVERFLOW_PROTECT
 	bool
 	help
@@ -23,3 +31,10 @@ config VDSO_GETRANDOM
 	select VDSO_DATASTORE
 	help
 	  Selected by architectures that support vDSO getrandom().
+
+config VDSO_PRIVATE_DATA
+	bool
+	select VDSO_DATASTORE
+	help
+	  Selected by architectures that need per-process BSS in vDSO.
+

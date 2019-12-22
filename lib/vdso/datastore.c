@@ -3,6 +3,7 @@
 #include <linux/gfp.h>
 #include <linux/init.h>
 #include <linux/mm.h>
+#include <linux/mman.h>
 #include <linux/time_namespace.h>
 #include <linux/types.h>
 #include <linux/vdso_datastore.h>
@@ -30,6 +31,16 @@ struct vdso_arch_data *vdso_k_arch_data __ro_after_init =
 #endif /* CONFIG_ARCH_HAS_VDSO_ARCH_DATA */
 
 static struct page *vdso_data_pages __ro_after_init;
+
+#ifdef CONFIG_VDSO_PRIVATE_DATA
+static union {
+	struct vdso_priv_data	data;
+	u8			page[VDSO_ARCH_PRIV_SIZE];
+} vdso_priv_data_store __page_aligned_data;
+struct vdso_priv_data *vdso_k_priv_data = &vdso_priv_data_store.data;
+static_assert(sizeof(vdso_priv_data_store) == VDSO_ARCH_PRIV_SIZE);
+#endif /* CONFIG_VDSO_PRIVATE_DATA */
+
 
 void __init vdso_setup_data_pages(void)
 {
@@ -112,6 +123,20 @@ static vm_fault_t vvar_fault(const struct vm_special_mapping *sm,
 
 	get_page(page);
 	vmf->page = page;
+	return 0;
+}
+
+int vdso_install_private_mapping(unsigned long addr, unsigned long len)
+{
+	unsigned long unused;
+
+	addr = do_mmap(NULL, addr, len, PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED,
+			EMPTY_VMA_FLAGS, 0, &unused, NULL);
+
+	if (WARN_ON_ONCE(IS_ERR_VALUE(addr)))
+		return (int)addr;
+
 	return 0;
 }
 
