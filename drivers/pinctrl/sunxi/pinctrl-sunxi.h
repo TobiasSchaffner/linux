@@ -177,7 +177,7 @@ struct sunxi_pinctrl {
 	unsigned			ngroups;
 	int				*irq;
 	unsigned			*irq_array;
-	raw_spinlock_t			lock;
+	hard_spinlock_t			lock;
 	/*
 	 * Output latch shadow, one word per bank.  Seeded lockless at
 	 * probe before the pinctrl device registers, protected by @lock
