@@ -2661,7 +2661,10 @@ static void kvm_steal_time_set_preempted(struct kvm_vcpu *vcpu)
 
 void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 {
+	unsigned long flags;
 	int idx;
+
+	flags = hard_cond_local_irq_save();
 
 	if (vcpu->preempted) {
 		/*
@@ -2672,6 +2675,13 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 		vcpu->arch.preempted_in_kernel = vcpu->arch.guest_state_protected ||
 						 !kvm_x86_call(get_cpl_no_cache)(vcpu);
 
+		/*
+		 * Skip steal time accounting from the out-of-band stage since
+		 * this is oob-unsafe. We leave it to the next call from the
+		 * inband stage.
+		 */
+		if (running_oob())
+			goto skip_steal_time_update;
 		/*
 		 * Take the srcu lock as memslots will be accessed to check the gfn
 		 * cache generation against the memslots generation.
@@ -2684,8 +2694,15 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 		srcu_read_unlock(&vcpu->kvm->srcu, idx);
 	}
 
+skip_steal_time_update:
 	kvm_x86_call(vcpu_put)(vcpu);
 	vcpu->arch.last_host_tsc = rdtsc();
+
+	inband_set_vcpu_release_state(vcpu, false);
+	if (!kvm_get_user_return_msrs_dirty())
+		inband_exit_guest();
+
+	hard_cond_local_irq_restore(flags);
 }
 
 static int kvm_vcpu_ioctl_get_lapic(struct kvm_vcpu *vcpu,
@@ -8258,6 +8275,10 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	}
 
 	preempt_disable();
+	local_irq_disable_full();
+
+	inband_enter_guest(vcpu);
+	inband_set_vcpu_release_state(vcpu, true);
 
 	kvm_x86_call(prepare_switch_to_guest)(vcpu);
 
@@ -8266,7 +8287,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	 * IPI are then delayed after guest entry, which ensures that they
 	 * result in virtual interrupt delivery.
 	 */
-	local_irq_disable();
+	local_irq_disable_full();
 
 	/* Store vcpu->apicv_active before vcpu->mode.  */
 	smp_store_release(&vcpu->mode, IN_GUEST_MODE);
@@ -8300,7 +8321,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	if (kvm_vcpu_exit_request(vcpu)) {
 		vcpu->mode = OUTSIDE_GUEST_MODE;
 		smp_wmb();
-		local_irq_enable();
+		local_irq_enable_full();
 		preempt_enable();
 		kvm_vcpu_srcu_read_lock(vcpu);
 		r = 1;
@@ -8452,9 +8473,9 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	 * stat.exits increment will do nicely.
 	 */
 	kvm_before_interrupt(vcpu, KVM_HANDLING_IRQ);
-	local_irq_enable();
+	local_irq_enable_full();
 	++vcpu->stat.exits;
-	local_irq_disable();
+	local_irq_disable_full();
 	kvm_after_interrupt(vcpu);
 
 	/*
@@ -8466,7 +8487,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	 */
 	guest_timing_exit_irqoff();
 
-	local_irq_enable();
+	local_irq_enable_full();
 	preempt_enable();
 
 	kvm_vcpu_srcu_read_lock(vcpu);
@@ -9412,6 +9433,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 	if (r)
 		goto free_guest_fpu;
 
+	inband_init_vcpu(vcpu, kvm_handle_oob_switch);
 	kvm_xen_init_vcpu(vcpu);
 	vcpu_load(vcpu);
 	kvm_vcpu_after_set_cpuid(vcpu);

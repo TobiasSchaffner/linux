@@ -44,6 +44,7 @@ struct kvm_x86_msr_filter {
 struct kvm_user_return_msrs {
 	struct user_return_notifier urn;
 	bool registered;
+	bool dirty;
 	struct kvm_user_return_msr_values {
 		u64 host;
 		u64 curr;
@@ -65,15 +66,15 @@ void kvm_destroy_user_return_msrs(void)
 	kvm_nr_uret_msrs = 0;
 }
 
-static void kvm_on_user_return(struct user_return_notifier *urn)
-{
-	unsigned slot;
-	struct kvm_user_return_msrs *msrs
-		= container_of(urn, struct kvm_user_return_msrs, urn);
-	struct kvm_user_return_msr_values *values;
 
-	msrs->registered = false;
-	user_return_notifier_unregister(urn);
+
+static void __kvm_on_user_return(struct kvm_user_return_msrs *msrs)
+{
+	struct kvm_user_return_msr_values *values;
+	unsigned int slot;
+
+	if (!msrs->dirty)
+		return;
 
 	for (slot = 0; slot < kvm_nr_uret_msrs; ++slot) {
 		values = &msrs->values[slot];
@@ -82,20 +83,39 @@ static void kvm_on_user_return(struct user_return_notifier *urn)
 			values->curr = values->host;
 		}
 	}
+
+	msrs->dirty = false;
 }
+
+static void kvm_on_user_return(struct user_return_notifier *urn)
+{
+	struct kvm_user_return_msrs *msrs
+		= container_of(urn, struct kvm_user_return_msrs, urn);
+	unsigned long flags;
+
+	msrs->registered = false;
+	user_return_notifier_unregister(urn);
+
+	flags = hard_cond_local_irq_save();
+	__kvm_on_user_return(msrs);
+	hard_cond_local_irq_restore(flags);
+	inband_exit_guest();
+}
+
 
 static int kvm_probe_user_return_msr(u32 msr)
 {
+	unsigned long flags;
 	u64 val;
 	int ret;
 
-	preempt_disable();
+	flags = hard_preempt_disable();
 	ret = rdmsrq_safe(msr, &val);
 	if (ret)
 		goto out;
 	ret = wrmsrq_safe(msr, val);
 out:
-	preempt_enable();
+	hard_preempt_enable(flags);
 	return ret;
 }
 
@@ -157,11 +177,44 @@ int kvm_set_user_return_msr(unsigned slot, u64 value, u64 mask)
 	if (err)
 		return 1;
 
+	msrs->dirty = true;
 	msrs->values[slot].curr = value;
 	kvm_user_return_register_notifier(msrs);
 	return 0;
 }
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_set_user_return_msr);
+
+bool kvm_get_user_return_msrs_dirty(void)
+{
+	struct kvm_user_return_msrs *msrs = this_cpu_ptr(&user_return_msrs);
+
+	return msrs->dirty;
+}
+
+#ifdef CONFIG_DOVETAIL
+/* hard irqs off. */
+void kvm_handle_oob_switch(struct kvm_oob_notifier *nfy)
+{
+	struct kvm_user_return_msrs *msrs = this_cpu_ptr(&user_return_msrs);
+	struct kvm_vcpu *vcpu;
+
+	vcpu = container_of(nfy, struct kvm_vcpu, oob_notifier);
+	/*
+	 * If user_return MSRs were still active when leaving
+	 * kvm_arch_vcpu_put(), inband_exit_guest() was not invoked,
+	 * so we might get called later on before kvm_on_user_return()
+	 * had a chance to run, if a switch to out-of-band scheduling
+	 * sneaks in in the meantime.  Prevent kvm_arch_vcpu_put()
+	 * from running twice in such a case by checking ->put_vcpu
+	 * from the notifier block.
+	 */
+	if (nfy->put_vcpu)
+		kvm_arch_vcpu_put(vcpu);
+
+	__kvm_on_user_return(msrs);
+	inband_exit_guest();
+}
+#endif
 
 u64 kvm_get_user_return_msr(unsigned int slot)
 {
@@ -1198,17 +1251,19 @@ static __always_inline void kvm_access_xstate_msr(struct kvm_vcpu *vcpu,
 						  struct msr_data *msr_info,
 						  int access)
 {
+	unsigned long flags;
+
 	BUILD_BUG_ON(access != MSR_TYPE_R && access != MSR_TYPE_W);
 
 	KVM_BUG_ON(!is_xstate_managed_msr(vcpu, msr_info->index), vcpu->kvm);
 	KVM_BUG_ON(!vcpu->arch.guest_fpu.fpstate->in_use, vcpu->kvm);
 
-	kvm_fpu_get();
+	flags = kvm_fpu_get();
 	if (access == MSR_TYPE_R)
 		rdmsrq(msr_info->index, msr_info->data);
 	else
 		wrmsrq(msr_info->index, msr_info->data);
-	kvm_fpu_put();
+	kvm_fpu_put(flags);
 }
 
 static void kvm_set_xstate_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)

@@ -81,6 +81,14 @@ int kvm_find_user_return_msr(u32 msr);
 int kvm_set_user_return_msr(unsigned index, u64 val, u64 mask);
 u64 kvm_get_user_return_msr(unsigned int slot);
 
+bool kvm_get_user_return_msrs_dirty(void);
+
+#ifdef CONFIG_DOVETAIL
+void kvm_handle_oob_switch(struct kvm_oob_notifier *nfy);
+#else
+#define kvm_handle_oob_switch  NULL
+#endif
+
 static inline bool kvm_is_supported_user_return_msr(u32 msr)
 {
 	return kvm_find_user_return_msr(msr) >= 0;

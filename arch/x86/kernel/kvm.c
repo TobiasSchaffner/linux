@@ -274,6 +274,7 @@ static __always_inline bool kvm_apf_reason_pending(void)
 noinstr bool __kvm_handle_async_pf(struct pt_regs *regs, u32 token)
 {
 	irqentry_state_t state;
+	unsigned long irqflags;
 	u32 flags;
 
 	if (!kvm_apf_reason_pending())
@@ -304,6 +305,7 @@ noinstr bool __kvm_handle_async_pf(struct pt_regs *regs, u32 token)
 	state = irqentry_enter(regs);
 	oob_trap_notify(X86_TRAP_PF, regs);
 	instrumentation_begin();
+	irqflags = hard_cond_local_irq_save();
 
 	/*
 	 * If the host managed to inject an async #PF into an interrupt
@@ -320,13 +322,15 @@ noinstr bool __kvm_handle_async_pf(struct pt_regs *regs, u32 token)
 		WARN_ONCE(1, "Unexpected async PF flags: %x\n", flags);
 	}
 
+	hard_cond_local_irq_restore(irqflags);
 	instrumentation_end();
 	oob_trap_unwind(X86_TRAP_PF, regs);
 	irqentry_exit(regs, state);
 	return true;
 }
 
-DEFINE_IDTENTRY_SYSVEC(sysvec_kvm_asyncpf_interrupt)
+DEFINE_IDTENTRY_SYSVEC_PIPELINED(HYPERVISOR_CALLBACK_VECTOR,
+				 sysvec_kvm_asyncpf_interrupt)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
 	u32 token;
@@ -487,6 +491,9 @@ static void __init sev_map_percpu_data(void)
 
 static void kvm_guest_cpu_offline(bool shutdown)
 {
+	unsigned long flags;
+
+	flags = hard_cond_local_irq_save();
 	kvm_disable_steal_time();
 	if (kvm_para_has_feature(KVM_FEATURE_PV_EOI))
 		wrmsrq(MSR_KVM_PV_EOI_EN, 0);
@@ -496,15 +503,16 @@ static void kvm_guest_cpu_offline(bool shutdown)
 	if (!shutdown)
 		apf_task_wake_all();
 	kvmclock_disable();
+	hard_cond_local_irq_restore(flags);
 }
 
 static int kvm_cpu_online(unsigned int cpu)
 {
 	unsigned long flags;
 
-	local_irq_save(flags);
+	local_irq_save_full(flags);
 	kvm_guest_cpu_init();
-	local_irq_restore(flags);
+	local_irq_restore_full(flags);
 	return 0;
 }
 
@@ -553,7 +561,7 @@ static void __send_ipi_mask(const struct cpumask *mask, int vector)
 	if (cpumask_empty(mask))
 		return;
 
-	local_irq_save(flags);
+	flags = hard_local_irq_save();
 
 	switch (vector) {
 	default:
@@ -591,7 +599,7 @@ static void __send_ipi_mask(const struct cpumask *mask, int vector)
 			  ret);
 	}
 
-	local_irq_restore(flags);
+	hard_local_irq_restore(flags);
 }
 
 static void kvm_send_ipi_mask(const struct cpumask *mask, int vector)
@@ -1115,6 +1123,23 @@ static void kvm_wait(u8 *ptr, u8 val)
 	 * for irq enabled case to avoid hang when lock info is overwritten
 	 * in irq spinlock slowpath and no spurious interrupt occur to save us.
 	 */
+
+#ifdef CONFIG_IRQ_PIPELINE
+
+	if (hard_irqs_disabled()) {
+		if (READ_ONCE(*ptr) == val)
+			halt();
+	} else {
+		hard_local_irq_disable();
+
+		if (READ_ONCE(*ptr) == val)
+			native_safe_halt(); /* enables hard IRQs */
+		else
+			hard_local_irq_enable();
+	}
+
+#else /* !CONFIG_IRQ_PIPELINE */
+
 	if (irqs_disabled()) {
 		if (READ_ONCE(*ptr) == val)
 			halt();
@@ -1127,6 +1152,7 @@ static void kvm_wait(u8 *ptr, u8 val)
 		else
 			local_irq_enable();
 	}
+#endif
 }
 
 /*
