@@ -954,6 +954,8 @@ config ARM_CPU_TOPOLOGY
 	  affinity between processors which is then used to describe the cpu
 	  topology of an ARM System.
 
+source "kernel/Kconfig.dovetail"
+
 config HAVE_ARM_SCU
 	bool
 	help
