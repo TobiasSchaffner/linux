@@ -34,6 +34,8 @@ static __always_inline void skb_frag_ref(struct sk_buff *skb, int f)
 
 bool napi_pp_put_page(netmem_ref netmem);
 
+struct page_pool *napi_pp_get_pool(netmem_ref netmem);
+
 static __always_inline void skb_page_unref(netmem_ref netmem, bool recycle)
 {
 #ifdef CONFIG_PAGE_POOL

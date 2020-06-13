@@ -372,6 +372,20 @@ static int proc_do_skb_defer_max(const struct ctl_table *table, int write,
 	return ret;
 }
 
+#ifdef CONFIG_NET_OOB
+static int proc_free_oob_skb(const struct ctl_table *table, int write,
+			   void *buffer, size_t *lenp, loff_t *ppos)
+{
+	unsigned int skb_count = READ_ONCE(sysctl_free_oob_skb);
+	struct ctl_table tmp = {
+		.data = &skb_count,
+		.maxlen = sizeof(skb_count),
+	};
+
+	return proc_dointvec(&tmp, write, buffer, lenp, ppos);
+}
+#endif
+
 #ifdef CONFIG_BPF_JIT
 static int proc_dointvec_minmax_bpf_enable(const struct ctl_table *table, int write,
 					   void *buffer, size_t *lenp,
@@ -676,6 +690,21 @@ static struct ctl_table net_core_table[] = {
 		.proc_handler	= proc_do_skb_defer_max,
 		.extra1		= SYSCTL_ZERO,
 	},
+#ifdef CONFIG_NET_OOB
+	{
+		.procname	= "max_oob_skb",
+		.data		= &sysctl_max_oob_skb,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0444,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "free_oob_skb",
+		.data		= &sysctl_free_oob_skb,
+		.mode		= 0444,
+		.proc_handler	= proc_free_oob_skb,
+	},
+#endif
 };
 
 static struct ctl_table netns_core_table[] = {
