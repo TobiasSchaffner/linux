@@ -442,6 +442,9 @@ static __net_init int setup_net(struct net *net)
 
 	net->net_cookie = ns_tree_gen_id(net);
 
+	/* Dovetail: set up the oob-specific state. */
+	net_init_oob_state(net);
+
 	list_for_each_entry(ops, &pernet_list, list) {
 		error = ops_init(ops, net);
 		if (error < 0)
@@ -697,6 +700,8 @@ static void cleanup_net(struct work_struct *work)
 	llist_for_each_entry(net, net_kill_list, cleanup_list) {
 		idr_destroy(&net->netns_ids);
 		list_add_tail(&net->exit_list, &net_exit_list);
+		/* Dovetail: drop the oob-specific state. */
+		net_cleanup_oob_state(net);
 	}
 
 	ops_undo_list(&pernet_list, NULL, &net_exit_list, true);

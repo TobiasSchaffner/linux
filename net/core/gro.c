@@ -625,7 +625,18 @@ gro_result_t gro_receive_skb(struct gro_node *gro, struct sk_buff *skb)
 {
 	gro_result_t ret;
 
+	/*
+	 * Note: GRO is bypassed for devices enabling out-of-band RX,
+	 * including for in-band traffic not picked by the companion
+	 * core. In this case, the traffic flows through
+	 * process_inband_rx_backlog() -> _netif_receive_skb_list()
+	 * via NET_RX_SOFTIRQ.
+	 */
+	if (netif_receive_oob(skb))
+		return GRO_NORMAL;
+
 	__skb_mark_napi_id(skb, gro);
+
 	trace_napi_gro_receive_entry(skb);
 
 	skb_gro_reset_offset(skb, 0);
