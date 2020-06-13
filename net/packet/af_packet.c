@@ -3192,7 +3192,7 @@ static int packet_release(struct socket *sock)
  *	Attach a packet hook.
  */
 
-static int packet_do_bind(struct sock *sk, const char *name, int ifindex,
+static int packet_do_bind_unlocked(struct sock *sk, const char *name, int ifindex,
 			  __be16 proto)
 {
 	struct packet_sock *po = pkt_sk(sk);
@@ -3201,7 +3201,6 @@ static int packet_do_bind(struct sock *sk, const char *name, int ifindex,
 	bool need_rehook;
 	int ret = 0;
 
-	lock_sock(sk);
 	spin_lock(&po->bind_lock);
 	if (!proto)
 		proto = po->num;
@@ -3278,7 +3277,6 @@ static int packet_do_bind(struct sock *sk, const char *name, int ifindex,
 out_unlock:
 	rcu_read_unlock();
 	spin_unlock(&po->bind_lock);
-	release_sock(sk);
 	return ret;
 }
 
@@ -3292,6 +3290,7 @@ static int packet_bind_spkt(struct socket *sock, struct sockaddr_unsized *uaddr,
 	struct sock *sk = sock->sk;
 	struct sockaddr *sa = (struct sockaddr *)uaddr;
 	char name[sizeof(sa->sa_data) + 1];
+	int ret;
 
 	/*
 	 *	Check legality
@@ -3305,13 +3304,20 @@ static int packet_bind_spkt(struct socket *sock, struct sockaddr_unsized *uaddr,
 	memcpy(name, sa->sa_data, sizeof(sa->sa_data));
 	name[sizeof(sa->sa_data)] = 0;
 
-	return packet_do_bind(sk, name, 0, 0);
+	lock_sock(sk);
+	packet_do_bind_unlocked(sk, name, 0, 0);
+	if (!ret && sock_oob_capable(sk->sk_socket))
+		ret = sock_oob_bind(sk, uaddr, addr_len);
+	release_sock(sk);
+
+	return ret;
 }
 
 static int packet_bind(struct socket *sock, struct sockaddr_unsized *uaddr, int addr_len)
 {
 	struct sockaddr_ll *sll = (struct sockaddr_ll *)uaddr;
 	struct sock *sk = sock->sk;
+	int ret;
 
 	/*
 	 *	Check legality
@@ -3322,7 +3328,13 @@ static int packet_bind(struct socket *sock, struct sockaddr_unsized *uaddr, int 
 	if (sll->sll_family != AF_PACKET)
 		return -EINVAL;
 
-	return packet_do_bind(sk, NULL, sll->sll_ifindex, sll->sll_protocol);
+	lock_sock(sk);
+	ret = packet_do_bind_unlocked(sk, NULL, sll->sll_ifindex, sll->sll_protocol);
+	if (!ret && sock_oob_capable(sk->sk_socket))
+		ret = sock_oob_bind(sk, uaddr, addr_len);
+	release_sock(sk);
+
+	return ret;
 }
 
 static struct proto packet_proto = {
@@ -3369,6 +3381,7 @@ static int packet_create(struct net *net, struct socket *sock, int protocol,
 
 	init_completion(&po->skb_completion);
 	sk->sk_family = PF_PACKET;
+	sk->sk_protocol	= protocol;
 	po->num = proto;
 
 	packet_cached_dev_reset(po);
