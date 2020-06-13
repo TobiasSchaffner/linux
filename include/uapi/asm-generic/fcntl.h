@@ -92,16 +92,17 @@
 #define __O_TMPFILE	(1 << 22)
 #endif
 
-/*
- * Tells the open call that out-of-band operations should be enabled
- * for the file (if supported).
- */
-#ifndef O_OOB
-#define O_OOB		(1 << 23)
-#endif
-
 #ifndef O_EMPTYPATH
 #define O_EMPTYPATH	(1 << 26)	/* allow empty path */
+#endif
+
+/*
+ * Tells the open call that out-of-band operations should be enabled
+ * for the file (if supported). Can also be passed along to socket(2)
+ * via the type argument as SOCK_OOB.
+ */
+#ifndef O_OOB
+#define O_OOB		(1 << 29)
 #endif
 
 /* a horrid kludge trying to make sure that this will fail on old kernels */

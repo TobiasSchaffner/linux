@@ -63,6 +63,7 @@
 #include <linux/atomic.h>
 #include <linux/refcount.h>
 #include <linux/llist.h>
+#include <dovetail/sock.h>
 #include <net/dst.h>
 #include <net/checksum.h>
 #include <net/tcp_states.h>
@@ -584,6 +585,7 @@ struct sock {
 						  struct sk_buff *skb);
 	void                    (*sk_destruct)(struct sock *sk);
 	struct sock_reuseport __rcu	*sk_reuseport_cb;
+	struct oob_sock_state	sk_oob_state;
 #ifdef CONFIG_BPF_SYSCALL
 	struct bpf_local_storage __rcu	*sk_bpf_storage;
 #endif
@@ -1882,6 +1884,91 @@ static inline void skb_set_owner_edemux(struct sk_buff *skb, struct sock *sk)
 #else
 #define sock_edemux sock_efree
 #endif
+
+#ifdef CONFIG_NET_OOB
+
+static inline bool sock_oob_capable(struct socket *sock)
+{
+	return sock && sock->sk && sock->sk->sk_oob_state.data;
+}
+
+int sock_oob_attach(struct socket *sock);
+
+void sock_oob_release(struct socket *sock);
+
+void sock_oob_destroy(struct sock *sk);
+
+int sock_oob_bind(struct sock *sk, struct sockaddr_unsized *addr, int len);
+
+int sock_oob_shutdown(struct sock *sk, int how);
+
+int sock_oob_connect(struct sock *sk,
+		struct sockaddr_unsized *addr, int len, int flags);
+
+long sock_inband_ioctl_redirect(struct sock *sk,
+				unsigned int cmd, unsigned long arg);
+
+long sock_oob_ioctl(struct file *file,
+		unsigned int cmd, unsigned long arg);
+
+ssize_t sock_oob_write(struct file *filp,
+		const char __user *u_buf, size_t count);
+
+ssize_t sock_oob_read(struct file *filp,
+		char __user *u_buf, size_t count);
+
+__poll_t sock_oob_poll(struct file *filp,
+		struct oob_poll_wait *wait);
+
+int sock_inband_setopt_redirect(struct sock *sk,
+				int level, int optname,
+				sockptr_t optval, unsigned int optlen);
+
+int sock_inband_getopt_redirect(struct sock *sk,
+				int level, int optname,
+				sockptr_t optval, int *optlen);
+
+static inline void sock_oob_destruct(struct sock *sk)
+{
+	if (sk->sk_oob_state.data)
+		sock_oob_destroy(sk);
+}
+
+#else  /* !CONFIG_NET_OOB */
+
+static inline bool sock_oob_capable(struct socket *sock)
+{
+	return false;
+}
+
+static inline int sock_oob_bind(struct sock *sk, struct sockaddr_unsized *addr,
+				int len)
+{
+	return 0;
+}
+
+static inline int sock_oob_shutdown(struct sock *sk, int how)
+{
+	return 0;
+}
+
+static inline int sock_inband_setopt_redirect(struct sock *sk,
+					int level, int optname,
+					sockptr_t optval, int optlen)
+{
+	return 0;
+}
+
+static inline int sock_inband_getopt_redirect(struct sock *sk,
+					int level, int optname,
+					sockptr_t optval, int *optlen)
+{
+	return 0;
+}
+
+static inline void sock_oob_destruct(struct sock *sk) { }
+
+#endif	/* !CONFIG_NET_OOB */
 
 int sk_setsockopt(struct sock *sk, int level, int optname,
 		  sockptr_t optval, unsigned int optlen);

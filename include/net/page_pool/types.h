@@ -30,9 +30,11 @@
  * page_pool_params.slow.queue_idx.
  */
 #define PP_FLAG_ALLOW_UNREADABLE_NETMEM BIT(3)
+#define PP_FLAG_PAGE_OOB	BIT(4) /* Enable access from the oob stage (Dovetail) */
 
 #define PP_FLAG_ALL		(PP_FLAG_DMA_MAP | PP_FLAG_DMA_SYNC_DEV | \
-				 PP_FLAG_SYSTEM_POOL | PP_FLAG_ALLOW_UNREADABLE_NETMEM)
+				 PP_FLAG_SYSTEM_POOL | PP_FLAG_ALLOW_UNREADABLE_NETMEM | \
+				 PP_FLAG_PAGE_OOB)
 
 /* Index limit to stay within PP_DMA_INDEX_BITS for DMA indices */
 #define PP_DMA_INDEX_LIMIT XA_LIMIT(1, BIT(PP_DMA_INDEX_BITS) - 1)
@@ -64,7 +66,12 @@
 #define PP_ALLOC_CACHE_SIZE	(PP_ALLOC_CACHE_REFILL * 2)
 struct pp_alloc_cache {
 	u32 count;
+#ifdef CONFIG_PAGE_POOL_OOB
+	netmem_ref *cache;
+	hard_spinlock_t oob_lock;
+#else	/* !CONFIG_PAGE_POOL_OOB */
 	netmem_ref cache[PP_ALLOC_CACHE_SIZE];
+#endif	/* !CONFIG_PAGE_POOL_OOB */
 };
 
 /**
@@ -282,6 +289,17 @@ void page_pool_destroy(struct page_pool *pool);
 void page_pool_use_xdp_mem(struct page_pool *pool, void (*disconnect)(void *),
 			   const struct xdp_mem_info *mem);
 void page_pool_put_netmem_bulk(netmem_ref *data, u32 count);
+static inline bool page_pool_is_oob(struct page_pool *pool)
+{
+	return IS_ENABLED(CONFIG_PAGE_POOL_OOB) &&
+		pool->slow.flags & PP_FLAG_PAGE_OOB;
+}
+
+static inline unsigned int page_pool_cache_size(struct page_pool *pool)
+{
+	return page_pool_is_oob(pool) ? pool->p.pool_size : PP_ALLOC_CACHE_SIZE;
+}
+
 #else
 static inline void page_pool_destroy(struct page_pool *pool)
 {
