@@ -664,7 +664,7 @@ void __rcu_irq_enter_check_tick(void)
 	struct rcu_data *rdp = this_cpu_ptr(&rcu_data);
 
 	// If we're here from NMI there's nothing to do.
-	if (in_nmi())
+	if (in_nonmaskable())
 		return;
 
 	RCU_LOCKDEP_WARN(!rcu_is_watching_curr_cpu(),
@@ -748,6 +748,9 @@ notrace bool rcu_is_watching(void)
 {
 	bool ret;
 
+	if (on_pipeline_entry())
+ 		return true;
+ 
 	preempt_disable_notrace();
 	ret = rcu_is_watching_curr_cpu();
 	preempt_enable_notrace();
@@ -4034,7 +4037,7 @@ bool notrace rcu_lockdep_current_cpu_online(void)
 	struct rcu_data *rdp;
 	bool ret = false;
 
-	if (in_nmi() || !rcu_scheduler_fully_active)
+	if (in_nonmaskable() || !rcu_scheduler_fully_active)
 		return true;
 	preempt_disable_notrace();
 	rdp = this_cpu_ptr(&rcu_data);
