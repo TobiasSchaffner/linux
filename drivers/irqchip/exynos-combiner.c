@@ -107,6 +107,7 @@ static struct irq_chip combiner_chip = {
 #ifdef CONFIG_SMP
 	.irq_set_affinity	= combiner_set_affinity,
 #endif
+	.flags			= IRQCHIP_PIPELINE_SAFE,
 };
 
 static void __init combiner_cascade_irq(struct combiner_chip_data *combiner_data,
