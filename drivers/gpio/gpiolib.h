@@ -160,6 +160,17 @@ int gpiod_set_array_value_complex(bool raw, bool can_sleep,
 
 int gpiod_set_transitory(struct gpio_desc *desc, bool transitory);
 
+#ifdef CONFIG_GPIOLIB_OOB
+int gpiod_get_array_value_oob(struct gpio_chip *gc,
+			      unsigned long *value_bitmap,
+			      u32 num_descs,
+			      struct gpio_desc **desc_array);
+int gpiod_set_array_value_oob(struct gpio_chip *gc,
+			      const unsigned long *value_bitmap,
+			      u32 num_descs,
+			      struct gpio_desc **desc_array);
+#endif
+
 void gpiod_line_state_notify(struct gpio_desc *desc, unsigned long action);
 int gpiod_direction_output_nonotify(struct gpio_desc *desc, int value);
 int gpiod_direction_input_nonotify(struct gpio_desc *desc);
