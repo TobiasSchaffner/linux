@@ -591,6 +591,7 @@ static struct irq_chip brcm_msi_bottom_irq_chip = {
 	.name			= "BRCM STB MSI",
 	.irq_compose_msi_msg	= brcm_msi_compose_msi_msg,
 	.irq_ack                = brcm_msi_ack_irq,
+	.flags		 	= IRQCHIP_PIPELINE_SAFE,
 };
 
 static int brcm_msi_alloc(struct brcm_msi *msi, unsigned int nr_irqs)
