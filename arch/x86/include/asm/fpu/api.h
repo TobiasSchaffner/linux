@@ -48,6 +48,22 @@ static inline void kernel_fpu_begin(void)
 #endif
 }
 
+static inline void __fpregs_lock(void)
+{
+	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
+		local_bh_disable();
+	else
+		preempt_disable();
+}
+
+static inline void __fpregs_unlock(void)
+{
+	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
+		local_bh_enable();
+	else
+		preempt_enable();
+}
+
 /*
  * Use fpregs_lock() while editing CPU's FPU registers or fpu->fpstate, or while
  * using the FPU in kernel mode.  A context switch will (and softirq might) save
@@ -63,20 +79,22 @@ static inline void kernel_fpu_begin(void)
  * half processing is always in thread context on RT kernels so it
  * implicitly prevents bottom half processing as well.
  */
-static inline void fpregs_lock(void)
+static inline unsigned long fpregs_lock(void)
 {
-	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
-		local_bh_disable();
-	else
-		preempt_disable();
+	if (IS_ENABLED(CONFIG_DOVETAIL))
+		return hard_preempt_disable();
+
+	__fpregs_lock();
+
+	return 0;
 }
 
-static inline void fpregs_unlock(void)
+static inline void fpregs_unlock(unsigned long flags)
 {
-	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
-		local_bh_enable();
+	if (IS_ENABLED(CONFIG_DOVETAIL))
+		hard_preempt_enable(flags);
 	else
-		preempt_enable();
+		__fpregs_unlock();
 }
 
 /*
@@ -98,6 +116,10 @@ static inline void fpregs_assert_state_consistent(void) { }
  * Load the task FPU state before returning to userspace.
  */
 extern void switch_fpu_return(void);
+
+/* For Dovetail context switching. */
+void fpu__suspend_inband(void);
+void fpu__resume_inband(void);
 
 /*
  * Query the presence of one or more xfeatures. Works on any legacy CPU as well.
