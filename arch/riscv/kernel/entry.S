@@ -361,9 +361,14 @@ restore_all:
 resume_kernel:
 	REG_L s0, TASK_TI_PREEMPT_COUNT(tp)
 	bnez s0, restore_all
-	REG_L s0, TASK_TI_FLAGS(tp)
-	andi s0, s0, _TIF_NEED_RESCHED
+	REG_L s1, TASK_TI_FLAGS(tp)
+	andi s0, s1, _TIF_NEED_RESCHED
+	bnez s0, 1f
+	REG_L s0, TASK_TI_PREEMPT_LAZY_COUNT(tp)
+	bnez s0, restore_all
+	andi s0, s1, _TIF_NEED_RESCHED_LAZY
 	beqz s0, restore_all
+1:
 	call preempt_schedule_irq
 	j restore_all
 #endif
