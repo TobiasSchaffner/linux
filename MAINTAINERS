@@ -19634,27 +19634,36 @@ M:	Emil Renner Berthing <kernel@esmil.dk>
 S:	Maintained
 F:	arch/riscv/boot/dts/starfive/
 
-STARFIVE JH7100 CLOCK DRIVERS
+STARFIVE CLOCK DRIVERS
 M:	Emil Renner Berthing <kernel@esmil.dk>
+M:	Hal Feng <hal.feng@starfivetech.com>
 S:	Maintained
-F:	Documentation/devicetree/bindings/clock/starfive,jh7100-*.yaml
-F:	drivers/clk/starfive/clk-starfive-jh7100*
-F:	include/dt-bindings/clock/starfive-jh7100*.h
+F:	Documentation/devicetree/bindings/clock/starfive*
+F:	drivers/clk/starfive/
+F:	include/dt-bindings/clock/starfive*
 
-STARFIVE JH7100 PINCTRL DRIVER
+STARFIVE PINCTRL DRIVER
 M:	Emil Renner Berthing <kernel@esmil.dk>
+M:	Jianlong Huang <jianlong.huang@starfivetech.com>
 L:	linux-gpio@vger.kernel.org
 S:	Maintained
-F:	Documentation/devicetree/bindings/pinctrl/starfive,jh7100-pinctrl.yaml
+F:	Documentation/devicetree/bindings/pinctrl/starfive*
 F:	drivers/pinctrl/starfive/
-F:	include/dt-bindings/pinctrl/pinctrl-starfive-jh7100.h
+F:	include/dt-bindings/pinctrl/pinctrl-starfive*
 
-STARFIVE JH7100 RESET CONTROLLER DRIVER
+STARFIVE RESET CONTROLLER DRIVERS
 M:	Emil Renner Berthing <kernel@esmil.dk>
+M:	Hal Feng <hal.feng@starfivetech.com>
 S:	Maintained
 F:	Documentation/devicetree/bindings/reset/starfive,jh7100-reset.yaml
-F:	drivers/reset/reset-starfive-jh7100.c
-F:	include/dt-bindings/reset/starfive-jh7100.h
+F:	drivers/reset/starfive/
+F:	include/dt-bindings/reset/starfive*
+
+STARFIVE JH7110 MMC/SD/SDIO DRIVER
+M:	William Qiu <william.qiu@starfivetech.com>
+S:	Maintained
+F:	Documentation/devicetree/bindings/mmc/starfive*
+F:	drivers/mmc/dw_mmc-starfive.c
 
 STATIC BRANCH/CALL
 M:	Peter Zijlstra <peterz@infradead.org>

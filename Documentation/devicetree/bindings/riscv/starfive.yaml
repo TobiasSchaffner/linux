@@ -22,6 +22,10 @@ properties:
           - const: beagle,beaglev-starlight-jh7100-r0
           - const: starfive,jh7100
 
+      - items:
+          - const: starfive,visionfive-v2
+          - const: starfive,jh7110
+
 additionalProperties: true
 
 ...

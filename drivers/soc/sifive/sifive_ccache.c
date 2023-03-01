@@ -107,6 +107,7 @@ static const struct of_device_id sifive_ccache_ids[] = {
 	{ .compatible = "sifive,fu540-c000-ccache" },
 	{ .compatible = "sifive,fu740-c000-ccache" },
 	{ .compatible = "sifive,ccache0" },
+	{ .compatible = "starfive,jh7110-ccache" },
 	{ /* end of table */ }
 };
 
