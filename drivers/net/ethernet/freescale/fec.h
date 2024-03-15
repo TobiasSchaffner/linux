@@ -538,11 +538,27 @@ struct fec_tx_buffer {
 	enum fec_txbuf_type type;
 };
 
+#ifdef CONFIG_FEC_OOB
+struct fec_enet_priv_tx_q;
+
+struct fec_inband_work {
+	dma_addr_t addr;
+	struct device *dev;
+	unsigned int size;
+};
+#endif
+
 struct fec_enet_priv_tx_q {
 	struct bufdesc_prop bd;
 	unsigned char *tx_bounce[TX_RING_SIZE];
 	struct fec_tx_buffer tx_buf[TX_RING_SIZE];
 	struct xsk_buff_pool *xsk_pool;
+#ifdef CONFIG_FEC_OOB
+	struct fec_inband_work inband_flush[TX_RING_SIZE];
+	struct irq_work inband_irq_work;
+	int next_to_defer;
+	int next_to_flush;
+#endif
 
 	unsigned short tx_stop_threshold;
 	unsigned short tx_wake_threshold;
@@ -691,6 +707,36 @@ struct fec_enet_private {
 
 	u64 ethtool_stats[];
 };
+
+/*
+ * Check whether oob support is compiled in for the FEC driver. This
+ * tells nothing about the current execution stage, or whether oob
+ * diversion is ongoing for any FEC device.
+ */
+static inline bool fec_net_oob(void)
+{
+	return IS_ENABLED(CONFIG_FEC_OOB);
+}
+
+/*
+ * Check whether the caller is running on the out-of-band stage, with
+ * the precondition that oob support is compiled in for the FEC driver.
+ */
+static inline bool fec_running_oob(void)
+{
+	return fec_net_oob() && running_oob();
+}
+
+/*
+ * Check whether a FEC device is currently diverting packet to the
+ * out-of-band netstack. The compiler is given the opportunity to
+ * compile the whole thing out if either NET_OOB or FEC_OOB which
+ * depends on it are disabled.
+ */
+static inline bool fec_oob_enabled(struct fec_enet_private *fep)
+{
+	return IS_ENABLED(CONFIG_FEC_OOB) && netif_oob_diversion(fep->netdev);
+}
 
 void fec_ptp_init(struct platform_device *pdev, int irq_idx);
 void fec_ptp_restore_state(struct fec_enet_private *fep);
