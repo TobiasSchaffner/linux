@@ -1920,7 +1920,9 @@ static int igb_run_loopback_test(struct igb_adapter *adapter)
 		/* place 64 packets on the transmit queue*/
 		for (i = 0; i < 64; i++) {
 			skb_get(skb);
+			netif_tx_lock_oob(txring_txq(tx_ring));
 			tx_ret_val = igb_xmit_frame_ring(skb, tx_ring);
+			netif_tx_unlock_oob(txring_txq(tx_ring));
 			if (tx_ret_val == NETDEV_TX_OK)
 				good_cnt++;
 		}
@@ -3434,8 +3436,12 @@ static int igb_set_priv_flags(struct net_device *netdev, u32 priv_flags)
 	unsigned int flags = adapter->flags;
 
 	flags &= ~IGB_FLAG_RX_LEGACY;
-	if (priv_flags & IGB_PRIV_FLAGS_LEGACY_RX)
+	if (priv_flags & IGB_PRIV_FLAGS_LEGACY_RX) {
+		/* Legacy RX is unavailable when oob mode is on. */
+		if (netif_oob_diversion(netdev))
+			return -EPERM;
 		flags |= IGB_FLAG_RX_LEGACY;
+	}
 
 	if (flags != adapter->flags) {
 		adapter->flags = flags;
