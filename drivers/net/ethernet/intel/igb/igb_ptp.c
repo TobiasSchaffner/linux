@@ -173,9 +173,9 @@ static void igb_ptp_systim_to_hwtstamp(struct igb_adapter *adapter,
 	case e1000_82580:
 	case e1000_i354:
 	case e1000_i350:
-		spin_lock_irqsave(&adapter->tmreg_lock, flags);
+		raw_spin_lock_irqsave(&adapter->tmreg_lock, flags);
 		ns = timecounter_cyc2time(&adapter->tc, systim);
-		spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
+		raw_spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 
 		hwtstamps->hwtstamp = ns_to_ktime(ns);
 		break;
@@ -231,9 +231,9 @@ static int igb_ptp_adjtime_82576(struct ptp_clock_info *ptp, s64 delta)
 					       ptp_caps);
 	unsigned long flags;
 
-	spin_lock_irqsave(&igb->tmreg_lock, flags);
+	raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 	timecounter_adjtime(&igb->tc, delta);
-	spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+	raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 
 	return 0;
 }
@@ -245,13 +245,13 @@ static int igb_ptp_adjtime_i210(struct ptp_clock_info *ptp, s64 delta)
 	unsigned long flags;
 	struct timespec64 now, then = ns_to_timespec64(delta);
 
-	spin_lock_irqsave(&igb->tmreg_lock, flags);
+	raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 
 	igb_ptp_read_i210(igb, &now);
 	now = timespec64_add(now, then);
 	igb_ptp_write_i210(igb, (const struct timespec64 *)&now);
 
-	spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+	raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 
 	return 0;
 }
@@ -267,7 +267,7 @@ static int igb_ptp_gettimex_82576(struct ptp_clock_info *ptp,
 	u32 lo, hi;
 	u64 ns;
 
-	spin_lock_irqsave(&igb->tmreg_lock, flags);
+	raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 
 	ptp_read_system_prets(sts);
 	lo = rd32(E1000_SYSTIML);
@@ -276,7 +276,7 @@ static int igb_ptp_gettimex_82576(struct ptp_clock_info *ptp,
 
 	ns = timecounter_cyc2time(&igb->tc, ((u64)hi << 32) | lo);
 
-	spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+	raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 
 	*ts = ns_to_timespec64(ns);
 
@@ -294,7 +294,7 @@ static int igb_ptp_gettimex_82580(struct ptp_clock_info *ptp,
 	u32 lo, hi;
 	u64 ns;
 
-	spin_lock_irqsave(&igb->tmreg_lock, flags);
+	raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 
 	ptp_read_system_prets(sts);
 	rd32(E1000_SYSTIMR);
@@ -304,7 +304,7 @@ static int igb_ptp_gettimex_82580(struct ptp_clock_info *ptp,
 
 	ns = timecounter_cyc2time(&igb->tc, ((u64)hi << 32) | lo);
 
-	spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+	raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 
 	*ts = ns_to_timespec64(ns);
 
@@ -320,7 +320,7 @@ static int igb_ptp_gettimex_i210(struct ptp_clock_info *ptp,
 	struct e1000_hw *hw = &igb->hw;
 	unsigned long flags;
 
-	spin_lock_irqsave(&igb->tmreg_lock, flags);
+	raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 
 	ptp_read_system_prets(sts);
 	rd32(E1000_SYSTIMR);
@@ -328,7 +328,7 @@ static int igb_ptp_gettimex_i210(struct ptp_clock_info *ptp,
 	ts->tv_nsec = rd32(E1000_SYSTIML);
 	ts->tv_sec = rd32(E1000_SYSTIMH);
 
-	spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+	raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 
 	return 0;
 }
@@ -343,11 +343,11 @@ static int igb_ptp_settime_82576(struct ptp_clock_info *ptp,
 
 	ns = timespec64_to_ns(ts);
 
-	spin_lock_irqsave(&igb->tmreg_lock, flags);
+	raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 
 	timecounter_init(&igb->tc, &igb->cc, ns);
 
-	spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+	raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 
 	return 0;
 }
@@ -359,11 +359,11 @@ static int igb_ptp_settime_i210(struct ptp_clock_info *ptp,
 					       ptp_caps);
 	unsigned long flags;
 
-	spin_lock_irqsave(&igb->tmreg_lock, flags);
+	raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 
 	igb_ptp_write_i210(igb, ts);
 
-	spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+	raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 
 	return 0;
 }
@@ -521,7 +521,7 @@ static int igb_ptp_feature_enable_82580(struct ptp_clock_info *ptp,
 			tsauxc_mask = TSAUXC_EN_TS0;
 			tsim_mask = TSINTR_AUTT0;
 		}
-		spin_lock_irqsave(&igb->tmreg_lock, flags);
+		raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 		tsauxc = rd32(E1000_TSAUXC);
 		tsim = rd32(E1000_TSIM);
 		if (on) {
@@ -534,7 +534,7 @@ static int igb_ptp_feature_enable_82580(struct ptp_clock_info *ptp,
 		}
 		wr32(E1000_TSAUXC, tsauxc);
 		wr32(E1000_TSIM, tsim);
-		spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+		raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 		return 0;
 
 	case PTP_CLK_REQ_PEROUT:
@@ -566,7 +566,7 @@ static int igb_ptp_feature_enable_82580(struct ptp_clock_info *ptp,
 			trgttiml = E1000_TRGTTIML0;
 			trgttimh = E1000_TRGTTIMH0;
 		}
-		spin_lock_irqsave(&igb->tmreg_lock, flags);
+		raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 		tsauxc = rd32(E1000_TSAUXC);
 		tsim = rd32(E1000_TSIM);
 		if (rq->perout.index == 1) {
@@ -627,7 +627,7 @@ static int igb_ptp_feature_enable_82580(struct ptp_clock_info *ptp,
 		}
 		wr32(E1000_TSAUXC, tsauxc);
 		wr32(E1000_TSIM, tsim);
-		spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+		raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 		return 0;
 
 	case PTP_CLK_REQ_PPS:
@@ -670,7 +670,7 @@ static int igb_ptp_feature_enable_i210(struct ptp_clock_info *ptp,
 			tsauxc_mask = TSAUXC_EN_TS0;
 			tsim_mask = TSINTR_AUTT0;
 		}
-		spin_lock_irqsave(&igb->tmreg_lock, flags);
+		raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 		tsauxc = rd32(E1000_TSAUXC);
 		tsim = rd32(E1000_TSIM);
 		if (on) {
@@ -683,7 +683,7 @@ static int igb_ptp_feature_enable_i210(struct ptp_clock_info *ptp,
 		}
 		wr32(E1000_TSAUXC, tsauxc);
 		wr32(E1000_TSIM, tsim);
-		spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+		raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 		return 0;
 
 	case PTP_CLK_REQ_PEROUT:
@@ -731,7 +731,7 @@ static int igb_ptp_feature_enable_i210(struct ptp_clock_info *ptp,
 			trgttimh = E1000_TRGTTIMH0;
 			freqout = E1000_FREQOUT0;
 		}
-		spin_lock_irqsave(&igb->tmreg_lock, flags);
+		raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 		tsauxc = rd32(E1000_TSAUXC);
 		tsim = rd32(E1000_TSIM);
 		if (rq->perout.index == 1) {
@@ -757,11 +757,11 @@ static int igb_ptp_feature_enable_i210(struct ptp_clock_info *ptp,
 		}
 		wr32(E1000_TSAUXC, tsauxc);
 		wr32(E1000_TSIM, tsim);
-		spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+		raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 		return 0;
 
 	case PTP_CLK_REQ_PPS:
-		spin_lock_irqsave(&igb->tmreg_lock, flags);
+		raw_spin_lock_irqsave(&igb->tmreg_lock, flags);
 		tsim = rd32(E1000_TSIM);
 		if (on)
 			tsim |= TSINTR_SYS_WRAP;
@@ -769,7 +769,7 @@ static int igb_ptp_feature_enable_i210(struct ptp_clock_info *ptp,
 			tsim &= ~TSINTR_SYS_WRAP;
 		igb->pps_sys_wrap_on = !!on;
 		wr32(E1000_TSIM, tsim);
-		spin_unlock_irqrestore(&igb->tmreg_lock, flags);
+		raw_spin_unlock_irqrestore(&igb->tmreg_lock, flags);
 		return 0;
 	}
 
@@ -1388,7 +1388,7 @@ void igb_ptp_init(struct igb_adapter *adapter)
 			 adapter->netdev->name);
 		adapter->ptp_flags |= IGB_PTP_ENABLED;
 
-		spin_lock_init(&adapter->tmreg_lock);
+		raw_spin_lock_init(&adapter->tmreg_lock);
 		INIT_WORK(&adapter->ptp_tx_work, igb_ptp_tx_work);
 
 		if (adapter->ptp_flags & IGB_PTP_OVERFLOW_CHECK)
@@ -1474,7 +1474,7 @@ void igb_ptp_reset(struct igb_adapter *adapter)
 	/* reset the tstamp_config */
 	igb_ptp_set_timestamp_mode(adapter, &adapter->tstamp_config);
 
-	spin_lock_irqsave(&adapter->tmreg_lock, flags);
+	raw_spin_lock_irqsave(&adapter->tmreg_lock, flags);
 
 	switch (adapter->hw.mac.type) {
 	case e1000_82576:
@@ -1509,7 +1509,7 @@ void igb_ptp_reset(struct igb_adapter *adapter)
 				 ktime_get_real_ns());
 	}
 out:
-	spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
+	raw_spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 
 	wrfl();
 
