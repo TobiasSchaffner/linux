@@ -6,6 +6,7 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/init.h>
+#include <linux/irq.h>
 #include <linux/bitops.h>
 #include <linux/vmalloc.h>
 #include <linux/pagemap.h>
@@ -16,6 +17,8 @@
 #include <net/ip6_checksum.h>
 #include <net/pkt_sched.h>
 #include <net/pkt_cls.h>
+#include <net/page_pool/helpers.h>
+#include <linux/skbuff_ref.h>
 #include <linux/net_tstamp.h>
 #include <linux/mii.h>
 #include <linux/ethtool.h>
@@ -728,6 +731,390 @@ u32 igb_rd32(struct e1000_hw *hw, u32 reg)
 	return value;
 }
 
+static void __igb_flush_page(struct igb_ring *rx_ring, dma_addr_t dma,
+			struct page *page, __u16 bias)
+{
+	dma_unmap_page_attrs(rx_ring->dev, dma,
+			igb_rx_pg_size(rx_ring), DMA_FROM_DEVICE,
+			IGB_RX_DMA_ATTR);
+	__page_frag_cache_drain(page, bias);
+}
+
+#ifdef CONFIG_IGB_OOB
+/*
+ * We won't cope with threaded irqs if oob I/O might be enabled for a
+ * device. Most of our interrupt-triggered work already happens out of
+ * IRQ context anyway (NAPI softirq, workqueues), so in practice, the
+ * cost is marginal, and at any rate, won't impact the oob mode.
+ */
+#define IGB_IRQ_FLAGS  IRQF_NO_THREAD
+
+static int igb_enable_oob(struct net_device *netdev)
+{
+	struct igb_adapter *adapter = netdev_priv(netdev);
+	int ret = 0, n;
+
+	/* Cannot have XDP and oob diversion enabled at the same time. */
+	if (igb_xdp_is_enabled(adapter))
+		return -EBUSY;
+
+	/* Catch late init errors for oob mode, still allowing
+	 * operations in regular mode though. */
+	for (n = 0; n < adapter->num_rx_queues; n++)
+		if (!adapter->rx_ring[n]->rx_oob_pool)
+			return -ENOMEM;
+
+	if (adapter->flags & IGB_FLAG_HAS_MSIX) {
+		for (n = 0; n <= adapter->num_q_vectors && n <= MAX_Q_VECTORS; n++) {
+			ret = irq_switch_oob(adapter->msix_entries[n].vector, true);
+			if (ret) {
+				while (--n >= 0)
+					irq_switch_oob(adapter->msix_entries[n].vector, false);
+				return ret;
+			}
+		}
+		pr_info("%s: enabled out-of-band I/O mode (MSI-X)\n", netdev_name(netdev));
+	} else {
+		ret = irq_switch_oob(adapter->pdev->irq, true);
+		if (!ret)
+			pr_info("%s: enabled out-of-band I/O mode (%s)\n",
+				netdev_name(netdev),
+				adapter->flags & IGB_FLAG_HAS_MSI ? "MSI" : "legacy-int");
+	}
+
+	return ret;
+}
+
+static void igb_disable_oob(struct net_device *netdev)
+{
+	struct igb_adapter *adapter = netdev_priv(netdev);
+	int n;
+
+	if (adapter->flags & IGB_FLAG_HAS_MSIX) {
+		for (n = 0; n <= adapter->num_q_vectors && n <= MAX_Q_VECTORS; n++)
+			irq_switch_oob(adapter->msix_entries[n].vector, false);
+		pr_info("%s: disabled out-of-band I/O mode (MSI-X)\n", netdev_name(netdev));
+	} else {
+		irq_switch_oob(adapter->pdev->irq, false);
+		pr_info("%s: disabled out-of-band I/O mode (%s)\n",
+			netdev_name(netdev),
+			adapter->flags & IGB_FLAG_HAS_MSI ? "MSI" : "legacy-int");
+	}
+}
+
+static void igb_destroy_oob_pool(struct igb_ring *rx_ring)
+{
+	if (rx_ring->rx_oob_pool) {
+		page_pool_destroy(rx_ring->rx_oob_pool);
+		rx_ring->rx_oob_pool = NULL;
+	}
+}
+
+static void igb_create_oob_pool(struct igb_ring *ring)
+{
+	struct igb_adapter *adapter = netdev_priv(ring->netdev);
+	struct page_pool_params params = {
+		.order = igb_rx_pg_order(ring),
+		.flags = PP_FLAG_DMA_MAP | PP_FLAG_PAGE_OOB,
+		.pool_size = ring->count * 4,
+		.nid = dev_to_node(&adapter->pdev->dev),
+		.dev = &adapter->pdev->dev,
+		.dma_dir = DMA_FROM_DEVICE,
+		.offset = 0,
+		.max_len = igb_rx_pg_size(ring),
+	};
+	struct page_pool *rx_oob_pool;
+
+	igb_destroy_oob_pool(ring);
+	rx_oob_pool = page_pool_create(&params);
+
+	/*
+	 * On error allocating the oob pool, we can still operate in
+	 * regular in-band mode, rejecting oob traffic though.
+	 */
+	if (WARN_ON(IS_ERR(rx_oob_pool)))
+		return;
+
+	ring->rx_oob_pool = rx_oob_pool;
+}
+
+static struct page *igb_alloc_rx_page(struct igb_ring *rx_ring)
+{
+	if (likely(igb_running_oob()))
+		return page_pool_dev_alloc_pages(rx_ring->rx_oob_pool);
+
+	return dev_alloc_pages(igb_rx_pg_order(rx_ring));
+}
+
+static bool igb_is_oob_page(struct igb_ring *rx_ring,
+				struct page *page)
+{
+	return rx_ring->rx_oob_pool &&
+		napi_pp_get_pool(page_to_netmem(page)) == rx_ring->rx_oob_pool;
+}
+
+static inline void igb_mark_oob_page(struct sk_buff *skb,
+				struct igb_ring *rx_ring,
+				struct page *page)
+{
+	/*
+	 * If the buffer attached to the skb comes from an oob (RX)
+	 * pool, we need to mark it accordingly for proper recycling
+	 * via the regular page_pool hook.
+	 */
+	if (igb_is_oob_page(rx_ring, page))
+		skb_mark_for_recycle(skb);
+}
+
+static void igb_rx_inband_work(struct irq_work *irq_work)
+{
+	struct igb_ring *ring = container_of(irq_work, struct igb_ring, inband_irq_work);
+
+	while (ring->next_to_flush != READ_ONCE(ring->next_to_defer)) {
+		u16 ntf = ring->next_to_flush;
+		struct igb_inband_work *fl = ring->inband_flush + ntf;
+		__igb_flush_page(ring, fl->dma, fl->page, fl->pagecnt_bias);
+		ring->next_to_flush = (ntf + 1) % ring->count;
+	}
+}
+
+static void igb_flush_page(struct igb_ring *rx_ring,
+			struct igb_rx_buffer *rx_buffer)
+{
+	/* If running oob, defer the release to the inband stage. We
+	 * get there only for pages which do NOT belong to the oob
+	 * pool.
+	 */
+	if (igb_running_oob()) {
+		u16 ntd = rx_ring->next_to_defer;
+		struct igb_inband_work *fl = rx_ring->inband_flush + ntd;
+		/* We are called by the napi ->poll() handler, which
+		 * is serialized in oob context too. */
+		fl->page = rx_buffer->page;
+		fl->pagecnt_bias = rx_buffer->pagecnt_bias;
+		fl->dma = rx_buffer->dma;
+		fl->ring = rx_ring;
+		WRITE_ONCE(rx_ring->next_to_defer, (ntd + 1) % rx_ring->count);
+		irq_work_queue(&rx_ring->inband_irq_work);
+	} else {
+		__igb_flush_page(rx_ring, rx_buffer->dma, rx_buffer->page,
+				rx_buffer->pagecnt_bias);
+	}
+}
+
+static int igb_alloc_inband_wheel(struct igb_ring *ring,
+				void (*handler)(struct irq_work *irq_work))
+{
+	size_t size = sizeof(struct igb_inband_work) * ring->count;
+
+	ring->inband_flush = vmalloc(size);
+	if (!ring->inband_flush)
+		return -ENOMEM;
+
+	init_irq_work(&ring->inband_irq_work, handler);
+	ring->next_to_defer = 0;
+	ring->next_to_flush = 0;
+
+	return 0;
+}
+
+static void igb_free_inband_wheel(struct igb_ring *ring)
+{
+	vfree(ring->inband_flush); /* Ok if NULL. */
+	ring->inband_flush = NULL;
+}
+
+static void igb_tx_inband_work(struct irq_work *irq_work)
+{
+	struct igb_ring *ring = container_of(irq_work, struct igb_ring, inband_irq_work);
+
+	while (ring->next_to_flush != READ_ONCE(ring->next_to_defer)) {
+		u16 ntf = ring->next_to_flush;
+		struct igb_inband_work *fl = ring->inband_flush + ntf;
+		dma_unmap_single(fl->ring->dev,	fl->dma, fl->len, DMA_TO_DEVICE);
+		ring->next_to_flush = (ntf + 1) % ring->count;
+	}
+}
+
+static void igb_unmap_buffer(struct igb_ring *tx_ring,
+			struct igb_tx_buffer *tx_buffer)
+{
+	if (igb_running_oob()) {
+		u16 ntd = tx_ring->next_to_defer;
+		struct igb_inband_work *fl = tx_ring->inband_flush + ntd;
+		fl->dma = dma_unmap_addr(tx_buffer, dma);
+		fl->len = dma_unmap_len(tx_buffer, len);
+		fl->ring = tx_ring;
+		WRITE_ONCE(tx_ring->next_to_defer, (ntd + 1) % tx_ring->count);
+		irq_work_queue(&tx_ring->inband_irq_work);
+	} else {
+		dma_unmap_single(tx_ring->dev,
+				dma_unmap_addr(tx_buffer, dma),
+				dma_unmap_len(tx_buffer, len),
+				DMA_TO_DEVICE);
+	}
+}
+
+static inline bool igb_is_oob_tx(struct igb_tx_buffer *tx_buffer)
+{
+	return tx_buffer->tx_flags & IGB_TX_OOB;
+}
+
+static inline bool igb_in_primary_irqctx(struct igb_adapter *adapter)
+{
+	if (!igb_net_oob() || running_oob())
+		return true;
+
+	return !netif_oob_diversion(adapter->netdev);
+}
+
+static u32 igb_get_icr(struct igb_adapter *adapter)
+{
+	struct e1000_hw *hw = &adapter->hw;
+	u32 icr;
+
+	if (!igb_in_primary_irqctx(adapter)) {
+		icr = adapter->cached_icr;
+		adapter->cached_icr = 0;
+		return icr;
+	}
+
+	icr = rd32(E1000_ICR);
+	adapter->cached_icr |= icr;
+
+	return adapter->cached_icr;
+}
+
+static inline void igb_clear_icr(struct igb_adapter *adapter)
+{
+	adapter->cached_icr = 0;
+}
+
+static u32 igb_get_tsicr(struct igb_adapter *adapter)
+{
+	struct e1000_hw *hw = &adapter->hw;
+	u32 tsicr;
+
+	if (!igb_in_primary_irqctx(adapter)) {
+		tsicr = adapter->cached_tsicr;
+		adapter->cached_tsicr = 0;
+		return tsicr;
+	}
+
+	tsicr = rd32(E1000_TSICR);
+	adapter->cached_tsicr |= tsicr;
+
+	return adapter->cached_tsicr;
+}
+
+static irqreturn_t igb_eoi(struct igb_adapter *adapter, u32 icr, int forward_mask)
+{
+	/*
+	 * Forwarding means that the calling handler is going to be
+	 * reentered from the inband stage asap later on.
+	 */
+	if (igb_running_oob() && (icr & forward_mask))
+		return IRQ_FORWARD;
+
+	adapter->cached_icr = 0;
+	adapter->cached_tsicr = 0;
+
+	return IRQ_HANDLED;
+}
+
+#else  /* !CONFIG_IGB_OOB */
+
+#define IGB_IRQ_FLAGS  0
+#define igb_tx_inband_work	NULL
+#define igb_rx_inband_work	NULL
+
+static inline void igb_create_oob_pool(struct igb_ring *ring)
+{
+}
+
+static inline void igb_destroy_oob_pool(struct igb_ring *ring)
+{
+}
+
+static int igb_alloc_inband_wheel(struct igb_ring *ring,
+				void (*handler)(struct irq_work *irq_work))
+{
+	return 0;
+}
+
+static inline void igb_free_inband_wheel(struct igb_ring *ring)
+{
+}
+
+static inline struct page *igb_alloc_rx_page(struct igb_ring *rx_ring)
+{
+	return dev_alloc_pages(igb_rx_pg_order(rx_ring));
+}
+
+static inline bool igb_is_oob_page(struct igb_ring *rx_ring,
+				struct page *page)
+{
+	return false;
+}
+
+static inline void igb_mark_oob_page(struct sk_buff *skb,
+				struct igb_ring *rx_ring,
+				struct page *page)
+{
+}
+
+static void igb_flush_page(struct igb_ring *rx_ring,
+			struct igb_rx_buffer *rx_buffer)
+{
+	__igb_flush_page(rx_ring, rx_buffer->dma, rx_buffer->page,
+			rx_buffer->pagecnt_bias);
+}
+
+static void igb_unmap_buffer(struct igb_ring *tx_ring,
+			struct igb_tx_buffer *tx_buffer)
+{
+	dma_unmap_single(tx_ring->dev,
+			dma_unmap_addr(tx_buffer, dma),
+			dma_unmap_len(tx_buffer, len),
+			DMA_TO_DEVICE);
+}
+
+static inline bool igb_is_oob_tx(struct igb_tx_buffer *tx_buffer)
+{
+	return false;
+}
+
+static inline u32 igb_get_icr(struct igb_adapter *adapter)
+{
+	struct e1000_hw *hw = &adapter->hw;
+
+	return rd32(E1000_ICR);
+}
+
+static inline void igb_clear_icr(struct igb_adapter *adapter)
+{
+}
+
+static inline irqreturn_t igb_eoi(struct igb_adapter *adapter,
+				u32 icr, int forward_mask)
+{
+	return IRQ_HANDLED;
+}
+
+static inline u32 igb_get_tsicr(struct igb_adapter *adapter)
+{
+	struct e1000_hw *hw = &adapter->hw;
+
+	return rd32(E1000_TSICR);
+}
+
+static inline bool igb_in_primary_irqctx(struct igb_adapter *adapter)
+{
+	return true;
+}
+
+#endif	/* !CONFIG_IGB_OOB */
+
 /**
  *  igb_write_ivar - configure ivar for given MSI-X vector
  *  @hw: pointer to the HW structure
@@ -913,7 +1300,7 @@ static int igb_request_msix(struct igb_adapter *adapter)
 	int i, err = 0, vector = 0, free_vector = 0;
 
 	err = request_irq(adapter->msix_entries[vector].vector,
-			  igb_msix_other, 0, netdev->name, adapter);
+			  igb_msix_other, IGB_IRQ_FLAGS, netdev->name, adapter);
 	if (err)
 		goto err_out;
 
@@ -943,7 +1330,7 @@ static int igb_request_msix(struct igb_adapter *adapter)
 			sprintf(q_vector->name, "%s-unused", netdev->name);
 
 		err = request_irq(adapter->msix_entries[vector].vector,
-				  igb_msix_ring, 0, q_vector->name,
+				  igb_msix_ring, IGB_IRQ_FLAGS, q_vector->name,
 				  q_vector);
 		if (err)
 			goto err_free;
@@ -1417,7 +1804,7 @@ static int igb_request_irq(struct igb_adapter *adapter)
 	igb_assign_vector(adapter->q_vector[0], 0);
 
 	if (adapter->flags & IGB_FLAG_HAS_MSI) {
-		err = request_irq(pdev->irq, igb_intr_msi, 0,
+		err = request_irq(pdev->irq, igb_intr_msi, IGB_IRQ_FLAGS,
 				  netdev->name, adapter);
 		if (!err)
 			goto request_done;
@@ -1427,7 +1814,7 @@ static int igb_request_irq(struct igb_adapter *adapter)
 		adapter->flags &= ~IGB_FLAG_HAS_MSI;
 	}
 
-	err = request_irq(pdev->irq, igb_intr, IRQF_SHARED,
+	err = request_irq(pdev->irq, igb_intr, IRQF_SHARED | IGB_IRQ_FLAGS,
 			  netdev->name, adapter);
 
 	if (err)
@@ -1995,11 +2382,13 @@ static void igb_configure(struct igb_adapter *adapter)
 	 */
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		struct igb_ring *ring = adapter->rx_ring[i];
-		if (ring->xsk_pool)
+		if (ring->xsk_pool) {
 			igb_alloc_rx_buffers_zc(ring, ring->xsk_pool,
 						igb_desc_unused(ring));
-		else
+		} else  {
 			igb_alloc_rx_buffers(ring, igb_desc_unused(ring));
+			igb_create_oob_pool(ring);
+		}
 	}
 }
 
@@ -2942,6 +3331,10 @@ static int igb_xdp(struct net_device *dev, struct netdev_bpf *xdp)
 {
 	struct igb_adapter *adapter = netdev_priv(dev);
 
+	/* Cannot have XDP and oob diversion enabled at the same time. */
+	if (netif_oob_diversion(dev))
+		return -EBUSY;
+
 	switch (xdp->command) {
 	case XDP_SETUP_PROG:
 		return igb_xdp_setup(dev, xdp);
@@ -3062,6 +3455,10 @@ static const struct net_device_ops igb_netdev_ops = {
 	.ndo_xsk_wakeup         = igb_xsk_wakeup,
 	.ndo_hwtstamp_get	= igb_ptp_hwtstamp_get,
 	.ndo_hwtstamp_set	= igb_ptp_hwtstamp_set,
+#ifdef CONFIG_IGB_OOB
+	.ndo_enable_oob		= igb_enable_oob,
+	.ndo_disable_oob	= igb_disable_oob,
+#endif
 };
 
 /**
@@ -3648,6 +4045,11 @@ static int igb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		default:
 			break;
 		}
+	}
+
+	if (IS_ENABLED(CONFIG_IGB_OOB)) {
+		netdev_set_oob_capable(netdev);
+		netdev_info(netdev, "IGB device is oob-capable\n");
 	}
 
 	dev_pm_set_driver_flags(&pdev->dev, DPM_FLAG_NO_DIRECT_COMPLETE);
@@ -4299,6 +4701,9 @@ int igb_setup_tx_resources(struct igb_ring *tx_ring)
 	if (!tx_ring->tx_buffer_info)
 		goto err;
 
+	if (igb_alloc_inband_wheel(tx_ring, igb_tx_inband_work))
+		goto err;
+
 	/* round up to nearest 4K */
 	tx_ring->size = tx_ring->count * sizeof(union e1000_adv_tx_desc);
 	tx_ring->size = ALIGN(tx_ring->size, 4096);
@@ -4316,6 +4721,7 @@ int igb_setup_tx_resources(struct igb_ring *tx_ring)
 err:
 	vfree(tx_ring->tx_buffer_info);
 	tx_ring->tx_buffer_info = NULL;
+	igb_free_inband_wheel(tx_ring);
 	dev_err(dev, "Unable to allocate memory for the Tx descriptor ring\n");
 	return -ENOMEM;
 }
@@ -4462,6 +4868,9 @@ int igb_setup_rx_resources(struct igb_ring *rx_ring)
 	if (!rx_ring->rx_buffer_info)
 		goto err;
 
+	if (igb_alloc_inband_wheel(rx_ring, igb_rx_inband_work))
+		goto err;
+
 	/* Round up to nearest 4K */
 	rx_ring->size = rx_ring->count * sizeof(union e1000_adv_rx_desc);
 	rx_ring->size = ALIGN(rx_ring->size, 4096);
@@ -4483,6 +4892,7 @@ err:
 	xdp_rxq_info_unreg(&rx_ring->xdp_rxq);
 	vfree(rx_ring->rx_buffer_info);
 	rx_ring->rx_buffer_info = NULL;
+	igb_free_inband_wheel(rx_ring);
 	dev_err(dev, "Unable to allocate memory for the Rx descriptor ring\n");
 	return -ENOMEM;
 }
@@ -4900,6 +5310,7 @@ void igb_free_tx_resources(struct igb_ring *tx_ring)
 
 	vfree(tx_ring->tx_buffer_info);
 	tx_ring->tx_buffer_info = NULL;
+	igb_free_inband_wheel(tx_ring);
 
 	/* if not set, then don't free */
 	if (!tx_ring->desc)
@@ -4949,11 +5360,12 @@ void igb_clean_tx_ring(struct igb_ring *tx_ring)
 			goto skip_for_xsk;
 		}
 
-		/* unmap skb header data */
-		dma_unmap_single(tx_ring->dev,
-				 dma_unmap_addr(tx_buffer, dma),
-				 dma_unmap_len(tx_buffer, len),
-				 DMA_TO_DEVICE);
+		/* unmap skb header data unless oob-managed */
+		if (!igb_is_oob_tx(tx_buffer))
+			dma_unmap_single(tx_ring->dev,
+					dma_unmap_addr(tx_buffer, dma),
+					dma_unmap_len(tx_buffer, len),
+					DMA_TO_DEVICE);
 
 		/* check for eop_desc to determine the end of the packet */
 		eop_desc = tx_buffer->next_to_watch;
@@ -4971,7 +5383,7 @@ void igb_clean_tx_ring(struct igb_ring *tx_ring)
 			}
 
 			/* unmap any remaining paged data */
-			if (dma_unmap_len(tx_buffer, len))
+			if (dma_unmap_len(tx_buffer, len) && !igb_is_oob_tx(tx_buffer))
 				dma_unmap_page(tx_ring->dev,
 					       dma_unmap_addr(tx_buffer, dma),
 					       dma_unmap_len(tx_buffer, len),
@@ -5033,6 +5445,7 @@ void igb_free_rx_resources(struct igb_ring *rx_ring)
 		vfree(rx_ring->rx_buffer_info);
 		rx_ring->rx_buffer_info = NULL;
 	}
+	igb_free_inband_wheel(rx_ring);
 
 	/* if not set, then don't free */
 	if (!rx_ring->desc)
@@ -5078,6 +5491,7 @@ void igb_clean_rx_ring(struct igb_ring *rx_ring)
 	/* Free all the Rx ring sk_buffs */
 	while (i != rx_ring->next_to_alloc) {
 		struct igb_rx_buffer *buffer_info = &rx_ring->rx_buffer_info[i];
+		struct page *page = buffer_info->page;
 
 		/* Invalidate cache lines that may have been written to by
 		 * device so that we avoid corrupting memory.
@@ -5088,14 +5502,19 @@ void igb_clean_rx_ring(struct igb_ring *rx_ring)
 					      igb_rx_bufsz(rx_ring),
 					      DMA_FROM_DEVICE);
 
-		/* free resources associated with mapping */
-		dma_unmap_page_attrs(rx_ring->dev,
-				     buffer_info->dma,
-				     igb_rx_pg_size(rx_ring),
-				     DMA_FROM_DEVICE,
-				     IGB_RX_DMA_ATTR);
-		__page_frag_cache_drain(buffer_info->page,
-					buffer_info->pagecnt_bias);
+		/* We may find pages coming from an oob pool. */
+		if (igb_is_oob_page(rx_ring, page)) {
+			napi_pp_put_page(page_to_netmem(page));
+		} else {
+			/* free resources associated with mapping */
+			dma_unmap_page_attrs(rx_ring->dev,
+					buffer_info->dma,
+					igb_rx_pg_size(rx_ring),
+					DMA_FROM_DEVICE,
+					IGB_RX_DMA_ATTR);
+			__page_frag_cache_drain(page,
+						buffer_info->pagecnt_bias);
+		}
 
 		i++;
 		if (i == rx_ring->count)
@@ -5106,6 +5525,8 @@ skip_for_xsk:
 	rx_ring->next_to_alloc = 0;
 	rx_ring->next_to_clean = 0;
 	rx_ring->next_to_use = 0;
+
+	igb_destroy_oob_pool(rx_ring);
 }
 
 /**
@@ -6063,6 +6484,9 @@ static int igb_tso(struct igb_ring *tx_ring,
 	u32 paylen, l4_offset;
 	int err;
 
+	if (igb_running_oob())	/* no TSO for oob traffic. */
+		return 0;
+
 	if (skb->ip_summed != CHECKSUM_PARTIAL)
 		return 0;
 
@@ -6267,6 +6691,13 @@ static inline int igb_maybe_stop_tx(struct igb_ring *tx_ring, const u16 size)
 {
 	if (igb_desc_unused(tx_ring) >= size)
 		return 0;
+	/*
+	 * Dovetail: callers are always serialized, by some inband
+	 * stack lock, OR a mutual exclusion scheme between oob and
+	 * inband issuers enforced by the companion kernel (e.g. evl
+	 * stax), OR single-threaded for TX when called from the oob
+	 * stage.
+	 */
 	return __igb_maybe_stop_tx(tx_ring, size);
 }
 
@@ -6291,7 +6722,21 @@ static int igb_tx_map(struct igb_ring *tx_ring,
 	size = skb_headlen(skb);
 	data_len = skb->data_len;
 
-	dma = dma_map_single(tx_ring->dev, skb->data, size, DMA_TO_DEVICE);
+	if (igb_is_oob_tx(first)) {
+		/*
+		 * An oob-managed packet must have been pre-mapped by
+		 * the sender. We just need to to let the device get
+		 * at that DMA area.
+		 *
+		 * NOTE: oob packets on the TX path should have no
+		 * frags, so we are going to leave the following loop
+		 * early (data_len == 0).
+		 */
+		dma = skb_oob_dma_addr(skb);
+		dma_sync_single_for_device(tx_ring->dev, dma, size, DMA_TO_DEVICE);
+	} else {
+		dma = dma_map_single(tx_ring->dev, skb->data, size, DMA_TO_DEVICE);
+	}
 
 	tx_buffer = first;
 
@@ -6326,6 +6771,12 @@ static int igb_tx_map(struct igb_ring *tx_ring,
 		if (likely(!data_len))
 			break;
 
+		/*
+		 * We should not have frags on the oob TX path (but we
+		 * may have frags on the RX path though).
+		 */
+		WARN_ON_ONCE(igb_running_oob() && dovetail_debug());
+
 		tx_desc->read.cmd_type_len = cpu_to_le32(cmd_type ^ size);
 
 		i++;
@@ -6354,7 +6805,8 @@ static int igb_tx_map(struct igb_ring *tx_ring,
 	/* set the timestamp */
 	first->time_stamp = jiffies;
 
-	skb_tx_timestamp(skb);
+	if (!igb_running_oob())
+		skb_tx_timestamp(skb);
 
 	/* Force memory writes to complete before letting h/w know there
 	 * are new descriptors to fetch.  (Only applicable for weak-ordered
@@ -6400,7 +6852,8 @@ dma_error:
 		tx_buffer = &tx_ring->tx_buffer_info[i];
 	}
 
-	if (dma_unmap_len(tx_buffer, len))
+	/* tx_buffer == first, don't unmap if oob. */
+	if (!igb_is_oob_tx(tx_buffer) && dma_unmap_len(tx_buffer, len))
 		dma_unmap_single(tx_ring->dev,
 				 dma_unmap_addr(tx_buffer, dma),
 				 dma_unmap_len(tx_buffer, len),
@@ -6559,7 +7012,8 @@ netdev_tx_t igb_xmit_frame_ring(struct sk_buff *skb,
 	first->bytecount = skb->len;
 	first->gso_segs = 1;
 
-	if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP)) {
+	if (!igb_running_oob() && /* no TX timestamping from the oob stage. */
+		unlikely(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP)) {
 		struct igb_adapter *adapter = netdev_priv(tx_ring->netdev);
 
 		if (adapter->tstamp_config.tx_type == HWTSTAMP_TX_ON &&
@@ -6576,6 +7030,9 @@ netdev_tx_t igb_xmit_frame_ring(struct sk_buff *skb,
 			adapter->tx_hwtstamp_skipped++;
 		}
 	}
+
+	if (igb_net_oob() && skb_is_oob_managed(skb))
+		tx_flags |= IGB_TX_OOB;
 
 	if (skb_vlan_tag_present(skb)) {
 		tx_flags |= IGB_TX_FLAGS_VLAN;
@@ -6949,7 +7406,7 @@ static void igb_perout(struct igb_adapter *adapter, int tsintr_tt)
 	if (pin < 0 || pin >= IGB_N_SDP)
 		return;
 
-	spin_lock(&adapter->tmreg_lock);
+	raw_spin_lock(&adapter->tmreg_lock);
 
 	if (hw->mac.type == e1000_82580 ||
 	    hw->mac.type == e1000_i354 ||
@@ -7014,7 +7471,7 @@ static void igb_perout(struct igb_adapter *adapter, int tsintr_tt)
 	wr32(E1000_TSAUXC, tsauxc);
 	adapter->perout[tsintr_tt].start = ts;
 
-	spin_unlock(&adapter->tmreg_lock);
+	raw_spin_unlock(&adapter->tmreg_lock);
 }
 
 static void igb_extts(struct igb_adapter *adapter, int tsintr_tt)
@@ -7036,9 +7493,9 @@ static void igb_extts(struct igb_adapter *adapter, int tsintr_tt)
 		u64 ns = rd32(auxstmpl);
 
 		ns += ((u64)(rd32(auxstmph) & 0xFF)) << 32;
-		spin_lock_irqsave(&adapter->tmreg_lock, flags);
+		raw_spin_lock_irqsave(&adapter->tmreg_lock, flags);
 		ns = timecounter_cyc2time(&adapter->tc, ns);
-		spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
+		raw_spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
 		ts = ns_to_timespec64(ns);
 	} else {
 		ts.tv_nsec = rd32(auxstmpl);
@@ -7057,7 +7514,7 @@ static void igb_tsync_interrupt(struct igb_adapter *adapter)
 			  TSINTR_TT0 | TSINTR_TT1 |
 			  TSINTR_AUTT0 | TSINTR_AUTT1);
 	struct e1000_hw *hw = &adapter->hw;
-	u32 tsicr = rd32(E1000_TSICR);
+	u32 tsicr = igb_get_tsicr(adapter);
 	struct ptp_clock_event event;
 
 	if (hw->mac.type == e1000_82580) {
@@ -7066,6 +7523,9 @@ static void igb_tsync_interrupt(struct igb_adapter *adapter)
 		 */
 		wr32(E1000_TSICR, tsicr & mask);
 	}
+
+	if (igb_running_oob())
+		return;
 
 	if (tsicr & TSINTR_SYS_WRAP) {
 		event.type = PTP_CLOCK_PPS;
@@ -7095,8 +7555,11 @@ static irqreturn_t igb_msix_other(int irq, void *data)
 {
 	struct igb_adapter *adapter = data;
 	struct e1000_hw *hw = &adapter->hw;
-	u32 icr = rd32(E1000_ICR);
+	u32 icr = igb_get_icr(adapter);
 	/* reading ICR causes bit 31 of EICR to be cleared */
+
+	if (running_oob())
+		goto skip_inband;
 
 	if (icr & E1000_ICR_DRSTA)
 		schedule_work(&adapter->reset_task);
@@ -7122,12 +7585,14 @@ static irqreturn_t igb_msix_other(int irq, void *data)
 			mod_timer(&adapter->watchdog_timer, jiffies + 1);
 	}
 
+skip_inband:
 	if (icr & E1000_ICR_TS)
 		igb_tsync_interrupt(adapter);
 
-	wr32(E1000_EIMS, adapter->eims_other);
+	if (igb_in_primary_irqctx(adapter))
+		wr32(E1000_EIMS, adapter->eims_other);
 
-	return IRQ_HANDLED;
+	return igb_eoi(adapter, icr, E1000_ICR_OTHER_FORWARD_MASK);
 }
 
 static void igb_write_itr(struct igb_q_vector *q_vector)
@@ -7207,7 +7672,8 @@ static void igb_update_rx_dca(struct igb_adapter *adapter,
 static void igb_update_dca(struct igb_q_vector *q_vector)
 {
 	struct igb_adapter *adapter = q_vector->adapter;
-	int cpu = get_cpu();
+	unsigned long flags;
+	int cpu = hard_get_cpu(flags);
 
 	if (q_vector->cpu == cpu)
 		goto out_no_update;
@@ -7220,7 +7686,7 @@ static void igb_update_dca(struct igb_q_vector *q_vector)
 
 	q_vector->cpu = cpu;
 out_no_update:
-	put_cpu();
+	hard_put_cpu(flags);
 }
 
 static void igb_setup_dca(struct igb_adapter *adapter)
@@ -8177,9 +8643,13 @@ static irqreturn_t igb_intr_msi(int irq, void *data)
 	struct igb_q_vector *q_vector = adapter->q_vector[0];
 	struct e1000_hw *hw = &adapter->hw;
 	/* read ICR disables interrupts using IAM */
-	u32 icr = rd32(E1000_ICR);
+	u32 icr = igb_get_icr(adapter);
 
-	igb_write_itr(q_vector);
+	if (igb_in_primary_irqctx(adapter))
+		igb_write_itr(q_vector);
+
+	if (running_oob())
+		goto skip_inband;
 
 	if (icr & E1000_ICR_DRSTA)
 		schedule_work(&adapter->reset_task);
@@ -8195,12 +8665,14 @@ static irqreturn_t igb_intr_msi(int irq, void *data)
 			mod_timer(&adapter->watchdog_timer, jiffies + 1);
 	}
 
+skip_inband:
 	if (icr & E1000_ICR_TS)
 		igb_tsync_interrupt(adapter);
 
-	napi_schedule(&q_vector->napi);
+	if (igb_in_primary_irqctx(adapter))
+		napi_schedule(&q_vector->napi);
 
-	return IRQ_HANDLED;
+	return igb_eoi(adapter, icr, E1000_ICR_FORWARD_MASK);
 }
 
 /**
@@ -8216,15 +8688,21 @@ static irqreturn_t igb_intr(int irq, void *data)
 	/* Interrupt Auto-Mask...upon reading ICR, interrupts are masked.  No
 	 * need for the IMC write
 	 */
-	u32 icr = rd32(E1000_ICR);
+	u32 icr = igb_get_icr(adapter);
 
 	/* IMS will not auto-mask if INT_ASSERTED is not set, and if it is
 	 * not set, then the adapter didn't send an interrupt
 	 */
-	if (!(icr & E1000_ICR_INT_ASSERTED))
+	if (!(icr & E1000_ICR_INT_ASSERTED)) {
+		igb_clear_icr(adapter);
 		return IRQ_NONE;
+	}
 
-	igb_write_itr(q_vector);
+	if (igb_in_primary_irqctx(adapter))
+		igb_write_itr(q_vector);
+
+	if (running_oob())
+		goto skip_inband;
 
 	if (icr & E1000_ICR_DRSTA)
 		schedule_work(&adapter->reset_task);
@@ -8241,12 +8719,14 @@ static irqreturn_t igb_intr(int irq, void *data)
 			mod_timer(&adapter->watchdog_timer, jiffies + 1);
 	}
 
+skip_inband:
 	if (icr & E1000_ICR_TS)
 		igb_tsync_interrupt(adapter);
 
-	napi_schedule(&q_vector->napi);
+	if (igb_in_primary_irqctx(adapter))
+		napi_schedule(&q_vector->napi);
 
-	return IRQ_HANDLED;
+	return igb_eoi(adapter, icr, E1000_ICR_FORWARD_MASK);
 }
 
 static void igb_ring_irq_enable(struct igb_q_vector *q_vector)
@@ -8377,11 +8857,9 @@ static bool igb_clean_tx_irq(struct igb_q_vector *q_vector, int napi_budget)
 			goto skip_for_xsk;
 		}
 
-		/* unmap skb header data */
-		dma_unmap_single(tx_ring->dev,
-				 dma_unmap_addr(tx_buffer, dma),
-				 dma_unmap_len(tx_buffer, len),
-				 DMA_TO_DEVICE);
+		/* unmap skb header data unless oob-managed */
+		if (!igb_is_oob_tx(tx_buffer))
+			igb_unmap_buffer(tx_ring, tx_buffer);
 
 		/* clear tx_buffer data */
 		dma_unmap_len_set(tx_buffer, len, 0);
@@ -8399,10 +8877,8 @@ static bool igb_clean_tx_irq(struct igb_q_vector *q_vector, int napi_budget)
 
 			/* unmap any remaining paged data */
 			if (dma_unmap_len(tx_buffer, len)) {
-				dma_unmap_page(tx_ring->dev,
-					       dma_unmap_addr(tx_buffer, dma),
-					       dma_unmap_len(tx_buffer, len),
-					       DMA_TO_DEVICE);
+				if (!igb_is_oob_tx(tx_buffer))
+					igb_unmap_buffer(tx_ring, tx_buffer);
 				dma_unmap_len_set(tx_buffer, len, 0);
 			}
 		}
@@ -8521,7 +8997,8 @@ skip_for_xsk:
  *  @rx_ring: rx descriptor ring to store buffers on
  *  @old_buff: donor buffer to have page reused
  *
- *  Synchronizes page for reuse by the adapter
+ *  Synchronizes page for reuse by the adapter.
+ *  CAUTION: We must _never_ reuse oob pages.
  **/
 static void igb_reuse_rx_page(struct igb_ring *rx_ring,
 			      struct igb_rx_buffer *old_buff)
@@ -8545,14 +9022,15 @@ static void igb_reuse_rx_page(struct igb_ring *rx_ring,
 	new_buff->pagecnt_bias	= old_buff->pagecnt_bias;
 }
 
-static bool igb_can_reuse_rx_page(struct igb_rx_buffer *rx_buffer,
+static bool igb_can_reuse_rx_page(struct igb_ring *rx_ring,
+				  struct igb_rx_buffer *rx_buffer,
 				  int rx_buf_pgcnt)
 {
 	unsigned int pagecnt_bias = rx_buffer->pagecnt_bias;
 	struct page *page = rx_buffer->page;
 
-	/* avoid re-using remote and pfmemalloc pages */
-	if (!dev_page_is_reusable(page))
+	/* avoid re-using oob, remote and pfmemalloc pages */
+	if (igb_is_oob_page(rx_ring, page) || !dev_page_is_reusable(page))
 		return false;
 
 #if (PAGE_SIZE < 8192)
@@ -8624,6 +9102,9 @@ static struct sk_buff *igb_construct_skb(struct igb_ring *rx_ring,
 	unsigned int headlen;
 	struct sk_buff *skb;
 
+	/* This is legacy RX: not supported in oob mode. */
+	WARN_ON_ONCE(igb_running_oob() && dovetail_debug());
+
 	/* prefetch first cache line of first page */
 	net_prefetch(xdp->data);
 
@@ -8683,6 +9164,8 @@ static struct sk_buff *igb_build_skb(struct igb_ring *rx_ring,
 	skb = napi_build_skb(xdp->data_hard_start, truesize);
 	if (unlikely(!skb))
 		return NULL;
+
+	igb_mark_oob_page(skb, rx_ring, rx_buffer->page);
 
 	/* update pointers within the skb to store the data */
 	skb_reserve(skb, xdp->data - xdp->data_hard_start);
@@ -8963,19 +9446,15 @@ static struct igb_rx_buffer *igb_get_rx_buffer(struct igb_ring *rx_ring,
 static void igb_put_rx_buffer(struct igb_ring *rx_ring,
 			      struct igb_rx_buffer *rx_buffer, int rx_buf_pgcnt)
 {
-	if (igb_can_reuse_rx_page(rx_buffer, rx_buf_pgcnt)) {
+	if (igb_can_reuse_rx_page(rx_ring, rx_buffer, rx_buf_pgcnt))
 		/* hand second half of page back to the ring */
 		igb_reuse_rx_page(rx_ring, rx_buffer);
-	} else {
+	else if (!igb_is_oob_page(rx_ring, rx_buffer->page))
 		/* We are not reusing the buffer so unmap it and free
-		 * any references we are holding to it
-		 */
-		dma_unmap_page_attrs(rx_ring->dev, rx_buffer->dma,
-				     igb_rx_pg_size(rx_ring), DMA_FROM_DEVICE,
-				     IGB_RX_DMA_ATTR);
-		__page_frag_cache_drain(rx_buffer->page,
-					rx_buffer->pagecnt_bias);
-	}
+		 * any references we are holding to the page. oob
+		 * pages never reused, always released by the skb
+		 * consumer. */
+		igb_flush_page(rx_ring, rx_buffer);
 
 	/* clear contents of rx_buffer */
 	rx_buffer->page = NULL;
@@ -9082,7 +9561,8 @@ static int igb_clean_rx_irq(struct igb_q_vector *q_vector, const int budget)
 			/* At larger PAGE_SIZE, frame_sz depend on len size */
 			xdp.frame_sz = igb_rx_frame_truesize(rx_ring, size);
 #endif
-			xdp_res = igb_run_xdp(adapter, rx_ring, &xdp);
+			if (!igb_running_oob()) /* Bypass XDP layer if oob */
+				xdp_res = igb_run_xdp(adapter, rx_ring, &xdp);
 		}
 
 		if (xdp_res) {
@@ -9164,34 +9644,44 @@ static bool igb_alloc_mapped_page(struct igb_ring *rx_ring,
 		return true;
 
 	/* alloc new page for storage */
-	page = dev_alloc_pages(igb_rx_pg_order(rx_ring));
+	page = igb_alloc_rx_page(rx_ring);
 	if (unlikely(!page)) {
+		WARN_ON_ONCE(1);
 		rx_ring->rx_stats.alloc_failed++;
 		set_bit(IGB_RING_FLAG_RX_ALLOC_FAILED, &rx_ring->flags);
 		return false;
 	}
 
-	/* map page for use */
-	dma = dma_map_page_attrs(rx_ring->dev, page, 0,
-				 igb_rx_pg_size(rx_ring),
-				 DMA_FROM_DEVICE,
-				 IGB_RX_DMA_ATTR);
+	/* unless coming from the oob pool which delivers pre-mapped
+	 * memory, map page */
+	if (!igb_is_oob_page(rx_ring, page)) {
+		dma = dma_map_page_attrs(rx_ring->dev, page, 0,
+					igb_rx_pg_size(rx_ring),
+					DMA_FROM_DEVICE,
+					IGB_RX_DMA_ATTR);
 
-	/* if mapping failed free memory back to system since
-	 * there isn't much point in holding memory we can't use
-	 */
-	if (dma_mapping_error(rx_ring->dev, dma)) {
-		__free_pages(page, igb_rx_pg_order(rx_ring));
+		/* if mapping failed free memory back to system since
+		 * there isn't much point in holding memory we can't use
+		 */
+		if (dma_mapping_error(rx_ring->dev, dma)) {
+			__free_pages(page, igb_rx_pg_order(rx_ring));
 
-		rx_ring->rx_stats.alloc_failed++;
-		set_bit(IGB_RING_FLAG_RX_ALLOC_FAILED, &rx_ring->flags);
-		return false;
+			rx_ring->rx_stats.alloc_failed++;
+			set_bit(IGB_RING_FLAG_RX_ALLOC_FAILED, &rx_ring->flags);
+			return false;
+		}
+		page_ref_add(page, USHRT_MAX - 1);
+	} else {
+		/* oob pages are never reused, always released by the
+		 * skb consumer, so the initial refcount value for
+		 * these is 1, and we actually ignore the bias
+		 * count. */
+		dma = page_pool_get_dma_addr(page);
 	}
 
 	bi->dma = dma;
 	bi->page = page;
 	bi->page_offset = igb_rx_offset(rx_ring);
-	page_ref_add(page, USHRT_MAX - 1);
 	bi->pagecnt_bias = USHRT_MAX;
 
 	return true;

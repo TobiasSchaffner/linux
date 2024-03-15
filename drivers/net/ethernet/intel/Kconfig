@@ -106,6 +106,15 @@ config IGB
 	  To compile this driver as a module, choose M here. The module
 	  will be called igb.
 
+config IGB_OOB
+	bool "Out-of-band support for Intel(R) 82575/82576 Gigabit Ethernet"
+	depends on IGB && NET_OOB
+	help
+	  Enable out-of-band I/O. Say Y if a companion kernel may divert
+	  the network traffic going through IGB devices for real-time delivery.
+	  Enabling this option makes sense only in a dual kernel configuration.
+	  If unsure, disable it.
+
 config IGB_HWMON
 	bool "Intel(R) PCI-Express Gigabit adapters HWMON support"
 	default y
