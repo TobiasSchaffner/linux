@@ -2106,16 +2106,13 @@ static void imx_uart_console_device_unlock(struct console *co, unsigned long fla
 	return __uart_port_unlock_irqrestore(up, flags);
 }
 
-static void imx_uart_console_write_atomic(struct console *co,
-					  struct nbcon_write_context *wctxt)
+static void
+imx_uart_console_write_raw(struct console *co, const char *buf, unsigned int len)
 {
 	struct imx_port *sport = imx_uart_ports[co->index];
 	struct uart_port *port = &sport->port;
 	struct imx_port_ucrs old_ucr;
 	unsigned int ucr1, usr2;
-
-	if (!nbcon_enter_unsafe(wctxt))
-		return;
 
 	/*
 	 *	First, save UCR1/2/3 and then disable interrupts
@@ -2133,7 +2130,7 @@ static void imx_uart_console_write_atomic(struct console *co,
 
 	if (!sport->last_putchar_was_newline)
 		uart_console_write(port, "\n", 1, imx_uart_console_putchar);
-	uart_console_write(port, wctxt->outbuf, wctxt->len,
+	uart_console_write(port, buf, len,
 			   imx_uart_console_putchar);
 
 	/*
@@ -2143,6 +2140,15 @@ static void imx_uart_console_write_atomic(struct console *co,
 	read_poll_timeout_atomic(imx_uart_readl, usr2, usr2 & USR2_TXDC,
 				 0, USEC_PER_SEC, false, sport, USR2);
 	imx_uart_ucrs_restore(sport, &old_ucr);
+}
+
+static void imx_uart_console_write_atomic(struct console *co,
+					  struct nbcon_write_context *wctxt)
+{
+	if (!nbcon_enter_unsafe(wctxt))
+		return;
+
+	imx_uart_console_write_raw(co, wctxt->outbuf, wctxt->len);
 
 	nbcon_exit_unsafe(wctxt);
 }
@@ -2342,6 +2348,9 @@ static struct console imx_uart_console = {
 	.name		= DEV_NAME,
 	.write_atomic	= imx_uart_console_write_atomic,
 	.write_thread	= imx_uart_console_write_thread,
+#ifdef CONFIG_RAW_PRINTK
+	.write_raw	= imx_uart_console_write_raw,
+#endif
 	.device_lock	= imx_uart_console_device_lock,
 	.device_unlock	= imx_uart_console_device_unlock,
 	.flags		= CON_PRINTBUFFER | CON_NBCON,
