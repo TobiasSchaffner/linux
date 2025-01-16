@@ -15,6 +15,8 @@
 
 void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	struct task_struct *task);
+void switch_oob_mm(struct mm_struct *prev, struct mm_struct *next,
+	struct task_struct *task);
 
 #define activate_mm activate_mm
 static inline void activate_mm(struct mm_struct *prev,
@@ -32,10 +34,6 @@ static inline int init_new_context(struct task_struct *tsk,
 #endif
 	return 0;
 }
-
-static inline void
-switch_oob_mm(struct mm_struct *prev, struct mm_struct *next,
-	      struct task_struct *tsk) { }
 
 DECLARE_STATIC_KEY_FALSE(use_asid_allocator);
 
