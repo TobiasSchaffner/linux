@@ -467,7 +467,7 @@ int __evl_run_kthread(struct evl_kthread *kthread, int clone_flags)
 	if (ret)
 		goto fail_element;
 
-	ret = evl_create_core_element_device(&thread->element,
+	ret = evl_create_element_device(&thread->element,
 					&evl_thread_factory,
 					thread->name);
 	if (ret)
@@ -2510,10 +2510,10 @@ thread_factory_build(struct evl_factory *fac, const char __user *u_name,
 		}
 		/*
 		 * Element name was already set from user input by
-		 * evl_alloc_observable(). evl_create_core_element_device()
+		 * evl_alloc_observable(). evl_create_element_device()
 		 * is told to skip name assignment (NULL name).
 		 */
-		ret = evl_create_core_element_device(
+		ret = evl_create_element_device(
 			&observable->element,
 			&evl_observable_factory, NULL);
 		if (ret)

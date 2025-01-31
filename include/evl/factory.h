@@ -188,9 +188,9 @@ int evl_open_element(struct inode *inode,
 int evl_release_element(struct inode *inode,
 			struct file *filp);
 
-int evl_create_core_element_device(struct evl_element *e,
-				struct evl_factory *fac,
-				const char *name);
+int evl_create_element_device(struct evl_element *e,
+			struct evl_factory *fac,
+			const char *name);
 
 void evl_remove_element_device(struct evl_element *e);
 
@@ -210,7 +210,7 @@ static inline void evl_unindex_factory_element(struct evl_element *e)
 	evl_unindex_element(&e->factory->index, e);
 }
 
-int evl_create_factory(struct evl_factory *fac, dev_t rdev);
+int evl_create_factory(struct evl_factory *fac);
 
 void evl_delete_factory(struct evl_factory *fac);
 
