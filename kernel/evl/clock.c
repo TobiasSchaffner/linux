@@ -168,7 +168,7 @@ static int init_clock(struct evl_clock *clock, struct evl_clock *master)
 	 * usable. Make sure all inits have been completed before this
 	 * point.
 	 */
-	ret = evl_create_core_element_device(&clock->element,
+	ret = evl_create_element_device(&clock->element,
 					&evl_clock_factory,
 					clock->name);
 	if (ret) {
