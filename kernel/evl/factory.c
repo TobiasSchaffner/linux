@@ -189,6 +189,7 @@ int evl_open_element(struct inode *inode, struct file *filp)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(evl_open_element);
 
 static void __do_put_element(struct evl_element *e)
 {
@@ -296,6 +297,7 @@ int evl_release_element(struct inode *inode, struct file *filp)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(evl_release_element);
 
 static void release_sys_device(struct device *dev)
 {
@@ -497,9 +499,9 @@ fail_visibility:
 	return ret;
 }
 
-int evl_create_core_element_device(struct evl_element *e,
-				struct evl_factory *fac,
-				const char *name)
+int evl_create_element_device(struct evl_element *e,
+			struct evl_factory *fac,
+			const char *name)
 {
 	struct filename *devname;
 
@@ -514,6 +516,7 @@ int evl_create_core_element_device(struct evl_element *e,
 
 	return create_element_device(e, fac);
 }
+EXPORT_SYMBOL_GPL(evl_create_element_device);
 
 void evl_remove_element_device(struct evl_element *e)
 {
@@ -787,7 +790,7 @@ static void delete_element_class(struct evl_factory *fac)
 	bitmap_free(fac->minor_map);
 }
 
-int evl_create_factory(struct evl_factory *fac, dev_t rdev)
+static int create_factory(struct evl_factory *fac, dev_t rdev)
 {
 	const char *idevname = "clone"; /* Initial device in factory. */
 	struct device *dev = NULL;
@@ -834,9 +837,8 @@ fail_cdev:
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(evl_create_factory);
 
-void evl_delete_factory(struct evl_factory *fac)
+static void delete_factory(struct evl_factory *fac)
 {
 	struct device *dev = fac->dev;
 
@@ -848,7 +850,6 @@ void evl_delete_factory(struct evl_factory *fac)
 	if (!(fac->flags & EVL_FACTORY_SINGLE))
 		delete_element_class(fac);
 }
-EXPORT_SYMBOL_GPL(evl_delete_factory);
 
 bool evl_may_access_factory(struct evl_factory *fac)
 {
@@ -897,13 +898,12 @@ static int factory_flusher(void *arg)
 	return 0;
 }
 
-static int __init
-create_core_factories(struct evl_factory **factories, int nr)
+static int create_core_factories(struct evl_factory **factories, int nr)
 {
 	int ret, n;
 
 	for (n = 0; n < nr; n++) {
-		ret = evl_create_factory(factories[n],
+		ret = create_factory(factories[n],
 				MKDEV(MAJOR(factory_rdev), n));
 		if (ret)
 			goto fail;
@@ -912,19 +912,41 @@ create_core_factories(struct evl_factory **factories, int nr)
 	return 0;
 fail:
 	while (n-- > 0)
-		evl_delete_factory(factories[n]);
+		delete_factory(factories[n]);
 
 	return ret;
 }
 
-static void __init
-delete_core_factories(struct evl_factory **factories, int nr)
+static void delete_core_factories(struct evl_factory **factories, int nr)
 {
 	int n;
 
 	for (n = 0; n < nr; n++)
-		evl_delete_factory(factories[n]);
+		delete_factory(factories[n]);
 }
+
+int evl_create_factory(struct evl_factory *fac)
+{
+	int ret;
+
+	ret = alloc_chrdev_region(&fac->sub_rdev, 0, 1, fac->name);
+	if (ret)
+		return ret;;
+
+	ret = create_factory(fac, MKDEV(MAJOR(fac->sub_rdev), 0));
+	if (ret)
+		unregister_chrdev_region(fac->sub_rdev, 1);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(evl_create_factory);
+
+void evl_delete_factory(struct evl_factory *fac)
+{
+	unregister_chrdev_region(fac->sub_rdev, 1);
+	delete_factory(fac);
+}
+EXPORT_SYMBOL_GPL(evl_delete_factory);
 
 int __init evl_early_init_factories(void)
 {
