@@ -1230,6 +1230,7 @@ static void __exit latmus_exit(void)
 {
 	device_destroy(&latmus_class, MKDEV(MAJOR(latmus_devt), 0));
 	cdev_del(&latmus_cdev);
+	unregister_chrdev_region(latmus_devt, 1);
 	class_unregister(&latmus_class);
 }
 module_exit(latmus_exit);
