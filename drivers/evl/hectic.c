@@ -710,6 +710,7 @@ static void __exit hectic_exit(void)
 {
 	device_destroy(&hectic_class, MKDEV(MAJOR(hectic_devt), 0));
 	cdev_del(&hectic_cdev);
+	unregister_chrdev_region(hectic_devt, 1);
 	class_unregister(&hectic_class);
 }
 module_exit(hectic_exit);
