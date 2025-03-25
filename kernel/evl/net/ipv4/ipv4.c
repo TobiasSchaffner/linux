@@ -14,6 +14,7 @@
 #include <evl/memory.h>
 #include <evl/net/socket.h>
 #include <evl/net/skb.h>
+#include <evl/net/device.h>
 #include <evl/net/ipv4.h>
 #include <evl/net/ipv4/fragment.h>
 #include <evl/net/ipv4/route.h>
@@ -226,6 +227,71 @@ void __evl_net_ipv4_gc(struct evl_net_frag_tdir *ftdir)
 	}
 
 	evl_unlock_kmutex(&ftdir->lock);
+}
+
+/**
+ * evl_net_ipv4_solicit - Resolve an IPv4 address into a link-layer
+ * address using ARP neighbour solicitation. This call waits for 5s
+ * for the front cache to receive the ARP entry before timing out.
+ */
+int evl_net_ipv4_solicit(struct evl_socket *esk,
+			struct sockaddr *addr, int flags)
+{
+	struct evl_net_arp_entry *e = NULL;
+	struct neighbour *neigh;
+	struct net_device *dev;
+	struct rtable *rt;
+	__be32 ipaddr;
+	long ret;
+
+	if (addr->sa_family != AF_INET)
+		return -EAFNOSUPPORT;
+
+	ipaddr = ((struct sockaddr_in *)addr)->sin_addr.s_addr;
+
+	if (flags & ~EVL_NEIGH_PERMANENT)
+		return -EINVAL;
+
+	rt = ip_route_output(sock_net(esk->sk), ipaddr, 0, RTO_ONLINK, 0);
+	if (IS_ERR(rt))
+		return PTR_ERR(rt);
+
+	if (!rt->dst.dev || !netif_oob_port(rt->dst.dev))
+		return -ENODEV;
+
+	dev = rt->dst.dev;
+	evl_net_get_dev(dev);
+
+	neigh = dst_neigh_lookup(&rt->dst, &ipaddr);
+	ip_rt_put(rt);
+	if (!neigh) {
+		evl_net_put_dev(dev);
+		return -ENOENT;
+	}
+
+	if (!(neigh->nud_state & (NUD_VALID & ~NUD_STALE)))
+		neigh_event_send(neigh, NULL);
+
+	/* Wait for the ARP entry to enter the cache. */
+	ret = wait_event_interruptible_timeout(evl_arp_event,
+				(e = evl_net_get_arp_entry(dev, ipaddr)),
+				HZ * 5);
+	evl_net_put_dev(dev);
+
+	if (e) {
+		/* We never downgrade the permanent state. */
+		if (flags & EVL_NEIGH_PERMANENT &&
+			!(neigh->nud_state & NUD_PERMANENT)) {
+			ret = neigh_update(neigh, e->ha, NUD_PERMANENT,
+				NEIGH_UPDATE_F_OVERRIDE | NEIGH_UPDATE_F_ADMIN, 0);
+		}
+		evl_net_put_arp_entry(e);
+		ret = 0;
+	}
+
+	neigh_release(neigh);
+
+	return ret <= 0 ? ret : -ETIMEDOUT;
 }
 
 static struct evl_net_proto *match_ipv4_domain(int type, int protocol)
