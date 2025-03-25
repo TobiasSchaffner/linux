@@ -7,6 +7,7 @@
 #ifndef _EVL_NET_IPV4_ARP_H
 #define _EVL_NET_IPV4_ARP_H
 
+#include <linux/wait.h>
 #include <net/neighbour.h>
 #include <evl/cache.h>
 
@@ -40,5 +41,7 @@ static inline void evl_net_put_arp_entry(struct evl_net_arp_entry *earp)
 {
 	evl_put_cache_entry(&earp->entry);
 }
+
+extern struct wait_queue_head evl_arp_event;
 
 #endif /* !_EVL_NET_IPV4_ARP_H */

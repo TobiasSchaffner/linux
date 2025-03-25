@@ -14,9 +14,12 @@
 #include <linux/if_ether.h>
 #include <linux/hash.h>
 #include <linux/notifier.h>
+#include <linux/wait.h>
 #include <net/netevent.h>
 #include <net/arp.h>
 #include <evl/net/ipv4/arp.h>
+
+DECLARE_WAIT_QUEUE_HEAD(evl_arp_event);
 
 #define EVL_NET_ARP_CACHE_SHIFT  8
 
@@ -131,7 +134,7 @@ static void update_arp_cache(struct neighbour *neigh) /* in-band */
 	if (neigh->nud_state & NUD_REACHABLE && netif_oob_port(dev)) {
 		/* Cache complete entries from oob-enabled devices. */
 		ret = cache_arp_entry(cache, neigh);
-		if (ret) {
+		if (ret)
 			/*
 			 * Yeah, well. Nothing useful we can do. Now
 			 * the oob cache is out of sync and since the
@@ -143,7 +146,8 @@ static void update_arp_cache(struct neighbour *neigh) /* in-band */
 			 * receiving OOM here anyway.
 			 */
 			printk(EVL_WARNING "out of memory for ARP cache\n");
-		}
+		else
+			wake_up_all(&evl_arp_event);
 	} else {
 		/*
 		 * Try uncaching any invalidated, stale or dead entry.

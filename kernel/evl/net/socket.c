@@ -601,11 +601,12 @@ static int socket_set_wmem(struct evl_socket *esk, int __user *u_val)
 	return 0;
 }
 
-static int sock_inband_ioctl(struct sock *sk, unsigned int cmd,
+static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
 			unsigned long arg)
 {
 	struct evl_socket *esk = evl_sk(sk);
 	struct evl_netdev_activation act, __user *u_act;
+	struct evl_net_solicit solreq, __user *u_solreq;
 	int __user *u_val;
 	int ret;
 
@@ -627,6 +628,16 @@ static int sock_inband_ioctl(struct sock *sk, unsigned int cmd,
 	case EVL_SOCKIOC_SETSENDSZ:
 		u_val = (typeof(u_val))arg;
 		ret = socket_set_wmem(esk, u_val);
+		break;
+	case EVL_SOCKIOC_SOLICIT:
+		u_solreq = (typeof(u_solreq))arg;
+		ret = copy_from_user(&solreq, u_solreq, sizeof(solreq));
+		if (ret)
+			return -EFAULT;
+		ret = -ENOTSUPP;
+		if (esk->proto->solicit)
+			ret = esk->proto->solicit(esk, &solreq.addr,
+				solreq.flags);
 		break;
 	default:
 		ret = -ENOTTY;

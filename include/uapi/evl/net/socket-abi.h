@@ -34,11 +34,19 @@ struct evl_netdev_activation {
 	__u64 bufsz;
 };
 
+#define EVL_NEIGH_PERMANENT  0x1
+
+struct evl_net_solicit {
+	struct sockaddr addr;
+	__u32 flags;
+};
+
 #define EVL_SOCKIOC_ACTIVATE	_IOW(EVL_SOCKET_IOCBASE, 2, struct evl_netdev_activation)
 #define EVL_SOCKIOC_DEACTIVATE	_IO(EVL_SOCKET_IOCBASE, 3)
 #define EVL_SOCKIOC_SENDMSG	_IOW(EVL_SOCKET_IOCBASE, 4, struct user_oob_msghdr)
 #define EVL_SOCKIOC_RECVMSG	_IOWR(EVL_SOCKET_IOCBASE, 5, struct user_oob_msghdr)
 #define EVL_SOCKIOC_SETRECVSZ	_IOW(EVL_SOCKET_IOCBASE, 6, int)
 #define EVL_SOCKIOC_SETSENDSZ	_IOW(EVL_SOCKET_IOCBASE, 7, int)
+#define EVL_SOCKIOC_SOLICIT	_IOW(EVL_SOCKET_IOCBASE, 8, struct evl_net_solicit)
 
 #endif /* !_EVL_UAPI_NET_SOCKET_ABI_H */

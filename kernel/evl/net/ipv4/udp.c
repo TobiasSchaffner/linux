@@ -844,6 +844,7 @@ struct evl_net_proto evl_net_udp_proto = {
 	.destroy = destroy_udp_socket,
 	.bind = bind_udp_socket,
 	.shutdown = shutdown_udp_socket,
+	.solicit = evl_net_ipv4_solicit,
 	.oob_send = send_udp,
 	.oob_poll = poll_udp,
 	.oob_receive = receive_udp,
