@@ -13,6 +13,8 @@
 #include <evl/net/ip.h>
 
 struct sk_buff;
+struct sockaddr;
+struct timespec64;
 
 struct evl_net_ipv4_cookie {
 	__be32 saddr;		/* Source IP */
@@ -36,6 +38,9 @@ static inline void evl_net_ipv4_gc(struct net *net)
 int evl_net_init_ipv4(struct net *net);
 
 void evl_net_cleanup_ipv4(struct net *net);
+
+int evl_net_ipv4_solicit(struct evl_socket *esk,
+			struct sockaddr *addr, int flags);
 
 extern struct evl_socket_domain evl_net_ipv4;
 
