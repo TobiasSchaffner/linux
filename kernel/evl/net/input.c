@@ -119,6 +119,7 @@ void evl_net_wake_rx(struct net_device *dev)
 
 	evl_raise_flag(&est->rx_flag);
 }
+EXPORT_SYMBOL_GPL(evl_net_wake_rx);
 
 /**
  * evl_net_receive - schedule an ingress packet for oob handling
@@ -151,15 +152,13 @@ void evl_net_receive(struct sk_buff *skb,
 	EVL_NET_CB(skb)->handler = handler;
 
 	/*
-	 * Enqueue then kick our kthread handling the ingress path
-	 * immediately if called from oob context. Otherwise, wait for
-	 * the NIC driver to invoke napi_complete_done() when the RX
-	 * side goes quiescent.
+	 * Enqueue the packet. The NIC driver is expected to call
+	 * napi_complete_done() when the RX side goes quiescent, which
+	 * will in turn wake up our RX thread via a call to
+	 * evl_net_wake_rx(). Ancient non-NAPI drivers would have to
+	 * call evl_net_wake_rx() explicitly whenever they see fit.
 	 */
 	evl_net_add_skb_queue(&est->rx_packets, skb);
-
-	if (running_oob())
-		evl_net_wake_rx(skb->dev);
 }
 
 struct evl_net_rxqueue *evl_net_alloc_rxqueue(u32 hkey) /* in-band */
