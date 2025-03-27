@@ -221,15 +221,18 @@ void napi_schedule_oob(struct napi_struct *n) /* oob */
 /**
  * napi_complete_oob - release a NAPI instance.
  *
- * May be called in-band or out-of-band indifferently. Eventually, the
- * RX kthread is resumed so that it passes the pending ingress packets
- * to the proper protocol handlers.
+ * May be called in-band exclusively. Resumes the RX thread to process
+ * the packets received in-band from a non oob-capable device
+ * diverting traffic to EVL, so that it passes those packets to the
+ * proper protocol handlers in our netstack.
  *
- * @n is the NAPI instance associated to a device for which oob packet
- * diversion is enabled.
+ * @n is the NAPI instance associated to a device for which packet
+ * diversion is enabled, without oob handling capability though.
  */
-void napi_complete_oob(struct napi_struct *n) /* inband / oob */
+void napi_complete_oob(struct napi_struct *n) /* inband */
 {
+	EVL_WARN_ON(NET, running_oob());
+
 	evl_net_wake_rx(n->dev);
 }
 
