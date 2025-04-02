@@ -95,12 +95,13 @@ void evl_net_do_rx(void *arg)
 	est = dev->oob_state.estate;
 
 	while (!evl_kthread_should_stop()) {
-		ret = evl_wait_flag(&est->rx_flag);
-		if (ret)
-			break;
+		while (!test_bit(EVL_NETDEV_POLL_SCHED, &est->flags)) {
+			ret = evl_wait_flag(&est->rx_flag);
+			if (ret)
+				break;
+		}
 
-		if (test_bit(EVL_NETDEV_POLL_SCHED, &est->flags))
-			napi_poll_oob(est);
+		napi_poll_oob(est);
 
 		if (evl_net_move_skb_queue(&est->rx_packets, &list)) {
 			list_for_each_entry_safe(skb, next, &list, list) {
