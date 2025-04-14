@@ -101,6 +101,7 @@ void evl_net_do_rx(void *arg)
 				break;
 		}
 
+		/* Poll oob-capable drivers for feeding rx_packets. */
 		napi_poll_oob(est);
 
 		if (evl_net_move_skb_queue(&est->rx_packets, &list)) {
@@ -118,6 +119,7 @@ void evl_net_wake_rx(struct net_device *dev)
 {
 	struct evl_netdev_state *est = dev->oob_state.estate;
 
+	set_bit(EVL_NETDEV_POLL_SCHED, &est->flags);
 	evl_raise_flag(&est->rx_flag);
 }
 EXPORT_SYMBOL_GPL(evl_net_wake_rx);
@@ -191,11 +193,18 @@ void evl_net_free_rxqueue(struct evl_net_rxqueue *rxq)
  * The RX kthread is resumed so that it polls the associated device
  * for ingress packets directly from the oob stage.
  *
+ * This routine is usually called out-of-band in order to schedule the
+ * RX thread for handling the packets accepted by netif_deliver_oob()
+ * directly from the oob stage. When called in-band though, the RX
+ * thread is resumed to process the packets received (in-band) from a
+ * non oob-capable device diverting traffic to EVL, so that it passes
+ * those packets to the proper protocol handlers in our netstack.
+ *
  * @n is the NAPI instance associated to a device for which oob packet
  * diversion is enabled. An earlier call to napi_schedule_prep() is
  * expected to have been issued for @n.
  */
-void napi_schedule_oob(struct napi_struct *n) /* oob */
+void napi_schedule_oob(struct napi_struct *n) /* inband/oob */
 {
 	struct net_device *dev = n->dev;
 	struct evl_netdev_state *est = dev->oob_state.estate;
@@ -211,29 +220,12 @@ void napi_schedule_oob(struct napi_struct *n) /* oob */
 	 * napi_poll_oob() for an explanation about the requirement
 	 * for atomic bitops (EVL_NETDEV_POLL_SCHED).
 	 */
-	raw_spin_lock_irqsave(&est->rx_lock, flags);
-	list_add(&n->poll_list, &est->rx_poll);
-	set_bit(EVL_NETDEV_POLL_SCHED, &est->flags);
-	raw_spin_unlock_irqrestore(&est->rx_lock, flags);
+	if (running_oob()) {
+		raw_spin_lock_irqsave(&est->rx_lock, flags);
+		list_add(&n->poll_list, &est->rx_poll);
+		raw_spin_unlock_irqrestore(&est->rx_lock, flags);
+	}
 	evl_net_wake_rx(dev);
-}
-
-/**
- * napi_complete_oob - release a NAPI instance.
- *
- * May be called in-band exclusively. Resumes the RX thread to process
- * the packets received in-band from a non oob-capable device
- * diverting traffic to EVL, so that it passes those packets to the
- * proper protocol handlers in our netstack.
- *
- * @n is the NAPI instance associated to a device for which packet
- * diversion is enabled, without oob handling capability though.
- */
-void napi_complete_oob(struct napi_struct *n) /* inband */
-{
-	EVL_WARN_ON(NET, running_oob());
-
-	evl_net_wake_rx(n->dev);
 }
 
 /**
