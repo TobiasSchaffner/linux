@@ -38,7 +38,7 @@ static void napi_poll_oob(struct evl_netdev_state *est) /* oob */
 	 * close a race. We might compete with __set_rx_filter(), so
 	 * use atomic bitops.
 	 */
-	clear_bit(EVL_NETDEV_POLL_SCHED, &est->flags);
+	clear_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags);
 
 	list_for_each_entry_safe(napi, tmp, &est->rx_poll, poll_list) {
 		int budget = napi->weight;
@@ -63,7 +63,7 @@ static void napi_poll_oob(struct evl_netdev_state *est) /* oob */
 
 	if (!list_empty(&requeuing)) {
 		list_splice(&requeuing, &est->rx_poll);
-		set_bit(EVL_NETDEV_POLL_SCHED, &est->flags);
+		set_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags);
 	}
 
 	raw_spin_unlock_irqrestore(&est->rx_lock, flags);
@@ -95,7 +95,7 @@ void evl_net_do_rx(void *arg)
 	est = dev->oob_state.estate;
 
 	while (!evl_kthread_should_stop()) {
-		while (!test_bit(EVL_NETDEV_POLL_SCHED, &est->flags)) {
+		while (!test_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags)) {
 			ret = evl_wait_flag(&est->rx_flag);
 			if (ret)
 				break;
@@ -119,7 +119,7 @@ void evl_net_wake_rx(struct net_device *dev)
 {
 	struct evl_netdev_state *est = dev->oob_state.estate;
 
-	set_bit(EVL_NETDEV_POLL_SCHED, &est->flags);
+	set_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags);
 	evl_raise_flag(&est->rx_flag);
 }
 EXPORT_SYMBOL_GPL(evl_net_wake_rx);
@@ -218,7 +218,7 @@ void napi_schedule_oob(struct napi_struct *n) /* inband/oob */
 	 * serialization is required despite a single NAPI instance
 	 * may be active at any point in time. Oh, well. See
 	 * napi_poll_oob() for an explanation about the requirement
-	 * for atomic bitops (EVL_NETDEV_POLL_SCHED).
+	 * for atomic bitops (EVL_NETDEV_RX_SCHED_BIT).
 	 */
 	if (running_oob()) {
 		raw_spin_lock_irqsave(&est->rx_lock, flags);

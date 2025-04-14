@@ -46,7 +46,7 @@ evl_net_filter_rx(struct net_device *dev, struct sk_buff *skb)
 {
 	struct evl_netdev_state *est = dev->oob_state.estate;
 
-	if (test_bit(EVL_NETDEV_RXFILTER_BIT, &est->flags))
+	if (test_bit(EVL_NETDEV_RX_FILTER_BIT, &est->flags))
 		return __evl_net_filter_rx(est, skb);
 
 	return EVL_RX_VLAN;
