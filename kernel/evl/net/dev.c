@@ -510,13 +510,16 @@ __set_rx_filter(struct evl_netdev_state *est,
 	struct evl_net_ebpf_filter *old;
 
 	spin_lock_bh(&est->filter_lock);
+
 	old = rcu_dereference_protected(est->rx_filter,
 				lockdep_is_held(&est->filter_lock));
 	rcu_assign_pointer(est->rx_filter, filter);
+
 	if (filter)
-		set_bit(EVL_NETDEV_RXFILTER_BIT, &est->flags);
+		set_bit(EVL_NETDEV_RX_FILTER_BIT, &est->flags);
 	else
-		clear_bit(EVL_NETDEV_RXFILTER_BIT, &est->flags);
+		clear_bit(EVL_NETDEV_RX_FILTER_BIT, &est->flags);
+
 	spin_unlock_bh(&est->filter_lock);
 
 	if (old)

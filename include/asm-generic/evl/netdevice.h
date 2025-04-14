@@ -27,8 +27,8 @@ struct evl_net_ebpf_filter {
 	struct bpf_prog *prog;
 };
 
-#define EVL_NETDEV_POLL_SCHED    0
-#define EVL_NETDEV_RXFILTER_BIT  1
+#define EVL_NETDEV_RX_SCHED_BIT   0
+#define EVL_NETDEV_RX_FILTER_BIT  1
 
 struct evl_netdev_state {
 	/* TX page pool (premapped if device is oob-capable). */
