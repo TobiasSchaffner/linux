@@ -21,15 +21,15 @@
 
 static void napi_poll_oob(struct evl_netdev_state *est) /* oob */
 {
-	struct napi_struct *napi, *tmp;
+	struct napi_struct *n, *tmp;
 	LIST_HEAD(requeuing);
 	unsigned long flags;
 
 	/*
 	 * We cannot conflict with the in-band stack on queuing via
-	 * napi->poll_list by design, since we own the NAPI instances
-	 * queued to est->rx_poll until we release them in this
-	 * routine by a call to napi_schedule_unprep().
+	 * n->poll_list by design, since we own the NAPI instances
+	 * queued to est->rx_poll until we release them in
+	 * napi_complete_done() when running oob.
 	 */
 	raw_spin_lock_irqsave(&est->rx_lock, flags);
 
@@ -40,24 +40,38 @@ static void napi_poll_oob(struct evl_netdev_state *est) /* oob */
 	 */
 	clear_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags);
 
-	list_for_each_entry_safe(napi, tmp, &est->rx_poll, poll_list) {
-		int budget = napi->weight;
-		list_del_init(&napi->poll_list);
+	/*
+	 * NOTE: This code cannot compete with napi_complete_done()
+	 * with respect to updating the napi state, since the latter
+	 * only runs for inband traffic received by non oob-capable
+	 * drivers, and we are exclusively dealing with oob traffic
+	 * received by oob-capable drivers in this routine.
+	 */
+	list_for_each_entry_safe(n, tmp, &est->rx_poll, poll_list) {
+		int budget = n->weight;
+		list_del_init(&n->poll_list);
+
 		raw_spin_unlock_irqrestore(&est->rx_lock, flags);
-		budget -= napi->poll(napi, budget);
+
+		budget -= n->poll(n, budget);
 		/*
-		 * If the budget was not fully consumed (> 0), then we
-		 * have no more work for this instance and we may
-		 * release it, unless a scheduling request was missed,
-		 * in which case napi_schedule_unprep() would take
-		 * care of calling napi_schedule_oob() for
-		 * it. Otherwise, we need to requeue the instance for
-		 * another polling round.
+		 * If the budget was fully consumed and
+		 * napi_complete_done() was not called for this
+		 * instance, then we still have work so plan for a
+		 * repoll. Otherwise, all events were finished and
+		 * this instance was already released by a call to
+		 * napi_complete_done() issued by the ->poll() handler
+		 * [unless a scheduling request was missed, in which
+		 * case napi_schedule_unprep() would take care of
+		 * calling napi_schedule_oob() for it].
 		 */
-		if (budget > 0)
-			napi_schedule_unprep(napi);
-		else
-			list_add(&napi->poll_list, &requeuing);
+		if (budget < 0)
+			netdev_err_once(n->dev,
+			"NAPI oob_poll function %pS has exceeded its budget by %d.\n",
+					n->poll, -budget);
+		else if (budget == 0 && test_bit(NAPI_STATE_SCHED, &n->state))
+			list_add(&n->poll_list, &requeuing);
+
 		raw_spin_lock_irqsave(&est->rx_lock, flags);
 	}
 
@@ -104,6 +118,12 @@ void evl_net_do_rx(void *arg)
 		/* Poll oob-capable drivers for feeding rx_packets. */
 		napi_poll_oob(est);
 
+		/*
+		 * Process all queued packets received from ->poll()
+		 * handlers via netif_deliver_oob() while running
+		 * either from the in-band (RX softirq) or oob stage
+		 * (RX thread).
+		 */
 		if (evl_net_move_skb_queue(&est->rx_packets, &list)) {
 			list_for_each_entry_safe(skb, next, &list, list) {
 				list_del(&skb->list);
