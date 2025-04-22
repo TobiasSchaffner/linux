@@ -177,6 +177,15 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 	 */
 	skb_reserve(skb, VLAN_HLEN);
 	skb->dev = real_dev;
+	/*
+	 * We need to keep a pointer to the originating device for the
+	 * release path (__free_evl_skb), since a protocol layer might
+	 * use skb->dev_scratch which would cause skb->dev to be
+	 * lost. So basically, we rely on skb->dev as long as it is
+	 * safe to do so, switching to EVL_NET_CB(skb)->dev
+	 * afterwards.
+	 */
+	EVL_NET_CB(skb)->dev = real_dev;
 
 	return skb;
 }
@@ -201,10 +210,9 @@ static void free_inband_skb(struct sk_buff *skb)
 	}
 }
 
-static void __free_evl_skb(struct sk_buff *skb)
+static void __free_evl_skb(struct sk_buff *skb, struct net_device *dev)
 {
 	struct skb_shared_info *shinfo = skb_shinfo(skb);
-	struct net_device *dev = skb->dev;
 	struct evl_netdev_state *est = dev->oob_state.estate;
 	unsigned long flags;
 
@@ -244,10 +252,14 @@ release_head:
 /*
  * Free an skb we originally allocated from our pool. The caller has
  * exclusive ownership on this (i.e. no other reference is pending).
+ *
+ * CAUTION: skb->dev might be invalid, always use the cached value in
+ * EVL_NET_CB(skb)->dev on the release path instead. See comment in
+ * evl_net_dev_alloc_skb().
  */
 static void free_evl_skb(struct sk_buff *skb)
 {
-	struct net_device *dev = skb->dev;
+	struct net_device *dev = EVL_NET_CB(skb)->dev;
 	struct sk_buff *fskb, *nskb;
 
 	if (EVL_WARN_ON(NET, dev == NULL))
@@ -260,13 +272,13 @@ static void free_evl_skb(struct sk_buff *skb)
 	for (fskb = skb_shinfo(skb)->frag_list; fskb; fskb = nskb) {
 		netdev_dbg(dev, "releasing frag %px from %px\n", fskb, skb);
 		nskb = fskb->next;
-		__free_evl_skb(fskb);
+		__free_evl_skb(fskb, dev);
 	}
 
 	netdev_dbg(dev, "releasing skb %px (has_frags=%d)\n",
 		skb, skb_has_frag_list(skb));
 
-	__free_evl_skb(skb);
+	__free_evl_skb(skb, dev);
 }
 
 static void __free_skb(struct sk_buff *skb)
