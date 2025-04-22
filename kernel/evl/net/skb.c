@@ -30,7 +30,7 @@
  * [RX path]: netif_deliver_oob(skb)
  *             * false: pass down, freed through in-band stack
  *             * true: process -> receive -> evl_net_free_skb(skb)
- *                     skb_has_oob_storage(skb) ? immediately released to oob pool
+ *                     skb_is_oob_managed(skb) ? immediately released to oob pool
  *                              : pushed to in-band recycling queue
  *
  * [TX path]: skb = evl_net_dev_alloc_skb()
@@ -166,7 +166,7 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 		return ERR_PTR(-ENOMEM);
 	}
 
-	skb_mark_oob_storage(skb);
+	skb_mark_oob_managed(skb);
 	skb_mark_for_recycle(skb);
 	/*
 	 * The current assumption is that we are going to deal with
@@ -284,12 +284,12 @@ static void free_evl_skb(struct sk_buff *skb)
 static void __free_skb(struct sk_buff *skb)
 {
 	/*
-	 * If the skb data does not live in an oob pool, hand over the
-	 * release to the in-band stack. Otherwise we may immediately
-	 * attempt to free the data if no other skb refers to it, and
-	 * the buffer head too.
+	 * If we don't manage the skb data, hand over the release to
+	 * the in-band stack. Otherwise we may immediately attempt to
+	 * free the data if no other skb refers to it, and the buffer
+	 * shell too.
 	 */
-	if (!skb_has_oob_storage(skb))
+	if (!skb_is_oob_managed(skb))
 		free_inband_skb(skb);
 	else
 		free_evl_skb(skb);
