@@ -167,12 +167,17 @@ EXPORT_SYMBOL_GPL(evl_net_wake_rx);
 void evl_net_receive(struct sk_buff *skb,
 		struct evl_net_handler *handler) /* in-band or oob */
 {
-	struct evl_netdev_state *est = skb->dev->oob_state.estate;
+	struct net_device *dev = skb->dev;
+	struct evl_netdev_state *est = dev->oob_state.estate;
+
+	if (EVL_WARN_ON(NET, dev == NULL))
+		return;
 
 	if (skb->next)
 		skb_list_del_init(skb);
 
 	EVL_NET_CB(skb)->handler = handler;
+	EVL_NET_CB(skb)->dev = dev;
 
 	/*
 	 * Enqueue the packet. The NIC driver is expected to call
