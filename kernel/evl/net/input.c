@@ -19,68 +19,42 @@
 #include <evl/net/device.h>
 #include <evl/net/ipv4.h>
 
-static void napi_poll_oob(struct evl_netdev_state *est) /* oob */
+/*
+ * NOTE: This code cannot compete with napi_complete_done()
+ * with respect to updating the napi state, since the latter
+ * only runs for inband traffic received by non oob-capable
+ * drivers, and we are exclusively dealing with oob traffic
+ * received by oob-capable drivers in this routine.
+ */
+static void do_poll(struct evl_netdev_state *est) /* oob */
 {
 	struct napi_struct *n, *tmp;
-	LIST_HEAD(requeuing);
 	unsigned long flags;
+	LIST_HEAD(repoll);
+	LIST_HEAD(poll);
 
-	/*
-	 * We cannot conflict with the in-band stack on queuing via
-	 * n->poll_list by design, since we own the NAPI instances
-	 * queued to est->rx_poll until we release them in
-	 * napi_complete_done() when running oob.
-	 */
-	raw_spin_lock_irqsave(&est->rx_lock, flags);
-
+	raw_spin_lock_irqsave(&est->napi_lock, flags);
+	list_splice_init(&est->napi_poll, &poll);
 	/*
 	 * We are about to drop the RX lock, clear this flag early to
 	 * close a race. We might compete with __set_rx_filter(), so
 	 * use atomic bitops.
 	 */
 	clear_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags);
+	raw_spin_unlock_irqrestore(&est->napi_lock, flags);
 
-	/*
-	 * NOTE: This code cannot compete with napi_complete_done()
-	 * with respect to updating the napi state, since the latter
-	 * only runs for inband traffic received by non oob-capable
-	 * drivers, and we are exclusively dealing with oob traffic
-	 * received by oob-capable drivers in this routine.
-	 */
-	list_for_each_entry_safe(n, tmp, &est->rx_poll, poll_list) {
-		int budget = n->weight;
-		list_del_init(&n->poll_list);
+	list_for_each_entry_safe(n, tmp, &poll, poll_list)
+		/* We don't cap the device budget for oob-driven traffic. */
+		napi_poll_oob(n, &repoll);
 
-		raw_spin_unlock_irqrestore(&est->rx_lock, flags);
-
-		budget -= n->poll(n, budget);
-		/*
-		 * If the budget was fully consumed and
-		 * napi_complete_done() was not called for this
-		 * instance, then we still have work so plan for a
-		 * repoll. Otherwise, all events were finished and
-		 * this instance was already released by a call to
-		 * napi_complete_done() issued by the ->poll() handler
-		 * [unless a scheduling request was missed, in which
-		 * case napi_schedule_unprep() would take care of
-		 * calling napi_schedule_oob() for it].
-		 */
-		if (budget < 0)
-			netdev_err_once(n->dev,
-			"NAPI oob_poll function %pS has exceeded its budget by %d.\n",
-					n->poll, -budget);
-		else if (budget == 0 && test_bit(NAPI_STATE_SCHED, &n->state))
-			list_add(&n->poll_list, &requeuing);
-
-		raw_spin_lock_irqsave(&est->rx_lock, flags);
-	}
-
-	if (!list_empty(&requeuing)) {
-		list_splice(&requeuing, &est->rx_poll);
+	if (!list_empty(&repoll)) {
+		raw_spin_lock_irqsave(&est->napi_lock, flags);
+		list_splice_tail_init(&est->napi_poll, &poll);
+		list_splice_tail(&repoll, &poll);
+		list_splice(&poll, &est->napi_poll);
 		set_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags);
+		raw_spin_unlock_irqrestore(&est->napi_lock, flags);
 	}
-
-	raw_spin_unlock_irqrestore(&est->rx_lock, flags);
 }
 
 /*
@@ -116,7 +90,7 @@ void evl_net_do_rx(void *arg)
 		}
 
 		/* Poll oob-capable drivers for feeding rx_packets. */
-		napi_poll_oob(est);
+		do_poll(est);
 
 		/*
 		 * Process all queued packets received from ->poll()
@@ -241,14 +215,14 @@ void napi_schedule_oob(struct napi_struct *n) /* inband/oob */
 	/*
 	 * We might have multiple NAPI instances per device, so
 	 * serialization is required despite a single NAPI instance
-	 * may be active at any point in time. Oh, well. See
-	 * napi_poll_oob() for an explanation about the requirement
-	 * for atomic bitops (EVL_NETDEV_RX_SCHED_BIT).
+	 * may be active at any point in time. Oh, well. See do_poll()
+	 * for an explanation about the requirement for atomic bitops
+	 * (EVL_NETDEV_RX_SCHED_BIT).
 	 */
 	if (running_oob()) {
-		raw_spin_lock_irqsave(&est->rx_lock, flags);
-		list_add(&n->poll_list, &est->rx_poll);
-		raw_spin_unlock_irqrestore(&est->rx_lock, flags);
+		raw_spin_lock_irqsave(&est->napi_lock, flags);
+		list_add(&n->poll_list, &est->napi_poll);
+		raw_spin_unlock_irqrestore(&est->napi_lock, flags);
 	}
 	evl_net_wake_rx(dev);
 }

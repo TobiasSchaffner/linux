@@ -164,8 +164,8 @@ static int enable_oob_port(struct net_device *dev,
 		goto fail_build_pool;
 
 	evl_net_init_skb_queue(&est->rx_packets);
-	INIT_LIST_HEAD(&est->rx_poll);
-	raw_spin_lock_init(&est->rx_lock);
+	INIT_LIST_HEAD(&est->napi_poll);
+	raw_spin_lock_init(&est->napi_lock);
 	evl_init_flag(&est->rx_flag);
 
 	kt = start_handler_thread(real_dev, evl_net_do_rx,
