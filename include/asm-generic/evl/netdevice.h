@@ -40,9 +40,9 @@ struct evl_netdev_state {
 	/* RX handling */
 	struct evl_kthread *rx_handler;
 	struct evl_flag rx_flag;
-	struct list_head rx_poll; /* NAPI instances to poll (oob) */
-	hard_spinlock_t rx_lock; /* Serializes accesses to rx_poll */
 	struct evl_net_skb_queue rx_packets; /* Ingress packets to process (oob) */
+	struct list_head napi_poll; /* NAPI instances to poll (oob) */
+	hard_spinlock_t napi_lock; /* Serializes accesses to napi_poll */
 	/* TX handling */
 	struct evl_net_qdisc *qdisc;
 	struct evl_kthread *tx_handler;
