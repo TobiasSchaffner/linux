@@ -36,9 +36,8 @@ static void do_poll(struct evl_netdev_state *est) /* oob */
 	raw_spin_lock_irqsave(&est->napi_lock, flags);
 	list_splice_init(&est->napi_poll, &poll);
 	/*
-	 * We are about to drop the RX lock, clear this flag early to
-	 * close a race. We might compete with __set_rx_filter(), so
-	 * use atomic bitops.
+	 * We might race with __set_rx_filter(), so use atomic bitops
+	 * for raising the RX_SCHED flag.
 	 */
 	clear_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags);
 	raw_spin_unlock_irqrestore(&est->napi_lock, flags);
@@ -61,7 +60,7 @@ static void do_poll(struct evl_netdev_state *est) /* oob */
  * RX thread dealing with ingress traffic and garbage collection for
  * stale input fragments. Specifically, this thread handles:
  *
- * - the outstanding requests for polling the device for new packets
+ * - the pending NAPI requests for polling the device for I/O events
  * (napi_schedule_oob())
  *
  * - the polled ingress packets queued by netif_deliver_oob(), passing
@@ -109,12 +108,17 @@ void evl_net_do_rx(void *arg)
 	}
 }
 
+static inline void wake_rx(struct evl_netdev_state *est)
+{
+	evl_raise_flag(&est->rx_flag);
+}
+
 void evl_net_wake_rx(struct net_device *dev)
 {
 	struct evl_netdev_state *est = dev->oob_state.estate;
 
 	set_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags);
-	evl_raise_flag(&est->rx_flag);
+	wake_rx(est);
 }
 EXPORT_SYMBOL_GPL(evl_net_wake_rx);
 
@@ -219,12 +223,15 @@ void napi_schedule_oob(struct napi_struct *n) /* inband/oob */
 	 * for an explanation about the requirement for atomic bitops
 	 * (EVL_NETDEV_RX_SCHED_BIT).
 	 */
-	if (running_oob()) {
+	if (likely(running_oob())) {
 		raw_spin_lock_irqsave(&est->napi_lock, flags);
 		list_add(&n->poll_list, &est->napi_poll);
+		set_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags);
 		raw_spin_unlock_irqrestore(&est->napi_lock, flags);
+		wake_rx(est);
+	} else {
+		evl_net_wake_rx(dev);
 	}
-	evl_net_wake_rx(dev);
 }
 
 /**
