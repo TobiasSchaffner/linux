@@ -107,10 +107,10 @@ static void watchdog_handler(struct evl_timer *timer) /* oob stage stalled */
 		raw_spin_unlock(&curr->lock);
 		evl_notify_thread(curr, EVL_HMDIAG_WATCHDOG, evl_nil);
 		dovetail_send_mayday(current);
-		printk(EVL_WARNING "watchdog triggered on CPU #%d -- runaway thread "
+		printk(EVL_WARNING "watchdog triggered on CPU%d -- runaway thread "
 			"'%s' signaled\n", evl_rq_cpu(this_rq), curr->name);
 	} else {
-		printk(EVL_WARNING "watchdog triggered on CPU #%d -- runaway thread "
+		printk(EVL_WARNING "watchdog triggered on CPU%d -- runaway thread "
 			"'%s' canceled\n", evl_rq_cpu(this_rq), curr->name);
 		/*
 		 * On behalf on an IRQ handler, evl_cancel_thread()
