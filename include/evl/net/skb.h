@@ -37,7 +37,8 @@ void evl_net_add_skb_queue(struct evl_net_skb_queue *skbq,
 			struct sk_buff *skb);
 
 struct sk_buff *
-evl_net_get_skb_queue(struct evl_net_skb_queue *skbq);
+evl_net_get_skb_queue(struct evl_net_skb_queue *skbq,
+		bool *more);
 
 bool evl_net_move_skb_queue(struct evl_net_skb_queue *skbq,
 			struct list_head *list);
