@@ -26,23 +26,38 @@ DEFINE_IRQ_WORK(oob_xmit_work, xmit_inband);
 static DEFINE_PER_CPU(struct evl_net_skb_queue, oob_tx_relay);
 
 static inline netdev_tx_t
-oob_start_xmit(struct net_device *dev, struct sk_buff *skb)
+oob_start_xmit(struct net_device *dev, struct sk_buff *skb, bool more)
 {
+	struct netdev_queue *txq;
+	netdev_tx_t ret;
+
+	/*
+	 * We don't check the queue index using netdev_cap_txqueue(),
+	 * assuming the inband code does so routinely for in-band
+	 * traffic.
+	 */
+	txq = netdev_get_tx_queue(dev, skb_get_queue_mapping(skb));
+
 	/*
 	 * If we got there, @dev is deemed oob-capable
 	 * (IFF_OOB_CAPABLE, see evl_net_transmit()). The driver should
 	 * check the current execution stage for handling the
 	 * out-of-band packet properly.
 	 */
-	return dev->netdev_ops->ndo_start_xmit(skb, dev);
+	netif_tx_lock_oob(txq);
+	ret = netdev_start_xmit(skb, dev, txq, more);
+	netif_tx_unlock_oob(txq);
+
+	return ret;
 }
 
 static inline void do_tx(struct evl_net_qdisc *qdisc,
-			struct net_device *dev, struct sk_buff *skb)
+			struct net_device *dev, struct sk_buff *skb,
+			bool more)
 {
 	evl_net_uncharge_skb_wmem(skb);
 
-	switch (oob_start_xmit(dev, skb)) {
+	switch (oob_start_xmit(dev, skb, more)) {
 	case NETDEV_TX_OK:
 		break;
 	default: /* busy, or whatever */
@@ -85,7 +100,7 @@ void evl_net_do_tx(void *arg)
 			skb = qdisc->oob_ops->dequeue(qdisc);
 			if (skb == NULL)
 				break;
-			do_tx(qdisc, dev, skb);
+			do_tx(qdisc, dev, skb, false); /* FIXME: more? */
 		}
 	}
 }
