@@ -418,15 +418,17 @@ void evl_net_add_skb_queue(struct evl_net_skb_queue *skbq,
 	raw_spin_unlock_irqrestore(&skbq->lock, flags);
 }
 
-struct sk_buff *evl_net_get_skb_queue(struct evl_net_skb_queue *skbq)
+struct sk_buff *evl_net_get_skb_queue(struct evl_net_skb_queue *skbq, bool *more)
 {
 	struct sk_buff *skb = NULL;
 	unsigned long flags;
 
 	raw_spin_lock_irqsave(&skbq->lock, flags);
 
-	if (!list_empty(&skbq->queue))
+	if (!list_empty(&skbq->queue)) {
 		skb = list_get_entry(&skbq->queue, struct sk_buff, list);
+		*more = !list_empty(&skbq->queue);
+	}
 
 	raw_spin_unlock_irqrestore(&skbq->lock, flags);
 

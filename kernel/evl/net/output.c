@@ -97,10 +97,11 @@ void evl_net_do_tx(void *arg)
 		 * device.
 		 */
 		for (;;) {
-			skb = qdisc->oob_ops->dequeue(qdisc);
+			bool more;
+			skb = qdisc->oob_ops->dequeue(qdisc, &more);
 			if (skb == NULL)
 				break;
-			do_tx(qdisc, dev, skb, false); /* FIXME: more? */
+			do_tx(qdisc, dev, skb, more);
 		}
 	}
 }
