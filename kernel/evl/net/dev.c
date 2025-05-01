@@ -291,6 +291,7 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	__set_rx_filter(est, NULL);
 	evl_net_dev_purge_pool(real_dev);
 	evl_destroy_flag(&est->rx_flag);
+	/* Once the TX kthread is stopped, qdisc is idle. */
 	evl_net_free_qdisc(est->qdisc);
 	kfree(est);
 	rnds->estate = NULL;
