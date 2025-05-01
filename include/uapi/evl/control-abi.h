@@ -10,14 +10,14 @@
 #include <linux/types.h>
 
 /* Earliest ABI level we support. */
-#define EVL_ABI_BASE   36
+#define EVL_ABI_BASE   39
 /*
  * Current/latest ABI level we support. We may decouple the base and
  * current ABI levels by providing backward compatibility from the
  * latter to the former. CAUTION: a litteral value is required for the
  * current ABI definition (scripts reading this may be naive).
  */
-#define EVL_ABI_LEVEL  38
+#define EVL_ABI_LEVEL  39
 
 #define EVL_CONTROL_DEV  "/dev/evl/control"
 
