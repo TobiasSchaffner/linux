@@ -18,6 +18,7 @@
 #include <evl/net.h>
 #include <evl/net/device.h>
 #include <evl/net/ipv4.h>
+#include <evl/net/timestamping.h>
 
 /*
  * NOTE: This code cannot compete with napi_complete_done()
@@ -99,6 +100,8 @@ void evl_net_do_rx(void *arg)
 		 */
 		if (evl_net_move_skb_queue(&est->rx_packets, &list)) {
 			list_for_each_entry_safe(skb, next, &list, list) {
+				if (skb_is_oob_timestamped(skb))
+					skb_shinfo_oob(skb)->queuing_time = evl_ktime_monotonic();
 				list_del(&skb->list);
 				EVL_NET_CB(skb)->handler->ingress(skb);
 			}
@@ -150,6 +153,11 @@ void evl_net_receive(struct sk_buff *skb,
 
 	if (EVL_WARN_ON(NET, dev == NULL))
 		return;
+
+	if (refcount_read(&evl_net_rx_timestamping) > 1) {
+		skb_shinfo_oob(skb)->device_time = evl_ktime_monotonic();
+		skb_mark_oob_timestamped(skb);
+	}
 
 	if (skb->next)
 		skb_list_del_init(skb);

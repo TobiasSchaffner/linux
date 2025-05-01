@@ -32,6 +32,7 @@
 #include <evl/net/skb.h>
 #include <evl/net/socket.h>
 #include <evl/net/device.h>
+#include <evl/net/timestamping.h>
 
 /*
  * EVL sockets are (almost) regular sockets, extended with out-of-band
@@ -294,7 +295,9 @@ int sock_oob_attach(struct socket *sock)
 
 	/*
 	 * If sk->sk_family is not PF_OOB, we have no extended oob
-	 * context yet, allocate one to piggyback on a common socket.
+	 * context yet, allocate one to piggyback on a common
+	 * socket. In any case, we assume esk is zero-initialized (see
+	 * sk_alloc).
 	 */
 	if (sk->sk_family != PF_OOB) {
 		esk = kzalloc(sizeof(*esk), GFP_KERNEL);
@@ -329,6 +332,7 @@ int sock_oob_attach(struct socket *sock)
 	evl_init_wait(&esk->wmem_wait, &evl_mono_clock, 0);
 	evl_init_poll_head(&esk->poll_head);
 	raw_spin_lock_init(&esk->oob_lock);
+	spin_lock_init(&esk->ts_lock);
 	evl_init_work(&esk->inband_offload, inband_offload_handler);
 	/* Inherit the {rw}mem limits from the base socket. */
 	esk->rmem_max = sk->sk_rcvbuf;
@@ -365,7 +369,11 @@ void sock_oob_release(struct socket *sock)
 		esk->proto->release(esk);
 
 	evl_release_file(&esk->efile);
-	/* Wait for the stack to drain in-flight outgoing buffers. */
+	/*
+	 * Wait for the stack to drain in-flight outgoing
+	 * buffers. This guards us against trackers going stale while
+	 * referred to by skbs.
+	 */
 	evl_pass_crossing(&esk->wmem_drain);
 
 	if (refcount_dec_and_test(&esk->refs))
@@ -383,6 +391,9 @@ void sock_oob_destroy(struct sock *sk)
 
 	/* We are detaching, so rmem_count can be left out of sync. */
 	evl_net_free_skb_list(&esk->input);
+
+	/* Drop any timestamping data. */
+	evl_setup_socket_iots(esk, 0);
 
 	evl_destroy_wait(&esk->input_wait);
 	evl_destroy_wait(&esk->wmem_wait);
@@ -687,6 +698,52 @@ static int socket_get_wmem(struct evl_socket *esk,
 			u_optlen, sizeof(esk->wmem_max));
 }
 
+static int socket_set_timestamping(struct evl_socket *esk,
+				struct evl_net_sockopt __user *u_opt)
+{
+	unsigned int optlen = sizeof(__u32), __user *u_optlen;
+	void __user *u_optval;
+	unsigned int tsflags;
+	int ret;
+
+	ret = get_sockoptaddr(u_opt, &u_optval,	&u_optlen, &optlen);
+	if (ret)
+		return ret;
+
+	if (raw_get_user(tsflags, (typeof(tsflags) *)u_optval))
+		return -EFAULT;
+
+	if (tsflags & ~EVL_SOF_TIMESTAMPS)
+		return -EINVAL;
+
+	/*
+	 * Shorthand: if no specific timestamping location is given,
+	 * disable timestamping entirely.
+	 */
+	if (!(tsflags & (EVL_SOF_TIMESTAMPS &
+		~(EVL_SOF_TIMESTAMP_RX|EVL_SOF_TIMESTAMP_TX))))
+		tsflags = 0;
+
+	evl_setup_socket_iots(esk, tsflags);
+
+	return 0;
+}
+
+static int socket_get_timestamping(struct evl_socket *esk,
+				struct evl_net_sockopt __user *u_opt)
+{
+	unsigned int optlen = sizeof(esk->timestamping), __user *u_optlen;
+	void __user *u_optval;
+	int ret;
+
+	ret = get_sockoptaddr(u_opt, &u_optval,	&u_optlen, &optlen);
+	if (ret)
+		return ret;
+
+	return put_sockopt(u_optval, &esk->timestamping,
+			u_optlen, sizeof(esk->timestamping));
+}
+
 static int socket_set_option(struct evl_socket *esk,
 			struct evl_net_sockopt __user *u_opt)
 {
@@ -706,6 +763,8 @@ static int socket_set_option(struct evl_socket *esk,
 		return socket_set_rmem(esk, u_opt);
 	case EVL_SOCKOPT_SENDSZ:
 		return socket_set_wmem(esk, u_opt);
+	case EVL_SOCKOPT_TIMESTAMPING:
+		return socket_set_timestamping(esk, u_opt);
 	}
 
 	return -EINVAL;
@@ -730,6 +789,8 @@ static int socket_get_option(struct evl_socket *esk,
 		return socket_get_rmem(esk, u_opt);
 	case EVL_SOCKOPT_SENDSZ:
 		return socket_get_wmem(esk, u_opt);
+	case EVL_SOCKOPT_TIMESTAMPING:
+		return socket_get_timestamping(esk, u_opt);
 	}
 
 	return -EINVAL;

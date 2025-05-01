@@ -11,6 +11,7 @@
 #include <evl/net/input.h>
 #include <evl/net/packet.h>
 #include <evl/net/ipv4.h>
+#include <evl/net/timestamping.h>
 
 static DECLARE_BITMAP(vlan_map, VLAN_N_VID);
 

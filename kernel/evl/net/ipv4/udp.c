@@ -17,6 +17,7 @@
 #include <evl/net/offload.h>
 #include <evl/net/skb.h>
 #include <evl/net/device.h>
+#include <evl/net/timestamping.h>
 #include <evl/net/ip.h>
 #include <evl/net/ipv4.h>
 #include <evl/net/ipv4/output.h>
@@ -484,14 +485,17 @@ static ssize_t receive_udp(struct evl_socket *esk,
 			struct iovec *iov,
 			size_t iovlen)
 {
+	__u32 msg_flags = 0, msg_uflags;
+	ktime_t timeout = EVL_INFINITE;
+	enum evl_tmode tmode = EVL_REL;
 	struct evl_net_udp_receiver *e;
 	struct __evl_timespec uts;
-	enum evl_tmode tmode;
 	struct sk_buff *skb;
 	unsigned long flags;
-	__u32 msg_flags = 0;
-	ktime_t timeout;
 	ssize_t ret;
+
+	if (evl_socket_f_flags(esk) & O_NONBLOCK)
+		msg_flags |= MSG_DONTWAIT;
 
 	/*
 	 * The cache entry may be freed only from a RCU callback, get
@@ -506,8 +510,9 @@ again:
 		/*
 		 * If not bound prior to calling oob_recvmsg(), force
 		 * a binding to 0.0.0.0:0, which means that no receipt
-		 * will ever happen for this socket, causing this call
-		 * to hang indefinitely until interrupted.
+		 * will ever happen for this socket (except timestamps
+		 * if any is queued), causing this call to hang
+		 * indefinitely until interrupted.
 		 */
 		rcu_read_unlock();
 		lock_sock(esk->sk);
@@ -525,14 +530,15 @@ again:
 	rcu_read_unlock();
 
 	if (u_msghdr) {
-		ret = raw_get_user(msg_flags, &u_msghdr->flags);
+		ret = raw_get_user(msg_uflags, &u_msghdr->flags);
 		if (ret) {
 			ret = -EFAULT;
 			goto out;
 		}
 
-		/* We only support MSG_DONTWAIT at the moment. */
-		if (msg_flags & ~MSG_DONTWAIT) {
+		msg_flags |= msg_uflags;
+
+		if (msg_flags & ~(MSG_DONTWAIT|MSG_TIMESTAMP)) {
 			ret = -EINVAL;
 			goto out;
 		}
@@ -544,15 +550,20 @@ again:
 			goto out;
 		}
 
-		timeout = u_timespec_to_ktime(uts);
-		tmode = timeout ? EVL_ABS : EVL_REL;
-	} else {
-		timeout = EVL_INFINITE;
-		tmode = EVL_REL;
-	}
+		if (msg_flags & MSG_DONTWAIT) {
+			timeout = EVL_NONBLOCK;
+		} else {
+			timeout = u_timespec_to_ktime(uts);
+			if (timeout)
+				tmode = EVL_ABS;
+		}
 
-	if (evl_socket_f_flags(esk) & O_NONBLOCK)
-		msg_flags |= MSG_DONTWAIT;
+		if (msg_flags & MSG_TIMESTAMP) {
+			ret = evl_collect_socket_iots(esk, u_msghdr, msg_uflags,
+						iov, iovlen, timeout, tmode);
+			goto out;
+		}
+	}
 
 	do {
 		raw_spin_lock_irqsave(&e->wait.wchan.lock, flags);
@@ -560,7 +571,12 @@ again:
 		if (!list_empty(&e->queue)) {
 			skb = list_get_entry(&e->queue, struct sk_buff, list);
 			raw_spin_unlock_irqrestore(&e->wait.wchan.lock, flags);
-			ret = copy_datagram_to_user(u_msghdr, iov, iovlen, skb);
+			/* Record the timestamps if required. */
+			ret = 0;
+			if (READ_ONCE(esk->timestamping) & EVL_SOF_TIMESTAMP_RX)
+				ret = evl_copy_iots_rx(skb, u_msghdr);
+			if (likely(!ret))
+				ret = copy_datagram_to_user(u_msghdr, iov, iovlen, skb);
 			evl_net_rput_skb(skb); /* Uncharge rmem and free. */
 			goto out;
 		}
@@ -759,6 +775,9 @@ int evl_net_deliver_udp(struct sk_buff *skb)
 
 	if (!verify_checksum(skb))
 		return -EINVAL;
+
+	if (skb_is_oob_timestamped(skb))
+		skb_shinfo_oob(skb)->delivery_time = evl_ktime_monotonic();
 
 	return queue_for_receiver(skb) ? 0 : -ESRCH;
 }
