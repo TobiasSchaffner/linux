@@ -572,33 +572,167 @@ __poll_t sock_oob_poll(struct file *filp,
 	return esk->proto->oob_poll(esk, wait);
 }
 
-static int socket_set_rmem(struct evl_socket *esk, int __user *u_val)
+static int get_sockoptaddr(const struct evl_net_sockopt __user *u_opt,
+			void __user **u_optval, unsigned int __user **u_optlen,
+			unsigned int *optlen)
 {
-	int ret, val;
+	__u64 optval_ptr, optlen_ptr;
+	__u32 val;
+	int ret;
 
-	ret = raw_get_user(val, u_val);
+	ret = raw_get_user(optval_ptr, &u_opt->optval_ptr);
 	if (ret)
 		return -EFAULT;
 
-	/* Same logic as __sock_set_rcvbuf(). */
-	val = min_t(int, val, INT_MAX / 2);
-	WRITE_ONCE(esk->rmem_max, max_t(int, val * 2, SOCK_MIN_RCVBUF));
+	ret = raw_get_user(optlen_ptr, &u_opt->optlen_ptr);
+	if (ret)
+		return -EFAULT;
+
+	*u_optval = evl_valptr64(optval_ptr, void);
+	*u_optlen = evl_valptr64(optlen_ptr, __u32);
+
+	ret = raw_get_user(val, *u_optlen);
+	if (ret)
+		return -EFAULT;
+	if (val < *optlen)
+		return -EINVAL;
+
+	*optlen = val;
 
 	return 0;
 }
 
-static int socket_set_wmem(struct evl_socket *esk, int __user *u_val)
+static int put_sockopt(void __user *u_optval, const void *optval,
+		unsigned int __user *u_optlen, unsigned int optlen)
 {
-	int ret, val;
+	int ret;
 
-	ret = raw_get_user(val, u_val);
+	ret = raw_copy_to_user(u_optval, optval, optlen);
 	if (ret)
+		return ret;
+
+	return raw_put_user(optlen, u_optlen) ? -EFAULT : 0;
+}
+
+static int socket_set_rmem(struct evl_socket *esk,
+			struct evl_net_sockopt __user *u_opt)
+{
+	unsigned int optlen = sizeof(__u32), __user *u_optlen;
+	void __user *u_optval;
+	unsigned int val;
+	int ret;
+
+	ret = get_sockoptaddr(u_opt, &u_optval,	&u_optlen, &optlen);
+	if (ret)
+		return ret;
+
+	if (raw_get_user(val, (typeof(val) *)u_optval))
 		return -EFAULT;
 
-	val = min_t(int, val, INT_MAX / 2);
-	WRITE_ONCE(esk->wmem_max, max_t(int, val * 2, SOCK_MIN_SNDBUF));
+	/* Same logic as __sock_set_rcvbuf(). */
+	val = min_t(unsigned int, val, UINT_MAX / 2);
+	WRITE_ONCE(esk->rmem_max, max_t(unsigned int, val * 2, SOCK_MIN_RCVBUF));
 
 	return 0;
+}
+
+static int socket_get_rmem(struct evl_socket *esk,
+			struct evl_net_sockopt __user *u_opt)
+{
+	unsigned int optlen = sizeof(esk->rmem_max), __user *u_optlen;
+	void __user *u_optval;
+	int ret;
+
+	ret = get_sockoptaddr(u_opt, &u_optval,	&u_optlen, &optlen);
+	if (ret)
+		return ret;
+
+	return put_sockopt(u_optval, &esk->rmem_max,
+			u_optlen, sizeof(esk->rmem_max));
+}
+
+static int socket_set_wmem(struct evl_socket *esk,
+			struct evl_net_sockopt __user *u_opt)
+{
+	unsigned int optlen = sizeof(__u32), __user *u_optlen;
+	void __user *u_optval;
+	unsigned int val;
+	int ret;
+
+	ret = get_sockoptaddr(u_opt, &u_optval,	&u_optlen, &optlen);
+	if (ret)
+		return ret;
+
+	if (raw_get_user(val, (typeof(val) *)u_optval))
+		return -EFAULT;
+
+	val = min_t(unsigned int, val, UINT_MAX / 2);
+	WRITE_ONCE(esk->wmem_max, max_t(unsigned int, val * 2, SOCK_MIN_SNDBUF));
+
+	return 0;
+}
+
+static int socket_get_wmem(struct evl_socket *esk,
+			struct evl_net_sockopt __user *u_opt)
+{
+	unsigned int optlen = sizeof(esk->wmem_max), __user *u_optlen;
+	void __user *u_optval;
+	int ret;
+
+	ret = get_sockoptaddr(u_opt, &u_optval,	&u_optlen, &optlen);
+	if (ret)
+		return ret;
+
+	return put_sockopt(u_optval, &esk->wmem_max,
+			u_optlen, sizeof(esk->wmem_max));
+}
+
+static int socket_set_option(struct evl_socket *esk,
+			struct evl_net_sockopt __user *u_opt)
+{
+	int level, option;
+
+	if (raw_get_user(level, &u_opt->level))
+		return -EFAULT;
+
+	if (level != SOL_SOCKET)
+		return -EINVAL;
+
+	if (raw_get_user(option, &u_opt->option))
+		return -EFAULT;
+
+	switch (option) {
+	case EVL_SOCKOPT_RECVSZ:
+		return socket_set_rmem(esk, u_opt);
+	case EVL_SOCKOPT_SENDSZ:
+		return socket_set_wmem(esk, u_opt);
+	}
+
+	return -EINVAL;
+}
+
+static int socket_get_option(struct evl_socket *esk,
+			struct evl_net_sockopt __user *u_opt)
+{
+	int level, option;
+
+	if (raw_get_user(level, &u_opt->level))
+		return -EFAULT;
+
+	if (level != SOL_SOCKET)
+		return -EINVAL;
+
+	if (raw_get_user(option, &u_opt->option))
+		return -EFAULT;
+
+	switch (option) {
+	case EVL_SOCKOPT_RECVSZ:
+		return socket_get_rmem(esk, u_opt);
+	case EVL_SOCKOPT_SENDSZ:
+		return socket_get_wmem(esk, u_opt);
+	}
+
+	return -EINVAL;
 }
 
 static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
@@ -607,7 +741,6 @@ static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
 	struct evl_socket *esk = evl_sk(sk);
 	struct evl_netdev_activation act, __user *u_act;
 	struct evl_net_solicit solreq, __user *u_solreq;
-	int __user *u_val;
 	int ret;
 
 	switch (cmd) {
@@ -621,13 +754,13 @@ static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
 	case EVL_SOCKIOC_DEACTIVATE: /* Turn oob port off. */
 		ret = evl_net_switch_oob_port(esk, NULL);
  		break;
-	case EVL_SOCKIOC_SETRECVSZ:
-		u_val = (typeof(u_val))arg;
-		ret = socket_set_rmem(esk, u_val);
+	case EVL_SOCKIOC_SETOPT:
+		ret = socket_set_option(esk,
+			(struct evl_net_sockopt __user *)arg);
 		break;
-	case EVL_SOCKIOC_SETSENDSZ:
-		u_val = (typeof(u_val))arg;
-		ret = socket_set_wmem(esk, u_val);
+	case EVL_SOCKIOC_GETOPT:
+		ret = socket_get_option(esk,
+			(struct evl_net_sockopt __user *)arg);
 		break;
 	case EVL_SOCKIOC_SOLICIT:
 		u_solreq = (typeof(u_solreq))arg;
