@@ -21,9 +21,30 @@
 
 static void xmit_inband(struct irq_work *work);
 
-DEFINE_IRQ_WORK(oob_xmit_work, xmit_inband);
+static DEFINE_IRQ_WORK(oob_xmit_work, xmit_inband);
 
 static DEFINE_PER_CPU(struct evl_net_skb_queue, oob_tx_relay);
+
+static void timestamp_at_device(struct sk_buff *skb)
+{
+	if (skb_is_oob_timestamped(skb)) {
+		skb_shinfo_oob(skb)->device_time = evl_ktime_monotonic();
+		evl_queue_iots_tx(skb);
+	}
+}
+
+static void timestamp_at_sched(struct sk_buff *skb)
+{
+	struct evl_socket *esk = EVL_NET_CB(skb)->tracker;
+	int tsflags;
+
+	if (likely(esk)) {
+		tsflags = READ_ONCE(esk->timestamping);
+		if (tsflags & EVL_SOF_TIMESTAMP_TX &&
+			tsflags & EVL_SOF_TIMESTAMP_QUEUING)
+			skb_shinfo_oob(skb)->queuing_time = evl_ktime_monotonic();
+	}
+}
 
 static inline netdev_tx_t
 oob_start_xmit(struct net_device *dev, struct sk_buff *skb, bool more)
@@ -55,6 +76,11 @@ static inline void do_tx(struct evl_net_qdisc *qdisc,
 			struct net_device *dev, struct sk_buff *skb,
 			bool more)
 {
+	/*
+	 * CAUTION: We must timestamp before uncharging which clears
+	 * the socket tracking info.
+	 */
+	timestamp_at_device(skb);
 	evl_net_uncharge_skb_wmem(skb);
 
 	switch (oob_start_xmit(dev, skb, more)) {
@@ -85,16 +111,15 @@ void evl_net_do_tx(void *arg)
 			break;
 
 		/*
-		 * Reread queueing discipline descriptor to allow
-		 * dynamic updates. FIXME: protect this against
-		 * swap/deletion while pulling packets (stax?).
+		 * FIXME: stax-protect this against swap while pulling
+		 * packets.
 		 */
 		qdisc = est->qdisc;
 
 		/*
-		 * First we transmit the traffic as prioritized by the
-		 * out-of-band queueing discipline attached to our
-		 * device.
+		 * Transmit the traffic according to the
+		 * prioritization implemented by the queueing
+		 * discipline attached to our device.
 		 */
 		for (;;) {
 			bool more;
@@ -108,6 +133,20 @@ void evl_net_do_tx(void *arg)
 
 static void skb_xmit_inband(struct sk_buff *skb)
 {
+	/*
+	 * Timestamping at device here is technically wrong because
+	 * dev_queue_xmit() may queue and delay the buffer for
+	 * transmission, but this is harmless, we don't have to be
+	 * accurate when measuring output delays in best-effort mode,
+	 * i.e. via the in-band stack, what matters is the oob path.
+	 *
+	 * CAUTION: wait for the timestamping to take place before
+	 * uncharging the socket for the memory, which might allow the
+	 * tracker to go stale on a different CPU (see how the wmem
+	 * crossing is used to synchronize with in-flight TX buffers
+	 * in disable_oob_port().
+	 */
+	timestamp_at_device(skb);
 	evl_net_uncharge_skb_wmem(skb);
 	skb->prev = NULL;
 	skb->next = NULL;
@@ -180,6 +219,8 @@ int evl_net_transmit(struct sk_buff *skb) /* oob or in-band */
 
 	if (EVL_WARN_ON(NET, skb->sk))
 		return -EINVAL;
+
+	timestamp_at_sched(skb);
 
 	if (netdev_is_oob_capable(dev))
 		return xmit_oob(dev, skb);

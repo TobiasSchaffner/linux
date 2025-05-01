@@ -13,6 +13,17 @@
 
 #define SOCK_OOB	O_OOB	/* Request out-of-band capabilities */
 
+#define MSG_TIMESTAMP	MSG_ERRQUEUE	/* Alias to collect I/O timestamps */
+
+struct evl_net_iotimes {
+	/* Time at device<->netstack boundary (monotonic). */
+	__u64 device_time;
+	/* Time at RX/TX thread dequeuing/queuing point (monotonic). */
+	__u64 queuing_time;
+	/* Time at kernel/user boundary (monotonic). */
+	__u64 delivery_time;
+};
+
 /* Keep this distinct from SOCK_IOC_TYPE (0x89) */
 #define EVL_SOCKET_IOCBASE  0xee
 
@@ -26,7 +37,6 @@ struct user_oob_msghdr {
 	__s32 count;		/* Receive only (actual byte count). */
 	__u32 flags;
 	struct __evl_timespec timeout;
-	struct __evl_timespec timestamp; /* Stats / TSN trigger */
 };
 
 struct evl_netdev_activation {
@@ -46,6 +56,17 @@ enum {
 	EVL_SOCKOPT_SENDSZ,
 	EVL_SOCKOPT_TIMESTAMPING,
 };
+
+enum {
+	EVL_SOF_TIMESTAMP_RX = (1 << 0),
+	EVL_SOF_TIMESTAMP_TX = (1 << 1),
+	EVL_SOF_TIMESTAMP_DEVICE = (1 << 2),
+	EVL_SOF_TIMESTAMP_QUEUING = (1 << 3),
+};
+
+#define EVL_SOF_TIMESTAMPS  \
+	(EVL_SOF_TIMESTAMP_RX|EVL_SOF_TIMESTAMP_TX| \
+		EVL_SOF_TIMESTAMP_DEVICE|EVL_SOF_TIMESTAMP_QUEUING)
 
 struct evl_net_sockopt {
 	int level;

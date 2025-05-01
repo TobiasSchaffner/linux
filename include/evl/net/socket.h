@@ -17,6 +17,7 @@
 #include <evl/poll.h>
 #include <evl/crossing.h>
 #include <evl/work.h>
+#include <evl/net/timestamping.h>
 #include <uapi/evl/types.h>
 #include <uapi/evl/fcntl.h>
 #include <uapi/evl/net/socket-abi.h>
@@ -26,6 +27,7 @@ struct net;
 struct net_device;
 struct evl_net_offload;
 struct evl_net_udp_receiver;
+struct evl_net_timestamps;
 
 struct evl_net_proto {
 	int (*attach)(struct evl_socket *esk,
@@ -61,6 +63,8 @@ struct evl_socket_domain {
 	struct list_head next;
 };
 
+#define EVL_SOCK_TSOVERFLOW  0 /* Timestamping overflow. */
+
 struct evl_socket {
 	struct evl_net_proto *proto;
 	struct evl_file efile;
@@ -78,7 +82,11 @@ struct evl_socket {
 	int wmem_max;
 	struct evl_wait_queue wmem_wait;
 	struct evl_crossing wmem_drain;
+	unsigned long flags;
 	int protocol;
+	int timestamping;
+	spinlock_t ts_lock;
+	struct evl_net_timestamps __rcu *tx_timestamps;
 	refcount_t refs;	/* release vs destroy */
 	struct evl_work inband_offload;
 	union {
