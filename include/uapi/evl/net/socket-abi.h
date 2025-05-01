@@ -41,12 +41,25 @@ struct evl_net_solicit {
 	__u32 flags;
 };
 
-#define EVL_SOCKIOC_ACTIVATE	_IOW(EVL_SOCKET_IOCBASE, 2, struct evl_netdev_activation)
-#define EVL_SOCKIOC_DEACTIVATE	_IO(EVL_SOCKET_IOCBASE, 3)
-#define EVL_SOCKIOC_SENDMSG	_IOW(EVL_SOCKET_IOCBASE, 4, struct user_oob_msghdr)
-#define EVL_SOCKIOC_RECVMSG	_IOWR(EVL_SOCKET_IOCBASE, 5, struct user_oob_msghdr)
-#define EVL_SOCKIOC_SETRECVSZ	_IOW(EVL_SOCKET_IOCBASE, 6, int)
-#define EVL_SOCKIOC_SETSENDSZ	_IOW(EVL_SOCKET_IOCBASE, 7, int)
-#define EVL_SOCKIOC_SOLICIT	_IOW(EVL_SOCKET_IOCBASE, 8, struct evl_net_solicit)
+enum {
+	EVL_SOCKOPT_RECVSZ,
+	EVL_SOCKOPT_SENDSZ,
+	EVL_SOCKOPT_TIMESTAMPING,
+};
+
+struct evl_net_sockopt {
+	int level;
+	int option;
+	__u64 optval_ptr;		/* ([const] void __user *optval) */
+	__u64 optlen_ptr;		/* ([const] socklen_t __user *optlen) */
+};
+
+#define EVL_SOCKIOC_ACTIVATE	_IOW(EVL_SOCKET_IOCBASE, 1, struct evl_netdev_activation)
+#define EVL_SOCKIOC_DEACTIVATE	_IO(EVL_SOCKET_IOCBASE, 2)
+#define EVL_SOCKIOC_SENDMSG	_IOW(EVL_SOCKET_IOCBASE, 3, struct user_oob_msghdr)
+#define EVL_SOCKIOC_RECVMSG	_IOWR(EVL_SOCKET_IOCBASE, 4, struct user_oob_msghdr)
+#define EVL_SOCKIOC_SOLICIT	_IOW(EVL_SOCKET_IOCBASE, 5, struct evl_net_solicit)
+#define EVL_SOCKIOC_SETOPT	_IOW(EVL_SOCKET_IOCBASE, 6, struct evl_net_sockopt)
+#define EVL_SOCKIOC_GETOPT	_IOR(EVL_SOCKET_IOCBASE, 7, struct evl_net_sockopt)
 
 #endif /* !_EVL_UAPI_NET_SOCKET_ABI_H */
