@@ -26,6 +26,7 @@
 #include <evl/net/output.h>
 #include <evl/net/device.h>
 #include <evl/net/skb.h>
+#include <evl/net/timestamping.h>
 #include <evl/uaccess.h>
 
 static struct evl_net_proto *
@@ -186,6 +187,9 @@ static bool packet_deliver(struct sk_buff *skb, int protocol) /* oob */
  */
 bool evl_net_packet_deliver(struct sk_buff *skb) /* oob */
 {
+	if (skb_is_oob_timestamped(skb))
+		skb_shinfo_oob(skb)->delivery_time = evl_ktime_monotonic();
+
 	packet_deliver(skb, ETH_P_ALL);
 
 	return packet_deliver(skb, ntohs(skb->protocol));
@@ -456,6 +460,11 @@ static ssize_t send_packet(struct evl_socket *esk,
 		goto out;
 	}
 
+	if (READ_ONCE(esk->timestamping) & EVL_SOF_TIMESTAMP_TX) {
+		skb_shinfo_oob(skb)->delivery_time = evl_ktime_monotonic();
+		skb_mark_oob_timestamped(skb);
+	}
+
 	skb_reset_mac_header(skb);
 	skb->protocol = htons(esk->protocol);
 	skb->dev = real_dev;
@@ -562,41 +571,45 @@ static ssize_t receive_packet(struct evl_socket *esk,
 			struct iovec *iov,
 			size_t iovlen)
 {
+	__u32 msg_flags = 0, msg_uflags;
+	ktime_t timeout = EVL_INFINITE;
+	enum evl_tmode tmode = EVL_REL;
 	struct __evl_timespec uts;
-	enum evl_tmode tmode;
 	struct sk_buff *skb;
 	unsigned long flags;
-	__u32 msg_flags = 0;
-	ktime_t timeout;
 	ssize_t ret;
 
+	if (evl_socket_f_flags(esk) & O_NONBLOCK)
+		msg_flags |= MSG_DONTWAIT;
+
 	if (u_msghdr) {
-		ret = raw_get_user(msg_flags, &u_msghdr->flags);
+		ret = raw_get_user(msg_uflags, &u_msghdr->flags);
 		if (ret)
 			return -EFAULT;
 
+		msg_flags |= msg_uflags;
+
 		/* No MSG_TRUNC on recv, too much of a kludge. */
-		if (msg_flags & ~MSG_DONTWAIT)
+		if (msg_flags & ~(MSG_DONTWAIT|MSG_TIMESTAMP))
 			return -EINVAL;
 
-		/*
-		 * Fetch the timeout on receiving a buffer from
-		 * esk->input.
-		 */
 		ret = raw_copy_from_user(&uts, &u_msghdr->timeout,
 					sizeof(uts));
 		if (ret)
 			return -EFAULT;
 
-		timeout = u_timespec_to_ktime(uts);
-		tmode = timeout ? EVL_ABS : EVL_REL;
-	} else {
-		timeout = EVL_INFINITE;
-		tmode = EVL_REL;
-	}
+		if (msg_flags & MSG_DONTWAIT) {
+			timeout = EVL_NONBLOCK;
+		} else {
+			timeout = u_timespec_to_ktime(uts);
+			if (timeout)
+				tmode = EVL_ABS;
+		}
 
-	if (evl_socket_f_flags(esk) & O_NONBLOCK)
-		msg_flags |= MSG_DONTWAIT;
+		if (msg_flags & MSG_TIMESTAMP)
+			return evl_collect_socket_iots(esk, u_msghdr, msg_uflags,
+						iov, iovlen, timeout, tmode);
+	}
 
 	do {
 		raw_spin_lock_irqsave(&esk->input_wait.wchan.lock, flags);
@@ -604,9 +617,15 @@ static ssize_t receive_packet(struct evl_socket *esk,
 		if (!list_empty(&esk->input)) {
 			skb = list_get_entry(&esk->input, struct sk_buff, list);
 			raw_spin_unlock_irqrestore(&esk->input_wait.wchan.lock, flags);
-			/* Restore the MAC header. */
-			skb_push(skb, skb->data - skb_mac_header(skb));
-			ret = copy_packet_to_user(u_msghdr, iov, iovlen, skb);
+			/* Record the timestamps if required. */
+			ret = 0;
+			if (READ_ONCE(esk->timestamping) & EVL_SOF_TIMESTAMP_RX)
+				ret = evl_copy_iots_rx(skb, u_msghdr);
+			if (likely(!ret)) {
+				/* Restore the MAC header. */
+				skb_push(skb, skb->data - skb_mac_header(skb));
+				ret = copy_packet_to_user(u_msghdr, iov, iovlen, skb);
+			}
 			evl_net_uncharge_skb_rmem(skb);
 			evl_net_free_skb(skb);
 			return ret;
@@ -635,7 +654,8 @@ static __poll_t poll_packet(struct evl_socket *esk,
 
 	/* Enqueue, then test. */
 	evl_poll_watch(&esk->poll_head, wait, NULL);
-	if (!list_empty(&esk->input))
+	/* Check whether we have datagrams and/or timestamps to read. */
+	if (!list_empty(&esk->input) || evl_test_socket_iots(esk))
 		ret = POLLIN|POLLRDNORM;
 
 	dev = esk->proto->get_netif(esk);

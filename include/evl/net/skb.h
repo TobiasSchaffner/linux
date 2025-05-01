@@ -20,13 +20,16 @@ struct evl_socket;
 struct iovec;
 
 struct evl_net_cb {
+	/* Cached source/destination device. */
 	struct net_device *dev;
 	union {
+		/* Low-level handler at ingress. */
 		struct evl_net_handler *handler;
+		/* Socket tracking memory consumption. */
 		struct evl_socket *tracker;
 	};
+	/* Protocol-specific information. */
 	union {
-		/* protocol-specific stuff should live here. */
 	};
 };
 #define EVL_NET_CB(__skb)  ((struct evl_net_cb *)&((__skb)->cb[0]))

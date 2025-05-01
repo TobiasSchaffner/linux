@@ -136,6 +136,15 @@ struct sk_buff *evl_net_ipv4_build_datagram(struct evl_socket *esk,
 				skb_push(skb, ipc->transhdrlen);
 				skb_reset_transport_header(skb);
 			}
+
+			/*
+			 * TX time accounting starts when obtaining
+			 * the initial buffer.
+			 */
+			if (READ_ONCE(esk->timestamping) & EVL_SOF_TIMESTAMP_TX) {
+				skb_shinfo_oob(skb)->delivery_time = evl_ktime_monotonic();
+				skb_mark_oob_timestamped(skb);
+			}
 		}
 
 		skb->ip_summed = CHECKSUM_NONE;
