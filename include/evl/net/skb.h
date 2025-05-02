@@ -20,9 +20,11 @@ struct evl_socket;
 struct iovec;
 
 struct evl_net_cb {
-	struct evl_net_handler *handler;
-	struct evl_socket *tracker;
 	struct net_device *dev;
+	union {
+		struct evl_net_handler *handler;
+		struct evl_socket *tracker;
+	};
 	union {
 		/* protocol-specific stuff should live here. */
 	};
