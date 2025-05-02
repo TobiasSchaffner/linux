@@ -220,14 +220,15 @@ static void __free_evl_skb(struct sk_buff *skb, struct net_device *dev)
 	if (skb->cloned &&
 	    atomic_sub_return(skb->nohdr ? (1 << SKB_DATAREF_SHIFT) + 1 : 1,
 			      &shinfo->dataref))
-		goto release_head;
+		goto put_skb;
 
 	/*
-	 * Release the data. This is the gist of skb_pp_recycle(),
-	 * since we already know for sure that an oob-managed skb is
-	 * built around a page from a per-device pool (in
-	 * evl_netdev_state).
+	 * Attempt to release the heading data to the originating page
+	 * pool if any.
 	 */
+	if (unlikely(!skb->head))
+		goto put_skb;
+
 	napi_pp_put_page(page_to_netmem(virt_to_page(skb->head)));
 
 	/*
@@ -243,9 +244,8 @@ static void __free_evl_skb(struct sk_buff *skb, struct net_device *dev)
 
 	evl_signal_poll_events(&est->poll_head,	POLLOUT|POLLWRNORM);
 
-release_head:
+put_skb:
 	EVL_WARN_ON(NET, atomic_read(&shinfo->dataref) < 0);
-	/* Now release the buffer head. */
 	put_oob_skb(skb);
 }
 
@@ -346,14 +346,14 @@ void evl_net_free_skb_list(struct list_head *list)
 }
 
 /**
- *	free_skb_oob - attempt to free a buffer head along with its
- *	data storage.
+ *	free_skb_oob - attempt to free a buffer along with its data
+ *	storage.
  *
  *      Called from the in-band net core right after the last
  *      reference to the buffer was dropped. We get a chance to
- *      release the buffer immediately to our bufheads pool. However,
- *      if the buffer data was allocated in-band, send the skb back to
- *      the in-band core for disposal from there.
+ *      release the buffer immediately to our pool. However, if the
+ *      buffer data was allocated in-band, send the skb back to the
+ *      in-band core for disposal from there.
  */
 void free_skb_oob(struct sk_buff *skb) /* inband/oob */
 {
