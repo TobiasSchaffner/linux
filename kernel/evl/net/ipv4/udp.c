@@ -601,6 +601,28 @@ out:
 static __poll_t poll_udp(struct evl_socket *esk,
 			struct oob_poll_wait *wait)
 {
+	struct evl_net_udp_receiver *e;
+	__poll_t ret = 0;
+
+	/* Enqueue, then test. */
+	evl_poll_watch(&esk->poll_head, wait, NULL);
+
+	rcu_read_lock();
+
+	/*
+	 * We might have lingering timestamps to consume, check this
+	 * unconditionally, regardless of the presence of a receiver
+	 * queue.
+	 */
+	e = READ_ONCE(esk->u.ip.udp.receiver);
+	if (__evl_test_socket_iots(esk) || (e && !list_empty(&e->queue)))
+		ret = POLLIN|POLLRDNORM;
+
+	rcu_read_unlock();
+
+	/* FIXME: Assume we can always TX, which is too optimistic. */
+	ret |= POLLOUT|POLLWRNORM;
+
 	return 0;
 }
 
