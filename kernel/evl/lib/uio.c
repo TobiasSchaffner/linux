@@ -129,6 +129,47 @@ ssize_t evl_copy_to_uio(const struct iovec *iov, size_t iovlen,
 }
 EXPORT_SYMBOL_GPL(evl_copy_to_uio);
 
+/*
+ * Like evl_copy_to_uio(), allowing incremental calls for filling up
+ * the I/O vector.
+ */
+ssize_t evl_copy_to_uio_incremental(struct iovec **iovp, size_t *iovlenp,
+				const void *data, size_t len)
+{
+	size_t nbytes, iovlen;
+	ssize_t written = 0;
+	struct iovec *iov;
+	int ret;
+
+	for (iov = *iovp, iovlen = *iovlenp;
+	     len > 0 && iovlen > 0; iovlen--, iov++) {
+		if (iov->iov_len == 0)
+			continue;
+
+		nbytes = iov->iov_len;
+		if (nbytes > len)
+			nbytes = len;
+
+		ret = raw_copy_to_user(iov->iov_base, data, nbytes);
+		if (ret)
+			return -EFAULT;
+
+		len -= nbytes;
+		iov->iov_base += nbytes;
+		iov->iov_len -= nbytes;
+		data += nbytes;
+		written += nbytes;
+		if (written < 0)
+			return -EINVAL;
+	}
+
+	*iovp = iov;
+	*iovlenp = iovlen;
+
+	return written;
+}
+EXPORT_SYMBOL_GPL(evl_copy_to_uio_incremental);
+
 ssize_t evl_copy_from_uio(const struct iovec *iov, size_t iovlen,
 			void *data, size_t len, size_t *remainder)
 {
