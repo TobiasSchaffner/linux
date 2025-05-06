@@ -7,12 +7,12 @@
 #ifndef _EVL_UIO_H
 #define _EVL_UIO_H
 
-#include <linux/types.h>
-
-struct iovec;
-struct kvec;
+#include <linux/uio.h>
 
 ssize_t evl_copy_to_uio(const struct iovec *iov, size_t iovlen,
+			const void *data, size_t len);
+
+ssize_t evl_copy_to_uio_incremental(struct iovec **iovp, size_t *iovlenp,
 			const void *data, size_t len);
 
 ssize_t evl_copy_from_uio(const struct iovec *iov, size_t iovlen,
