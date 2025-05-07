@@ -81,7 +81,7 @@ static void mark_pages(struct evl_heap *heap,
 		enum evl_heap_pgtype type)
 {
 	while (nrpages-- > 0)
-		heap->pagemap[pg].type = type;
+		heap->pagemap[pg++].type = type;
 }
 
 #else
