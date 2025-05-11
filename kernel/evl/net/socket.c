@@ -513,76 +513,6 @@ static int socket_send_recv(struct evl_socket *esk,
 	return 0;
 }
 
-long sock_oob_ioctl(struct file *filp, unsigned int cmd,
-		unsigned long arg)
-{
-	struct evl_socket *esk = evl_sk_from_file(filp);
-	struct user_oob_msghdr __user *u_msghdr;
-	long ret;
-
-	if (esk == NULL)
-		return -EBADFD;
-
-	switch (cmd) {
-	case EVL_SOCKIOC_SENDMSG:
-	case EVL_SOCKIOC_RECVMSG:
-		u_msghdr = (typeof(u_msghdr))arg;
-		ret = socket_send_recv(esk, u_msghdr, cmd);
-		break;
-	default:
-		ret = -ENOTTY;
-	}
-
-	return ret;
-}
-
-ssize_t sock_oob_write(struct file *filp,
-			const char __user *u_buf, size_t count)
-{
-	struct evl_socket *esk = evl_sk_from_file(filp);
-	struct iovec iov;
-
-	if (esk == NULL)
-		return -EBADFD;
-
-	if (!count)
-		return 0;
-
-	iov.iov_base = (void *)u_buf;
-	iov.iov_len = count;
-
-	return esk->proto->oob_send(esk, NULL, &iov, 1);
-}
-
-ssize_t sock_oob_read(struct file *filp,
-			char __user *u_buf, size_t count)
-{
-	struct evl_socket *esk = evl_sk_from_file(filp);
-	struct iovec iov;
-
-	if (esk == NULL)
-		return -EBADFD;
-
-	if (!count)
-		return 0;
-
-	iov.iov_base = u_buf;
-	iov.iov_len = count;
-
-	return esk->proto->oob_receive(esk, NULL, &iov, 1);
-}
-
-__poll_t sock_oob_poll(struct file *filp,
-			struct oob_poll_wait *wait)
-{
-	struct evl_socket *esk = evl_sk_from_file(filp);
-
-	if (esk == NULL)
-		return -EBADFD;
-
-	return esk->proto->oob_poll(esk, wait);
-}
-
 static int get_sockoptaddr(const struct evl_net_sockopt __user *u_opt,
 			void __user **u_optval, unsigned int __user **u_optlen,
 			unsigned int *optlen)
@@ -699,18 +629,12 @@ static int socket_get_wmem(struct evl_socket *esk,
 }
 
 static int socket_set_timestamping(struct evl_socket *esk,
-				struct evl_net_sockopt __user *u_opt)
+				unsigned int __user *u_optval,
+				unsigned int optlen)
 {
-	unsigned int optlen = sizeof(__u32), __user *u_optlen;
-	void __user *u_optval;
 	unsigned int tsflags;
-	int ret;
 
-	ret = get_sockoptaddr(u_opt, &u_optval,	&u_optlen, &optlen);
-	if (ret)
-		return ret;
-
-	if (raw_get_user(tsflags, (typeof(tsflags) *)u_optval))
+	if (raw_get_user(tsflags, u_optval))
 		return -EFAULT;
 
 	if (tsflags & ~EVL_SOF_TIMESTAMPS)
@@ -730,21 +654,15 @@ static int socket_set_timestamping(struct evl_socket *esk,
 }
 
 static int socket_get_timestamping(struct evl_socket *esk,
-				struct evl_net_sockopt __user *u_opt)
+				unsigned int __user *u_optval,
+				int *optlen)
 {
-	unsigned int optlen = sizeof(esk->timestamping), __user *u_optlen;
-	void __user *u_optval;
-	int ret;
+	*optlen = sizeof(esk->timestamping);
 
-	ret = get_sockoptaddr(u_opt, &u_optval,	&u_optlen, &optlen);
-	if (ret)
-		return ret;
-
-	return put_sockopt(u_optval, &esk->timestamping,
-			u_optlen, sizeof(esk->timestamping));
+	return raw_put_user(esk->timestamping, u_optval) ? -EFAULT : 0;
 }
 
-static int socket_set_option(struct evl_socket *esk,
+static int socket_iocset_option(struct evl_socket *esk,
 			struct evl_net_sockopt __user *u_opt)
 {
 	int level, option;
@@ -763,14 +681,12 @@ static int socket_set_option(struct evl_socket *esk,
 		return socket_set_rmem(esk, u_opt);
 	case EVL_SOCKOPT_SENDSZ:
 		return socket_set_wmem(esk, u_opt);
-	case EVL_SOCKOPT_TIMESTAMPING:
-		return socket_set_timestamping(esk, u_opt);
 	}
 
 	return -EINVAL;
 }
 
-static int socket_get_option(struct evl_socket *esk,
+static int socket_iocget_option(struct evl_socket *esk,
 			struct evl_net_sockopt __user *u_opt)
 {
 	int level, option;
@@ -789,11 +705,87 @@ static int socket_get_option(struct evl_socket *esk,
 		return socket_get_rmem(esk, u_opt);
 	case EVL_SOCKOPT_SENDSZ:
 		return socket_get_wmem(esk, u_opt);
-	case EVL_SOCKOPT_TIMESTAMPING:
-		return socket_get_timestamping(esk, u_opt);
 	}
 
 	return -EINVAL;
+}
+
+long sock_oob_ioctl(struct file *filp, unsigned int cmd,
+		unsigned long arg)
+{
+	struct evl_socket *esk = evl_sk_from_file(filp);
+	struct user_oob_msghdr __user *u_msghdr;
+	long ret;
+
+	if (esk == NULL)
+		return -EBADFD;
+
+	switch (cmd) {
+	case EVL_SOCKIOC_SENDMSG:
+	case EVL_SOCKIOC_RECVMSG:
+		u_msghdr = (typeof(u_msghdr))arg;
+		ret = socket_send_recv(esk, u_msghdr, cmd);
+		break;
+	case EVL_SOCKIOC_SETOPT:
+		ret = socket_iocset_option(esk,
+			(struct evl_net_sockopt __user *)arg);
+		break;
+	case EVL_SOCKIOC_GETOPT:
+		ret = socket_iocget_option(esk,
+			(struct evl_net_sockopt __user *)arg);
+		break;
+	default:
+		ret = -ENOTTY;
+	}
+
+	return ret;
+}
+
+ssize_t sock_oob_write(struct file *filp,
+			const char __user *u_buf, size_t count)
+{
+	struct evl_socket *esk = evl_sk_from_file(filp);
+	struct iovec iov;
+
+	if (esk == NULL)
+		return -EBADFD;
+
+	if (!count)
+		return 0;
+
+	iov.iov_base = (void *)u_buf;
+	iov.iov_len = count;
+
+	return esk->proto->oob_send(esk, NULL, &iov, 1);
+}
+
+ssize_t sock_oob_read(struct file *filp,
+			char __user *u_buf, size_t count)
+{
+	struct evl_socket *esk = evl_sk_from_file(filp);
+	struct iovec iov;
+
+	if (esk == NULL)
+		return -EBADFD;
+
+	if (!count)
+		return 0;
+
+	iov.iov_base = u_buf;
+	iov.iov_len = count;
+
+	return esk->proto->oob_receive(esk, NULL, &iov, 1);
+}
+
+__poll_t sock_oob_poll(struct file *filp,
+			struct oob_poll_wait *wait)
+{
+	struct evl_socket *esk = evl_sk_from_file(filp);
+
+	if (esk == NULL)
+		return -EBADFD;
+
+	return esk->proto->oob_poll(esk, wait);
 }
 
 static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
@@ -804,6 +796,11 @@ static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
 	struct evl_net_solicit solreq, __user *u_solreq;
 	int ret;
 
+	/*
+	 * We leave EVL_SOCKIOC_SET/GETOPT to be handled via the
+	 * set/getsockopt() redirection. I.e. any direct ioctl()
+	 * request from the inband stage for those would fail.
+	 */
 	switch (cmd) {
 	case EVL_SOCKIOC_ACTIVATE: /* Turn oob port on. */
 		u_act = (typeof(u_act))arg;
@@ -815,14 +812,6 @@ static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
 	case EVL_SOCKIOC_DEACTIVATE: /* Turn oob port off. */
 		ret = evl_net_switch_oob_port(esk, NULL);
  		break;
-	case EVL_SOCKIOC_SETOPT:
-		ret = socket_set_option(esk,
-			(struct evl_net_sockopt __user *)arg);
-		break;
-	case EVL_SOCKIOC_GETOPT:
-		ret = socket_get_option(esk,
-			(struct evl_net_sockopt __user *)arg);
-		break;
 	case EVL_SOCKIOC_SOLICIT:
 		u_solreq = (typeof(u_solreq))arg;
 		ret = copy_from_user(&solreq, u_solreq, sizeof(solreq));
@@ -855,6 +844,54 @@ long sock_inband_ioctl_redirect(struct sock *sk, /* in-band hook */
 	long ret = sock_inband_ioctl(sk, cmd, arg);
 
 	return ret == -ENOTTY ? -ENOIOCTLCMD : ret;
+}
+
+/* setsockopt() redirector. */
+int sock_inband_setopt_redirect(struct sock *sk,
+				int level, int optname,
+				sockptr_t optval, unsigned int optlen)
+{
+	struct evl_socket *esk = evl_sk(sk);
+
+	if (optval.is_kernel)
+		/* Sorry mate, won't deal with intra-kernel requests. */
+		return -ENOTSUPP;
+
+	if (level != SOL_SOCKET)
+		/* We don't implement protocol-specific options (yet). */
+		return -ENOIOCTLCMD;
+
+	switch (optname) {
+	case SO_TIMESTAMP_OOB:
+		return socket_set_timestamping(esk, optval.user, optlen);
+	}
+
+	/*
+	 * We don't know this option, tell the caller to forward the
+	 * request to the common command demultiplexer.
+	 */
+	return -ENOIOCTLCMD;
+}
+
+/* getsockopt() redirector. */
+int sock_inband_getopt_redirect(struct sock *sk,
+				int level, int optname,
+				sockptr_t optval, int *optlen)
+{
+	struct evl_socket *esk = evl_sk(sk);
+
+	if (optval.is_kernel)
+		return -ENOTSUPP;
+
+	if (level != SOL_SOCKET)
+		return -ENOIOCTLCMD;
+
+	switch (optname) {
+	case SO_TIMESTAMP_OOB:
+		return socket_get_timestamping(esk, optval.user, optlen);
+	}
+
+	return -ENOIOCTLCMD;
 }
 
 static int evl_sock_ioctl(struct socket *sock, unsigned int cmd,
