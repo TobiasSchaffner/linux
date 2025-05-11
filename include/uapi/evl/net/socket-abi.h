@@ -15,6 +15,12 @@
 
 #define MSG_TIMESTAMP	MSG_ERRQUEUE	/* Alias to collect I/O timestamps */
 
+/*
+ * CAUTION: the oob-specific socket options must not conflict with
+ * standard definitions (check uapi/asm-generic/socket.h).
+ */
+#define SO_TIMESTAMP_OOB	1024
+
 struct evl_net_iotimes {
 	/* Time at device<->netstack boundary (monotonic). */
 	__u64 device_time;
