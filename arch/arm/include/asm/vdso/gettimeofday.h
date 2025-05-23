@@ -105,6 +105,59 @@ static __always_inline int clock_getres32_fallback(
 	return ret;
 }
 
+#ifdef CONFIG_GENERIC_VDSO_CLOCKSOURCE
+
+static __always_inline long clock_open_device(const char *_path, int _mode)
+{
+	register const char *path asm("r0") = _path;
+	register int mode asm("r1") = _mode;
+	register long ret asm ("r0");
+	register long nr asm("r7") = __NR_open;
+
+	asm volatile(
+		"	swi #0\n"
+		: "=r" (ret)
+		: "r"(path), "r"(mode), "r"(nr)
+		: "memory");
+
+	return ret;
+}
+
+static __always_inline
+long clock_ioctl_device(int _fd, unsigned long _cmd, long _arg)
+{
+	register int fd asm("r0") = _fd;
+	register unsigned long cmd asm("r1") = _cmd;
+	register long arg asm("r2") = _arg;
+	register long ret asm ("r0");
+	register long nr asm("r7") = __NR_ioctl;
+
+ 	asm volatile(
+		"	swi #0\n"
+		: "=r" (ret)
+		: "r"(fd), "r"(cmd), "r"(arg), "r"(nr)
+		: "memory");
+
+ 	return ret;
+}
+
+static __always_inline long clock_close_device(int _fd)
+{
+	register int fd asm("r0") = (u32)_fd;
+	register long ret asm ("r0");
+	register long nr asm("r7") = __NR_close;
+
+	asm volatile(
+		"	swi #0\n"
+		: "=r" (ret)
+		: "r"(fd), "r"(nr)
+		: "memory");
+
+	return ret;
+}
+
+#endif	/* CONFIG_GENERIC_VDSO_CLOCKSOURCE */
+
 static inline bool arm_vdso_hres_capable(void)
 {
 	return IS_ENABLED(CONFIG_ARM_ARCH_TIMER);
