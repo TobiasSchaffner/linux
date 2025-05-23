@@ -4,7 +4,9 @@
 
 #ifdef __KERNEL__
 
-#define __VDSO_PAGES	4
+#include <asm/vdso/private.h>
+
+#define __VDSO_PAGES	(4 + __VDSO_PRIV_PAGES)
 
 #ifndef __ASSEMBLY__
 
