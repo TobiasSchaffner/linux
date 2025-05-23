@@ -98,6 +98,64 @@ static __always_inline const struct vdso_time_data *__arch_get_vdso_u_time_data(
 #define __arch_get_vdso_u_time_data __arch_get_vdso_u_time_data
 #endif /* IS_ENABLED(CONFIG_CC_IS_GCC) && IS_ENABLED(CONFIG_PAGE_SIZE_64KB) */
 
+#ifdef CONFIG_GENERIC_VDSO_CLOCKSOURCE
+
+#include <uapi/linux/fcntl.h>
+
+static __always_inline int clock_open_device(const char *_path, int _mode)
+{
+	register int  sc  asm("w8") = __NR_openat;
+	register long ret asm("x0");
+	register int dirfd  asm("x0") = AT_FDCWD;
+	register const char *path  asm("x1") = _path;
+	register int mode  asm("x2") = _mode;
+
+	asm volatile(
+		"svc #0\n"
+		: "=r" (ret)
+		: "r" (sc),
+		  "r" (dirfd), "r" (path), "r" (mode)
+		: "cc", "memory");
+
+	return ret;
+}
+
+static __always_inline int clock_ioctl_device(int _fd, unsigned long _cmd, long _arg)
+{
+	register int  sc  asm("w8") = __NR_ioctl;
+	register long ret asm("x0");
+	register int fd  asm("x0") = _fd;
+	register unsigned long cmd asm("x1") = _cmd;
+	register long arg asm("x2") = _arg;
+
+	asm volatile(
+		"svc #0\n"
+		: "=r" (ret)
+		: "r" (sc),
+		  "r" (fd), "r" (cmd), "r" (arg)
+		: "cc", "memory");
+
+	return ret;
+}
+
+static __always_inline int clock_close_device(int _fd)
+{
+	register int  sc  asm("w8") = __NR_close;
+	register long ret asm("x0");
+	register long fd  asm("x0") = _fd;
+
+	asm volatile(
+		"svc #0\n"
+		: "=r" (ret)
+		: "r" (sc),
+		  "r" (fd)
+		: "cc", "memory");
+
+	return ret;
+}
+
+#endif	/* CONFIG_GENERIC_VDSO_CLOCKSOURCE */
+
 #endif /* !__ASSEMBLER__ */
 
 #else /* !__aarch64__ */
