@@ -70,6 +70,8 @@ static int __init __vdso_init(enum vdso_abi abi)
 	int i;
 	struct page **vdso_pagelist;
 	unsigned long pfn;
+	struct vdso_time_data *vdata = vdso_k_time_data;
+	struct vdso_clock *vc __maybe_unused = vdata->clock_data;
 
 	if (memcmp(vdso_info[abi].vdso_code_start, "\177ELF", 4)) {
 		pr_err("vDSO is not a valid ELF object!\n");
@@ -93,6 +95,10 @@ static int __init __vdso_init(enum vdso_abi abi)
 
 	vdso_info[abi].cm->pages = vdso_pagelist;
 
+#ifdef CONFIG_GENERIC_VDSO_CLOCKSOURCE
+	vc->cs_type_seq = CLOCKSOURCE_VDSO_NONE << 16 | 1;
+#endif
+
 	return 0;
 }
 
@@ -105,11 +111,11 @@ static int __setup_additional_pages(enum vdso_abi abi,
 	unsigned long gp_flags = 0;
 	void *ret;
 
-	BUILD_BUG_ON(VDSO_NR_PAGES != __VDSO_PAGES);
+	BUILD_BUG_ON(VDSO_NR_PAGES + __VDSO_PRIV_PAGES != __VDSO_PAGES);
 
 	vdso_text_len = vdso_info[abi].vdso_pages << PAGE_SHIFT;
-	/* Be sure to map the data page */
-	vdso_mapping_len = vdso_text_len + VDSO_NR_PAGES * PAGE_SIZE;
+	/* Be sure to map the data and private pages */
+	vdso_mapping_len = vdso_text_len + __VDSO_PAGES * PAGE_SIZE;
 
 	vdso_base = get_unmapped_area(NULL, 0, vdso_mapping_len, 0, 0);
 	if (IS_ERR_VALUE(vdso_base)) {
@@ -117,14 +123,20 @@ static int __setup_additional_pages(enum vdso_abi abi,
 		goto up_fail;
 	}
 
-	ret = vdso_install_vvar_mapping(mm, vdso_base);
+#ifdef CONFIG_VDSO_PRIVATE_DATA
+	ret = ERR_PTR(vdso_install_private_mapping(vdso_base, VDSO_ARCH_PRIV_SIZE));
+	if (IS_ERR(ret))
+		goto up_fail;
+#endif
+
+	ret = vdso_install_vvar_mapping(mm, vdso_base + VDSO_ARCH_PRIV_SIZE);
 	if (IS_ERR(ret))
 		goto up_fail;
 
 	if (system_supports_bti_kernel())
 		gp_flags = VM_ARM64_BTI;
 
-	vdso_base += VDSO_NR_PAGES * PAGE_SIZE;
+	vdso_base += __VDSO_PAGES * PAGE_SIZE;
 	mm->context.vdso = (void *)vdso_base;
 	ret = _install_special_mapping(mm, vdso_base, vdso_text_len,
 				       VM_READ|VM_EXEC|gp_flags|
