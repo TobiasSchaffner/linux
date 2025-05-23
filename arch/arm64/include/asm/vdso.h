@@ -5,7 +5,9 @@
 #ifndef __ASM_VDSO_H
 #define __ASM_VDSO_H
 
-#define __VDSO_PAGES    4
+#include <asm/vdso/private.h>
+
+#define __VDSO_PAGES	(4 + __VDSO_PRIV_PAGES)
 
 #ifndef __ASSEMBLER__
 
