@@ -156,8 +156,10 @@ static void __init patch_vdso(void *ehdr)
 	/* If the virtual counter is absent or non-functional we don't
 	 * want programs to incur the slight additional overhead of
 	 * dispatching through the VDSO only to fall back to syscalls.
+	 * However, if clocksources supporting generic MMIO access can
+	 * be reached via the vDSO, keep this fast path enabled.
 	 */
-	if (!cntvct_functional()) {
+	if (!IS_ENABLED(CONFIG_GENERIC_VDSO_CLOCKSOURCE) && !cntvct_functional()) {
 		vdso_nullpatch_one(&einfo, "__vdso_gettimeofday");
 		vdso_nullpatch_one(&einfo, "__vdso_clock_gettime");
 		vdso_nullpatch_one(&einfo, "__vdso_clock_gettime64");
@@ -168,6 +170,8 @@ static void __init patch_vdso(void *ehdr)
 
 static int __init vdso_init(void)
 {
+	struct vdso_time_data *vdata = vdso_k_time_data;
+	struct vdso_clock *vc __maybe_unused = vdata->clock_data;
 	unsigned int text_pages;
 	int i;
 
@@ -193,16 +197,20 @@ static int __init vdso_init(void)
 
 	vdso_text_mapping.pages = vdso_text_pagelist;
 
-	vdso_total_pages = VDSO_NR_PAGES; /* for the data/vvar pages */
+	vdso_total_pages = VDSO_NR_PAGES + __VDSO_PRIV_PAGES; /* for the data/vvar+priv pages */
 	vdso_total_pages += text_pages;
 
 	patch_vdso(vdso_start);
+
+#ifdef CONFIG_GENERIC_VDSO_CLOCKSOURCE
+	vc->cs_type_seq = CLOCKSOURCE_VDSO_NONE << 16 | 1;
+#endif
 
 	return 0;
 }
 arch_initcall(vdso_init);
 
-static_assert(__VDSO_PAGES == VDSO_NR_PAGES);
+static_assert(__VDSO_PAGES == VDSO_NR_PAGES + __VDSO_PRIV_PAGES);
 
 /* assumes mmap_lock is write-locked */
 void arm_install_vdso(struct mm_struct *mm, unsigned long addr)
@@ -215,12 +223,16 @@ void arm_install_vdso(struct mm_struct *mm, unsigned long addr)
 	if (vdso_text_pagelist == NULL)
 		return;
 
-	if (IS_ERR(vdso_install_vvar_mapping(mm, addr)))
+	if (__VDSO_PRIV_PAGES > 0 &&
+	    vdso_install_private_mapping(addr, __VDSO_PRIV_PAGES * PAGE_SIZE))
+		return;
+
+	if (IS_ERR(vdso_install_vvar_mapping(mm, addr + __VDSO_PRIV_PAGES * PAGE_SIZE)))
 		return;
 
 	/* Account for vvar pages. */
-	addr += VDSO_NR_PAGES * PAGE_SIZE;
-	len = (vdso_total_pages - VDSO_NR_PAGES) << PAGE_SHIFT;
+	addr += __VDSO_PAGES * PAGE_SIZE;
+	len = (vdso_total_pages - VDSO_NR_PAGES - __VDSO_PRIV_PAGES) << PAGE_SHIFT;
 
 	vma = _install_special_mapping(mm, addr, len,
 		VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC,
