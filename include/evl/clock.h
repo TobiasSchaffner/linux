@@ -47,7 +47,7 @@ struct evl_clock {
 		void (*reset_gravity)(struct evl_clock *clock);
 		void (*adjust)(struct evl_clock *clock);
 	} ops;
-	struct evl_timerbase *timerdata;
+	struct evl_timerbase __percpu *timerdata;
 	struct evl_clock *master;
 	ktime_t offset;	/* from master clock. */
 #ifdef CONFIG_SMP
