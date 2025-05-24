@@ -328,7 +328,7 @@ static struct latmus_runner *create_irq_runner(int cpu)
 
 static irqreturn_t latmus_sirq_handler(int sirq, void *dev_id)
 {
-	struct sirq_runner * __percpu *self_percpu = dev_id;
+	struct sirq_runner **self_percpu = dev_id;
 	struct sirq_runner *sirq_runner = *self_percpu;
 	ktime_t now;
 
