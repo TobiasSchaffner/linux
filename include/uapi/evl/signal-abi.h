@@ -6,8 +6,8 @@
  * Copyright (C) 2013, 2018 Philippe Gerum <rpm@xenomai.org>
  */
 
-#ifndef _EVL_UAPI_SIGNAL_H
-#define _EVL_UAPI_SIGNAL_H
+#ifndef _EVL_UAPI_SIGNAL_ABI_H
+#define _EVL_UAPI_SIGNAL_ABI_H
 
 /*
  * EVL_HMDIAG_xxx codes are possible values of sigdebug_cause().
@@ -19,4 +19,4 @@
 #define sigdebug_marked(si)		\
 	((sigdebug_code(si) & 0xffff0000) == sigdebug_marker)
 
-#endif /* !_EVL_UAPI_SIGNAL_H */
+#endif /* !_EVL_UAPI_SIGNAL_ABI_H */

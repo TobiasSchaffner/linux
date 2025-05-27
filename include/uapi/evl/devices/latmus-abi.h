@@ -5,8 +5,8 @@
  * Copyright (C) 2018 Philippe Gerum  <rpm@xenomai.org>
  */
 
-#ifndef _EVL_UAPI_DEVICES_LATMUS_H
-#define _EVL_UAPI_DEVICES_LATMUS_H
+#ifndef _EVL_UAPI_DEVICES_LATMUS_ABI_H
+#define _EVL_UAPI_DEVICES_LATMUS_ABI_H
 
 #include <linux/types.h>
 
@@ -64,4 +64,4 @@ struct latmus_result {
 #define EVL_LATIOC_PULSE	_IOW(EVL_LATMUS_IOCBASE, 3, __u64)
 #define EVL_LATIOC_RESET	_IO(EVL_LATMUS_IOCBASE, 4)
 
-#endif /* !_EVL_UAPI_DEVICES_LATMUS_H */
+#endif /* !_EVL_UAPI_DEVICES_LATMUS_ABI_H */

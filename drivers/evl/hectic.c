@@ -18,7 +18,7 @@
 #include <evl/file.h>
 #include <evl/stax.h>
 #include <asm/evl/fptest.h>
-#include <uapi/evl/devices/hectic.h>
+#include <uapi/evl/devices/hectic-abi.h>
 #include <trace/events/evl.h>
 
 #define HECTIC_KTHREAD      0x20000

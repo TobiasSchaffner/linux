@@ -14,7 +14,7 @@
 #include <linux/cpumask.h>
 #include <evl/list.h>
 #include <evl/factory.h>
-#include <uapi/evl/types.h>
+#include <uapi/evl/types-abi.h>
 #include <uapi/evl/clock-abi.h>
 
 #define ONE_BILLION  1000000000

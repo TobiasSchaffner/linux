@@ -20,7 +20,7 @@
 #include <evl/thread.h>
 #include <evl/xbuf.h>
 #include <evl/uaccess.h>
-#include <uapi/evl/devices/latmus.h>
+#include <uapi/evl/devices/latmus-abi.h>
 #include <trace/events/evl.h>
 
 #define TUNER_SAMPLING_TIME	500000000UL
