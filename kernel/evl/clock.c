@@ -793,9 +793,16 @@ static long clock_common_ioctl(struct evl_clock *clock,
 
 	switch (cmd) {
 	case EVL_CLKIOC_GET_RES:
+		/*
+		 * Emulate the POSIX behavior which accepts a NULL
+		 * timespec for the purpose of validating the clock id
+		 * only, which we already did.
+		 */
+		u_uts = (typeof(u_uts))arg;
+		if (!u_uts)
+			return 0;
 		get_clock_resolution(clock, &ts64);
 		uts = timespec64_to_u_timespec(ts64);
-		u_uts = (typeof(u_uts))arg;
 		ret = raw_copy_to_user(u_uts, &uts,
 				sizeof(*u_uts)) ? -EFAULT : 0;
 		break;
