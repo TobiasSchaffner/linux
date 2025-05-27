@@ -11,7 +11,7 @@
 #include <evl/thread.h>
 #include <evl/mutex.h>
 #include <evl/lock.h>
-#include <uapi/evl/signal.h>
+#include <uapi/evl/signal-abi.h>
 #include <trace/events/evl.h>
 
 #define for_each_evl_mutex_waiter(__pos, __mutex)			\
