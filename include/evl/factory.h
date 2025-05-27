@@ -21,7 +21,7 @@
 #include <linux/refcount.h>
 #include <evl/assert.h>
 #include <evl/file.h>
-#include <uapi/evl/types.h>
+#include <uapi/evl/types-abi.h>
 #include <uapi/evl/factory-abi.h>
 
 #define element_of(__filp, __type)					\

@@ -5,8 +5,8 @@
  * Copyright (C) 2013, 2018 Philippe Gerum <rpm@xenomai.org>
  */
 
-#ifndef _EVL_UAPI_TYPES_H
-#define _EVL_UAPI_TYPES_H
+#ifndef _EVL_UAPI_TYPES_ABI_H
+#define _EVL_UAPI_TYPES_ABI_H
 
 #include <linux/types.h>
 
@@ -54,4 +54,4 @@ union evl_value {
 #define evl_ptrval(__ptr)	((union evl_value){ .ptr = (__ptr) })
 #define evl_nil			evl_intval(0)
 
-#endif /* !_EVL_UAPI_TYPES_H */
+#endif /* !_EVL_UAPI_TYPES_ABI_H */

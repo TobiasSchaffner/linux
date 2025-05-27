@@ -6,8 +6,8 @@
  * Copyright (C) 2018 Philippe Gerum  <rpm@xenomai.org>
  */
 
-#ifndef _EVL_UAPI_DEVICES_HECTIC_H
-#define _EVL_UAPI_DEVICES_HECTIC_H
+#ifndef _EVL_UAPI_DEVICES_HECTIC_ABI_H
+#define _EVL_UAPI_DEVICES_HECTIC_ABI_H
 
 #include <linux/types.h>
 
@@ -44,4 +44,4 @@ struct hectic_error {
 #define EVL_HECIOC_LOCK_STAX 		_IO(EVL_HECTIC_IOCBASE, 9)
 #define EVL_HECIOC_UNLOCK_STAX 		_IO(EVL_HECTIC_IOCBASE, 10)
 
-#endif /* !_EVL_UAPI_DEVICES_HECTIC_H */
+#endif /* !_EVL_UAPI_DEVICES_HECTIC_ABI_H */

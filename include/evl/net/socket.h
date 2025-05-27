@@ -18,8 +18,8 @@
 #include <evl/crossing.h>
 #include <evl/work.h>
 #include <evl/net/timestamping.h>
-#include <uapi/evl/types.h>
-#include <uapi/evl/fcntl.h>
+#include <uapi/evl/types-abi.h>
+#include <uapi/evl/fcntl-abi.h>
 #include <uapi/evl/net/socket-abi.h>
 
 struct evl_socket;
