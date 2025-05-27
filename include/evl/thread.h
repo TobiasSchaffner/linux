@@ -24,7 +24,7 @@
 #include <evl/assert.h>
 #include <uapi/evl/thread-abi.h>
 #include <uapi/evl/sched-abi.h>
-#include <uapi/evl/signal.h>
+#include <uapi/evl/signal-abi.h>
 #include <asm/evl/thread.h>
 
 /* All bits which may cause an EVL thread to block in oob context. */

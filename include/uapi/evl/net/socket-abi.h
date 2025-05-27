@@ -7,7 +7,7 @@
 #ifndef _EVL_UAPI_NET_SOCKET_ABI_H
 #define _EVL_UAPI_NET_SOCKET_ABI_H
 
-#include <evl/types.h>
+#include <evl/types-abi.h>
 
 #define AF_OOB		46	/* Out-of-band domain sockets */
 

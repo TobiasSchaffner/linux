@@ -23,7 +23,7 @@
 #include <evl/monitor.h>
 #include <evl/mutex.h>
 #include <evl/flag.h>
-#include <uapi/evl/signal.h>
+#include <uapi/evl/signal-abi.h>
 #include <trace/events/evl.h>
 
 DEFINE_PER_CPU(struct evl_rq, evl_runqueues);

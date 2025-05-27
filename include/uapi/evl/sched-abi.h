@@ -8,7 +8,7 @@
 #ifndef _EVL_UAPI_SCHED_ABI_H
 #define _EVL_UAPI_SCHED_ABI_H
 
-#include <evl/types.h>
+#include <evl/types-abi.h>
 
 #define EVL_CPU_OOB      (1 << 0)
 #define EVL_CPU_ISOL     (1 << 1)

@@ -4,11 +4,11 @@
  * Copyright (C) 2018 Philippe Gerum  <rpm@xenomai.org>
  */
 
-#ifndef _EVL_UAPI_TRACE_H
-#define _EVL_UAPI_TRACE_H
+#ifndef _EVL_UAPI_TRACE_ABI_H
+#define _EVL_UAPI_TRACE_ABI_H
 
 #define EVL_TRACE_IOCBASE	'O'
 
 #define EVL_TRCIOC_SNAPSHOT	_IO(EVL_TRACE_IOCBASE, 0)
 
-#endif /* !_EVL_UAPI_TRACE_H */
+#endif /* !_EVL_UAPI_TRACE_ABI_H */

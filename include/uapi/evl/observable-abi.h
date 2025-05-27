@@ -7,7 +7,7 @@
 #ifndef _EVL_UAPI_OBSERVABLE_ABI_H
 #define _EVL_UAPI_OBSERVABLE_ABI_H
 
-#include <evl/types.h>
+#include <evl/types-abi.h>
 
 #define EVL_OBSERVABLE_DEV	"observable"
 
