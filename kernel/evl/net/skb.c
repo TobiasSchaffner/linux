@@ -523,7 +523,7 @@ int evl_net_dev_build_pool(struct net_device *dev)
 		.order = ilog2(est->buf_size / PAGE_SIZE),
 		.flags = PP_FLAG_PAGE_OOB,
 		.pool_size = est->pool_max,
-		.nid = dev_to_node(dev->dev.parent),
+		.nid = dev->dev.parent ? dev_to_node(dev->dev.parent) : NUMA_NO_NODE,
 		.dev = dev->dev.parent,
 		.dma_dir = DMA_NONE,
 		.offset = 0,
@@ -531,13 +531,14 @@ int evl_net_dev_build_pool(struct net_device *dev)
 	};
 
 	/*
-	 * If the device is oob-capable, the page pool must perform
-	 * DMA pre-mapping so that the NIC driver only has to deal
-	 * with cache synchronization on the out-of-band TX path.  We
-	 * are piggybacked by the XDP/TX support which enables
-	 * DMA_BIDIRECTIONAL (DMA_TO_DEVICE is not supported).
+	 * If the netdev is an oob-capable physical device, the page
+	 * pool must perform DMA pre-mapping so that the NIC driver
+	 * only has to deal with cache synchronization on the
+	 * out-of-band TX path.  We are piggybacked by the XDP/TX
+	 * support which enables DMA_BIDIRECTIONAL (DMA_TO_DEVICE is
+	 * not supported).
 	 */
-	if (netdev_is_oob_capable(dev)) {
+	if (pp_params.dev && netdev_is_oob_capable(dev)) {
 		pp_params.flags |= PP_FLAG_DMA_MAP | PP_FLAG_DMA_SYNC_DEV;
 		pp_params.dma_dir = DMA_BIDIRECTIONAL;
 	}
