@@ -273,10 +273,23 @@ int evl_net_ipv4_solicit(struct evl_socket *esk,
 		if (!(neigh->nud_state & (NUD_VALID & ~NUD_STALE)))
 			neigh_event_send(neigh, NULL);
 
-		/* Wait for the ARP entry to enter the cache. */
+		/* Wait up to 5s for the ARP entry to enter the cache. */
 		ret = wait_event_interruptible_timeout(evl_arp_event,
-						(e = evl_net_get_arp_entry(dev, ipaddr)),
-						HZ * 5);
+					(e = evl_net_get_arp_entry(dev, ipaddr)),
+					HZ * 5);
+		ret = e ? 0 : -ETIMEDOUT;
+	} else {
+		/*
+		 * If asked to solicit the local host at the loopback
+		 * address, attempt to (re-)cache an arp pseudo-entry
+		 * for it. This is the only way to add back the 'lo'
+		 * address to the ARP cache after it was forcibly
+		 * flushed, barring a down->up sequence for 'lo'.
+		 */
+		if (dev == dev_net(dev)->loopback_dev)
+			evl_net_lo_add_arp(dev);
+		else
+			ret = -EINVAL;
 	}
 
 	evl_net_put_dev(dev);
@@ -288,9 +301,6 @@ int evl_net_ipv4_solicit(struct evl_socket *esk,
 			ret = neigh_update(neigh, e->ha, NUD_PERMANENT,
 				NEIGH_UPDATE_F_OVERRIDE | NEIGH_UPDATE_F_ADMIN, 0);
 		evl_net_put_arp_entry(e);
-		ret = 0;
-	} else {
-		ret = -ETIMEDOUT;
 	}
 
 	neigh_release(neigh);
