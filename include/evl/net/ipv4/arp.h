@@ -34,6 +34,10 @@ void evl_net_cleanup_arp(struct net *net);
 
 void evl_net_flush_arp(struct net *net);
 
+void evl_net_lo_add_arp(struct net_device *lo_dev);
+
+void evl_net_lo_drop_arp(struct net_device *lo_dev);
+
 struct evl_net_arp_entry *
 evl_net_get_arp_entry(struct net_device *dev, __be32 addr);
 
