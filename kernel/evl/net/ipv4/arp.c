@@ -75,9 +75,9 @@ static struct evl_cache_ops arp_cache_ops = {
 /*
  * Cache a new ARP entry.
  */
-static int cache_arp_entry(struct evl_cache *cache, struct neighbour *neigh) /* in-band */
+static int __cache_arp_entry(struct evl_cache *cache, struct net_device *dev,
+			__be32 addr, unsigned char *ha) /* in-band */
 {
-	struct net_device *dev = neigh->dev;
 	struct evl_net_arp_entry *e;
 	int ret;
 
@@ -86,8 +86,10 @@ static int cache_arp_entry(struct evl_cache *cache, struct neighbour *neigh) /* 
 		return -ENOMEM;
 
 	e->key.dev = dev;
-	e->key.addr = *(const __be32 *)neigh->primary_key;
-	memcpy(e->ha, neigh->ha, sizeof(e->ha));
+	e->key.addr = addr;
+	if (ha)
+		memcpy(e->ha, ha, sizeof(e->ha));
+
 	netdev_hold(dev, &e->dev_tracker, GFP_ATOMIC);
 
 	ret = evl_add_cache_entry(cache, &e->entry);
@@ -97,6 +99,13 @@ static int cache_arp_entry(struct evl_cache *cache, struct neighbour *neigh) /* 
 	}
 
 	return ret;
+}
+
+static int cache_arp_entry(struct evl_cache *cache, struct neighbour *neigh) /* in-band */
+{
+	return __cache_arp_entry(cache, neigh->dev,
+				*(const __be32 *)neigh->primary_key,
+				neigh->ha);
 }
 
 /*
@@ -226,4 +235,34 @@ void evl_net_cleanup_arp(struct net *net)
 {
 	unregister_netevent_notifier(&netevent_notifier);
 	evl_net_flush_arp(net);
+}
+
+/*
+ * We maintain an ARP pseudo-entry for the loopback address to make
+ * things simpler downstream. Cache it when the 'lo' device shows up
+ * or a user solicits the local host.
+ */
+void evl_net_lo_add_arp(struct net_device *lo_dev)
+{
+	struct oob_net_state *nets = &dev_net(lo_dev)->oob;
+	struct evl_cache *cache = &nets->ipv4.arp;
+	int ret;
+
+	ret = __cache_arp_entry(cache, lo_dev, htonl(INADDR_LOOPBACK), NULL);
+	EVL_WARN_ON(NET, ret);
+}
+
+/*
+ * Remove the pseudo-ARP entry when the loopback device goes down.
+ */
+void evl_net_lo_drop_arp(struct net_device *lo_dev)
+{
+	struct oob_net_state *nets = &dev_net(lo_dev)->oob;
+	struct evl_cache *cache = &nets->ipv4.arp;
+	const struct evl_net_arp_key key = {
+		.addr = htonl(INADDR_LOOPBACK),
+		.dev = lo_dev,
+	};
+
+	evl_del_cache_entry(cache, &key);
 }

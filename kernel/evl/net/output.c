@@ -222,6 +222,8 @@ int evl_net_transmit(struct sk_buff *skb) /* oob or in-band */
 
 	timestamp_at_sched(skb);
 
+	skb_mark_not_on_list(skb);
+
 	if (netdev_is_oob_capable(dev))
 		return xmit_oob(dev, skb);
 

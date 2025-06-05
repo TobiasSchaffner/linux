@@ -461,17 +461,21 @@ ssize_t netif_oob_query_pool(struct net_device *dev, char *buf)
 }
 
 int evl_netdev_event(struct notifier_block *ev_block,
-		     unsigned long event, void *ptr)
+		unsigned long event, void *ptr) /* rtnl_lock held */
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
-	/*
-	 * Disable the oob port enabled on a network device before the
-	 * latter goes down. rtnl_lock is held.
-	 */
-	if (event == NETDEV_GOING_DOWN && netif_oob_port(dev)) {
-		disable_oob_port(dev);
-		evl_net_flush_routes(dev_net(dev), dev);
+	switch (event) {
+	case NETDEV_UP:
+		evl_net_prepare_routing(dev);
+		break;
+	case NETDEV_GOING_DOWN:
+		if (netif_oob_port(dev)) {
+			disable_oob_port(dev);
+			evl_net_flush_routes(dev_net(dev), dev);
+		}
+		evl_net_unprepare_routing(dev);
+		break;
 	}
 
 	return NOTIFY_DONE;

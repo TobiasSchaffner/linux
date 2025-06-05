@@ -35,6 +35,10 @@ static inline void evl_net_put_route(struct evl_net_route *ert)
 	evl_put_cache_entry(&ert->entry);
 }
 
+void evl_net_prepare_routing(struct net_device *dev);
+
+void evl_net_unprepare_routing(struct net_device *dev);
+
 void evl_net_flush_routes(struct net *net, struct net_device *dev);
 
 static inline struct dst_entry *evl_net_route_dst(const struct evl_net_route *ert)

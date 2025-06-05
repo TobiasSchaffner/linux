@@ -128,19 +128,17 @@ EXPORT_SYMBOL_GPL(evl_net_wake_rx);
 /**
  * evl_net_receive - schedule an ingress packet for oob handling
  *
- * Schedule an incoming packet for delivery to a listening EVL socket
- * This call is either invoked:
+ * Schedule an incoming packet for delivery to an oob protocol layer
+ * via the RX thread. This is called from an out-of-band packet filter
+ * (e.g. evl_net_ether_accept(), evl_net_ether_accept_vlan())
+ * diverting packets from the regular networking stack, in order to
+ * queue work for an oob protocol handler.
  *
- * - in-band by a protocol-specific out-of-band packet filter
- *   (e.g. evl_net_ether_accept(), evl_net_ether_accept_vlan())
- *   diverting packets from the regular networking stack, in order to
- *   queue work for its .ingress() handler.
+ * We may be either called in-band, or out-of-band on behalf of a
+ * fully oob-capable NIC driver, typically from a NAPI poll handler
+ * running out-of-band.
  *
- * - out-of-band on behalf of a fully oob capable NIC driver,
- *   typically from an out-of-band (RX) IRQ context.
- *
- * @skb the packet to queue. May be linked to some upstream
- * queue. skb->dev must be valid.
+ * @skb the packet to queue. skb->dev must be valid.
  *
  * @handler the network protocol descriptor which should eventually
  * handle the packet.
@@ -158,9 +156,6 @@ void evl_net_receive(struct sk_buff *skb,
 		skb_shinfo_oob(skb)->device_time = evl_ktime_monotonic();
 		skb_mark_oob_timestamped(skb);
 	}
-
-	if (skb->next)
-		skb_list_del_init(skb);
 
 	EVL_NET_CB(skb)->handler = handler;
 
@@ -318,4 +313,14 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 
 		return false;
 	}
+}
+
+/*
+ * The manual rescheduling call for legacy NIC drivers which are not
+ * NAPI-compliant, but would rather use the netif_rx() interface
+ * instead.
+ */
+void netif_schedule_oob(struct net_device *dev)
+{
+	evl_net_wake_rx(dev);
 }
