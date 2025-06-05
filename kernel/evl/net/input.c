@@ -163,7 +163,6 @@ void evl_net_receive(struct sk_buff *skb,
 		skb_list_del_init(skb);
 
 	EVL_NET_CB(skb)->handler = handler;
-	EVL_NET_CB(skb)->dev = dev;
 
 	/*
 	 * Enqueue the packet. The NIC driver is expected to call
