@@ -168,6 +168,7 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 
 	skb_mark_oob_managed(skb);
 	skb_mark_for_recycle(skb);
+
 	/*
 	 * The current assumption is that we are going to deal with
 	 * ethernet devices, for which we may need some extra header
@@ -177,15 +178,15 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 	 */
 	skb_reserve(skb, VLAN_HLEN);
 	skb->dev = real_dev;
+
 	/*
-	 * We need to keep a pointer to the originating device for the
-	 * release path (__free_evl_skb), since a protocol layer might
-	 * use skb->dev_scratch which would cause skb->dev to be
-	 * lost. So basically, we rely on skb->dev as long as it is
-	 * safe to do so, switching to EVL_NET_CB(skb)->dev
-	 * afterwards.
+	 * Keep a pointer to the device owning the storage area for
+	 * the release path (free_evl_skb). A protocol layer might use
+	 * skb->dev_scratch which would cause skb->dev to be lost.  We
+	 * can rely on skb->dev as long as the inband stack is not
+	 * involved in dealing with the buffer.
 	 */
-	EVL_NET_CB(skb)->dev = real_dev;
+	skb_shinfo_oob(skb)->owner = real_dev;
 
 	return skb;
 }
@@ -254,12 +255,12 @@ put_skb:
  * exclusive ownership on this (i.e. no other reference is pending).
  *
  * CAUTION: skb->dev might be invalid, always use the cached value in
- * EVL_NET_CB(skb)->dev on the release path instead. See comment in
- * evl_net_dev_alloc_skb().
+ * skb_shinfo_oob(skb)->owner on the release path instead. See comment
+ * in evl_net_dev_alloc_skb().
  */
 static void free_evl_skb(struct sk_buff *skb)
 {
-	struct net_device *dev = EVL_NET_CB(skb)->dev;
+	struct net_device *dev = skb_shinfo_oob(skb)->owner;
 	struct sk_buff *fskb, *nskb;
 
 	if (EVL_WARN_ON(NET, dev == NULL))

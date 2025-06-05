@@ -19,6 +19,11 @@ struct evl_net_skb_queue;
 struct evl_socket;
 struct iovec;
 
+/*
+ * The content of our control block is valid as long as EVL owns the
+ * buffer. Any layer from the in-band netstack may happily reuse it
+ * for its own purpose.
+ */
 struct evl_net_cb {
 	/* Cached source/destination device. */
 	struct net_device *dev;
