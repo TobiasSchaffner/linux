@@ -6,7 +6,11 @@
 
 #include <linux/ktime.h>
 
+struct net_device;
+
 struct skb_shared_oob {
+	/* Device owning the storage. */
+	struct net_device *owner;
 	/* Time at device I/O. */
 	ktime_t device_time;
 	/* Time at RX/TX thread dequeuing/queuing point. */
