@@ -63,8 +63,6 @@ struct sk_buff *evl_net_wget_skb(struct evl_socket *esk,
 
 void evl_net_wput_skb(struct sk_buff *skb);
 
-void evl_net_rput_skb(struct sk_buff *skb);
-
 struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 				      ktime_t timeout,
 				      enum evl_tmode tmode);
