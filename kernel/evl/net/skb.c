@@ -608,23 +608,6 @@ void evl_net_wput_skb(struct sk_buff *skb)
 	evl_net_free_skb(skb);
 }
 
-/*
- * evl_net_rput_skb - deallocate a buffer obtained from the ingress
- * path.
- *
- * Fragments are deallocated if present.
- */
-void evl_net_rput_skb(struct sk_buff *skb)
-{
-	struct sk_buff *fskb;
-
-	skb_walk_frags(skb, fskb) {
-		evl_net_uncharge_skb_rmem(fskb);
-	}
-	evl_net_uncharge_skb_rmem(skb);
-	evl_net_free_skb(skb);
-}
-
 static ssize_t __skb_to_uio(const struct iovec *iov, size_t iovlen,
 			size_t *vpos, size_t *bpos,
 			const void *data, size_t len)

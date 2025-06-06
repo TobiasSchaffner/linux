@@ -364,9 +364,10 @@ static ssize_t send_udp(struct evl_socket *esk,
 	 */
 	if (!find_egress_path(esk, daddr, &ert, &earp)) {
 		/*
-		 * We charge the socket for the offloaded data
-		 * although we won't consume any oob skb for
-		 * transmit. This allows for contention management.
+		 * We always charge the socket even when offloading to
+		 * the in-band stack although we won't consume any
+		 * oob skb for transmit in that case. This allows for
+		 * contention management.
 		 */
 		ret = evl_charge_socket_wmem(esk, datalen, timeout, tmode);
 		if (ret)
@@ -577,7 +578,12 @@ again:
 				ret = evl_copy_iots_rx(skb, u_msghdr);
 			if (likely(!ret))
 				ret = copy_datagram_to_user(u_msghdr, iov, iovlen, skb);
-			evl_net_rput_skb(skb); /* Uncharge rmem and free. */
+			/*
+			 * We did not charge for rmem because multiple
+			 * sockets may listen on the same receiver, so
+			 * we may free the buffer directly.
+			 */
+			evl_net_free_skb(skb);
 			goto out;
 		}
 
