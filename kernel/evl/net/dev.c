@@ -33,14 +33,14 @@
  * stage without borrowing CPU time unwisely from random contexts,
  * let's have separate, per-device threads for RX and TX. This gives
  * the best flexibility for leveraging multi-core capabilities on
- * high-bandwidth systems. Kthread priority defaults to 1, chrt is our
- * friend for fine-grained tuning. Unlike the RX kthread which is
+ * high-bandwidth systems. Kthread priority defaults to 50, chrt is
+ * our friend for fine-grained tuning. Unlike the RX kthread which is
  * always created for a device underlying an oob port, the TX one is
  * optional, present only if the NIC driver for that device is
  * oob-capable.
  */
-#define KTHREAD_RX_PRIO  1
-#define KTHREAD_TX_PRIO  1
+#define KTHREAD_RX_PRIO  50
+#define KTHREAD_TX_PRIO  50
 
 /*
  * The default number of I/O pages which should be available on a
