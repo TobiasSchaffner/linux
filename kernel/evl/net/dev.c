@@ -47,7 +47,7 @@
  * per-device basis for conveying out-of-band traffic if not specified
  * by an EVL_SOCKIOC_ACTIVATE request.
  */
-#define EVL_DEFAULT_NETDEV_POOLSZ  1024
+#define EVL_DEFAULT_NETDEV_POOLSZ  2048
 /*
  * The default fixed payload size available in I/O pages for conveying
  * out-of-band traffic through the device if not specified by an
