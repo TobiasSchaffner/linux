@@ -89,7 +89,7 @@ config EVL_RUNSTATS
 	the /sys interface.
 
 config EVL_NET
-        bool "Out-of-band networking (EXPERIMENTAL)"
+        bool "Out-of-band networking"
 	default n
 	select NET_OOB
 	select NET_SCHED
@@ -97,11 +97,11 @@ config EVL_NET
 	select INET
 	select VLAN_8021Q
 	help
-	This option enables preliminary networking support for EVL.
+	This option enables out-of-band networking support for EVL.
 
-	CAUTION! This is WIP, experimental code with limited support
-	at the moment, which is still subject to significant UAPI and
-	kernel API changes all over the map.
+	The out-of-band network stack provides datagram-oriented
+	networking support to applications with real-time
+	communication requirements (UDP and raw packet protocols).
 
 menu "Fixed sizes and limits"
 
