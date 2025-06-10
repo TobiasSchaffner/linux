@@ -371,33 +371,37 @@ static struct net_device *find_xmit_device(struct evl_socket *esk,
 	struct net_device *dev;
 	int ret;
 
-	ret = raw_get_user(name_ptr, &u_msghdr->name_ptr);
-	if (ret)
-		return ERR_PTR(-EFAULT);
-
-	ret = raw_get_user(namelen, &u_msghdr->namelen);
-	if (ret)
-		return ERR_PTR(-EFAULT);
-
-	if (!name_ptr) {
-		if (namelen)
-			return ERR_PTR(-EINVAL);
-
-		dev = esk->proto->get_netif(esk);
-	} else {
-		if (namelen < sizeof(addr))
-			return ERR_PTR(-EINVAL);
-
-		u_addr = evl_valptr64(name_ptr, struct sockaddr_ll);
-		ret = raw_copy_from_user(&addr, u_addr, sizeof(addr));
+	if (u_msghdr) {
+		ret = raw_get_user(name_ptr, &u_msghdr->name_ptr);
 		if (ret)
 			return ERR_PTR(-EFAULT);
 
-		if (addr.sll_family != AF_PACKET &&
-			addr.sll_family != AF_UNSPEC)
-			return ERR_PTR(-EINVAL);
+		ret = raw_get_user(namelen, &u_msghdr->namelen);
+		if (ret)
+			return ERR_PTR(-EFAULT);
 
-		dev = evl_net_get_dev_by_index(esk->net, addr.sll_ifindex);
+		if (!name_ptr) {
+			if (namelen)
+				return ERR_PTR(-EINVAL);
+
+			dev = esk->proto->get_netif(esk);
+		} else {
+			if (namelen < sizeof(addr))
+				return ERR_PTR(-EINVAL);
+
+			u_addr = evl_valptr64(name_ptr, struct sockaddr_ll);
+			ret = raw_copy_from_user(&addr, u_addr, sizeof(addr));
+			if (ret)
+				return ERR_PTR(-EFAULT);
+
+			if (addr.sll_family != AF_PACKET &&
+				addr.sll_family != AF_UNSPEC)
+				return ERR_PTR(-EINVAL);
+
+			dev = evl_net_get_dev_by_index(esk->net, addr.sll_ifindex);
+		}
+	} else {
+		dev = esk->proto->get_netif(esk);
 	}
 
 	if (dev == NULL)
@@ -408,37 +412,40 @@ static struct net_device *find_xmit_device(struct evl_socket *esk,
 
 /* oob */
 static ssize_t send_packet(struct evl_socket *esk,
-			const struct user_oob_msghdr __user *u_msghdr,
+			const struct user_oob_msghdr __user *u_msghdr, /* oob_write() if NULL */
 			struct iovec *iov,
 			size_t iovlen)
 {
 	struct net_device *dev, *real_dev;
+	ktime_t timeout = EVL_INFINITE;
+	enum evl_tmode tmode = EVL_REL;
 	struct __evl_timespec uts;
-	enum evl_tmode tmode;
 	struct sk_buff *skb;
 	__u32 msg_flags = 0;
 	ssize_t ret, count;
-	ktime_t timeout;
 	size_t rem;
 
-	ret = raw_get_user(msg_flags, &u_msghdr->flags);
-	if (ret)
-		return -EFAULT;
+	if (u_msghdr) {
+		ret = raw_get_user(msg_flags, &u_msghdr->flags);
+		if (ret)
+			return -EFAULT;
 
-	if (msg_flags & ~MSG_DONTWAIT)
-		return -EINVAL;
+		if (msg_flags & ~MSG_DONTWAIT)
+			return -EINVAL;
 
-	if (evl_socket_f_flags(esk) & O_NONBLOCK)
-		msg_flags |= MSG_DONTWAIT;
+		if (evl_socket_f_flags(esk) & O_NONBLOCK)
+			msg_flags |= MSG_DONTWAIT;
 
-	/* Fetch the timeout on obtaining a buffer from the TX pool. */
-	ret = raw_copy_from_user(&uts, &u_msghdr->timeout, sizeof(uts));
-	if (ret)
-		return -EFAULT;
+		/* Fetch the timeout on obtaining a buffer from the TX pool. */
+		ret = raw_copy_from_user(&uts, &u_msghdr->timeout, sizeof(uts));
+		if (ret)
+			return -EFAULT;
 
-	timeout = msg_flags & MSG_DONTWAIT ? EVL_NONBLOCK :
-		u_timespec_to_ktime(uts);
-	tmode = timeout ? EVL_ABS : EVL_REL;
+		timeout = msg_flags & MSG_DONTWAIT ? EVL_NONBLOCK :
+			u_timespec_to_ktime(uts);
+		if (timeout)
+			tmode = EVL_ABS;
+	}
 
 	/* Determine the xmit interface. */
 	dev = find_xmit_device(esk, u_msghdr);
@@ -513,65 +520,67 @@ cleanup:
 	goto out;
 }
 
-static ssize_t copy_packet_to_user(struct user_oob_msghdr __user *u_msghdr,
+static ssize_t copy_packet_to_user(struct user_oob_msghdr __user *u_msghdr, /* oob_read() if NULL */
 				const struct iovec *iov,
 				size_t iovlen,
-				struct sk_buff *skb)
+				struct sk_buff *skb,
+				__u32 msg_uflags)
 {
 	struct sockaddr_ll addr, __user *u_addr;
 	__u64 name_ptr, namelen;
-	__u32 msg_flags = 0;
 	ssize_t ret, count;
 
-	ret = raw_get_user(name_ptr, &u_msghdr->name_ptr);
-	if (ret)
-		return -EFAULT;
-
-	ret = raw_get_user(namelen, &u_msghdr->namelen);
-	if (ret)
-		return -EFAULT;
-
-	if (name_ptr) {
-		if (namelen != sizeof(addr)) {
-			if (namelen < sizeof(addr))
-				return -EINVAL;
-			ret = raw_put_user(sizeof(addr), &u_msghdr->namelen);
-			if (ret)
-				return -EFAULT;
-		}
-		addr.sll_family = AF_PACKET;
-		addr.sll_protocol = skb->protocol;
-		addr.sll_ifindex = skb->dev->ifindex;
-		addr.sll_hatype = skb->dev->type;
-		addr.sll_pkttype = skb->pkt_type;
-		addr.sll_halen = dev_parse_header(skb, addr.sll_addr);
-		u_addr = evl_valptr64(name_ptr, struct sockaddr_ll);
-		ret = raw_copy_to_user(u_addr, &addr, sizeof(addr));
+	if (u_msghdr) {
+		ret = raw_get_user(name_ptr, &u_msghdr->name_ptr);
 		if (ret)
 			return -EFAULT;
-	} else {
-		if (namelen)
-			return -EINVAL;
+
+		ret = raw_get_user(namelen, &u_msghdr->namelen);
+		if (ret)
+			return -EFAULT;
+
+		if (name_ptr) {
+			if (namelen != sizeof(addr)) {
+				if (namelen < sizeof(addr))
+					return -EINVAL;
+				ret = raw_put_user(sizeof(addr), &u_msghdr->namelen);
+				if (ret)
+					return -EFAULT;
+			}
+			addr.sll_family = AF_PACKET;
+			addr.sll_protocol = skb->protocol;
+			addr.sll_ifindex = skb->dev->ifindex;
+			addr.sll_hatype = skb->dev->type;
+			addr.sll_pkttype = skb->pkt_type;
+			addr.sll_halen = dev_parse_header(skb, addr.sll_addr);
+			u_addr = evl_valptr64(name_ptr, struct sockaddr_ll);
+			ret = raw_copy_to_user(u_addr, &addr, sizeof(addr));
+			if (ret)
+				return -EFAULT;
+		} else {
+			if (namelen)
+				return -EINVAL;
+		}
 	}
 
 	count = evl_copy_to_uio(iov, iovlen, skb->data, skb->len);
-	if (count < skb->len)
-		msg_flags |= MSG_TRUNC;
 
-	ret = raw_put_user(msg_flags, &u_msghdr->flags);
-	if (ret)
-		return -EFAULT;
+	if (u_msghdr && count < skb->len) {
+		ret = raw_put_user(msg_uflags | MSG_TRUNC, &u_msghdr->flags);
+		if (ret)
+			return -EFAULT;
+	}
 
 	return count;
 }
 
 /* oob */
 static ssize_t receive_packet(struct evl_socket *esk,
-			struct user_oob_msghdr __user *u_msghdr,
+			struct user_oob_msghdr __user *u_msghdr, /* oob_read() if NULL */
 			struct iovec *iov,
 			size_t iovlen)
 {
-	__u32 msg_flags = 0, msg_uflags;
+	__u32 msg_flags = 0, msg_uflags = 0;
 	ktime_t timeout = EVL_INFINITE;
 	enum evl_tmode tmode = EVL_REL;
 	struct __evl_timespec uts;
@@ -624,7 +633,7 @@ static ssize_t receive_packet(struct evl_socket *esk,
 			if (likely(!ret)) {
 				/* Restore the MAC header. */
 				skb_push(skb, skb->data - skb_mac_header(skb));
-				ret = copy_packet_to_user(u_msghdr, iov, iovlen, skb);
+				ret = copy_packet_to_user(u_msghdr, iov, iovlen, skb, msg_uflags);
 			}
 			evl_net_uncharge_skb_rmem(skb);
 			evl_net_free_skb(skb);
