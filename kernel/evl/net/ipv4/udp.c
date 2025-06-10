@@ -432,61 +432,62 @@ out:
 static ssize_t copy_datagram_to_user(struct user_oob_msghdr __user *u_msghdr,
 				const struct iovec *iov,
 				size_t iovlen,
-				struct sk_buff *skb)
+				struct sk_buff *skb,
+				__u32 msg_uflags)
 {
 	struct sockaddr_in addr, __user *u_addr;
 	__u64 name_ptr, namelen;
-	__u32 msg_flags = 0;
 	ssize_t ret, count;
 	bool short_write;
 
-	ret = raw_get_user(name_ptr, &u_msghdr->name_ptr);
-	if (ret)
-		return -EFAULT;
-
-	ret = raw_get_user(namelen, &u_msghdr->namelen);
-	if (ret)
-		return -EFAULT;
-
-	if (name_ptr) {
-		if (namelen != sizeof(addr)) {
-			if (namelen < sizeof(addr))
-				return -EINVAL;
-			ret = raw_put_user(sizeof(addr), &u_msghdr->namelen);
-			if (ret)
-				return -EFAULT;
-		}
-		addr.sin_family = AF_INET;
-		addr.sin_port = udp_hdr(skb)->source;
-		addr.sin_addr.s_addr = ip_hdr(skb)->saddr;
-		memset(addr.sin_zero, 0, sizeof(addr.sin_zero));
-		u_addr = evl_valptr64(name_ptr, struct sockaddr_in);
-		ret = raw_copy_to_user(u_addr, &addr, sizeof(addr));
+	if (u_msghdr) {
+		ret = raw_get_user(name_ptr, &u_msghdr->name_ptr);
 		if (ret)
 			return -EFAULT;
-	} else {
-		if (namelen)
-			return -EINVAL;
+
+		ret = raw_get_user(namelen, &u_msghdr->namelen);
+		if (ret)
+			return -EFAULT;
+
+		if (name_ptr) {
+			if (namelen != sizeof(addr)) {
+				if (namelen < sizeof(addr))
+					return -EINVAL;
+				ret = raw_put_user(sizeof(addr), &u_msghdr->namelen);
+				if (ret)
+					return -EFAULT;
+			}
+			addr.sin_family = AF_INET;
+			addr.sin_port = udp_hdr(skb)->source;
+			addr.sin_addr.s_addr = ip_hdr(skb)->saddr;
+			memset(addr.sin_zero, 0, sizeof(addr.sin_zero));
+			u_addr = evl_valptr64(name_ptr, struct sockaddr_in);
+			ret = raw_copy_to_user(u_addr, &addr, sizeof(addr));
+			if (ret)
+				return -EFAULT;
+		} else {
+			if (namelen)
+				return -EINVAL;
+		}
 	}
 
 	skb_pull_inline(skb, sizeof(struct udphdr));
 
 	count = evl_net_skb_to_uio(iov, iovlen, skb, sizeof(struct iphdr), &short_write);
-	if (short_write)
-		msg_flags |= MSG_TRUNC;
 
-	ret = raw_put_user(msg_flags, &u_msghdr->flags);
+	if (u_msghdr && short_write)
+		ret = raw_put_user(msg_uflags | MSG_TRUNC, &u_msghdr->flags);
 
 	return ret ? -EFAULT : count;
 }
 
 /* oob */
 static ssize_t receive_udp(struct evl_socket *esk,
-			struct user_oob_msghdr __user *u_msghdr,
+			struct user_oob_msghdr __user *u_msghdr, /* oob_read() if NULL */
 			struct iovec *iov,
 			size_t iovlen)
 {
-	__u32 msg_flags = 0, msg_uflags;
+	__u32 msg_flags = 0, msg_uflags = 0;
 	ktime_t timeout = EVL_INFINITE;
 	enum evl_tmode tmode = EVL_REL;
 	struct evl_net_udp_receiver *e;
@@ -577,7 +578,7 @@ again:
 			if (READ_ONCE(esk->timestamping) & EVL_SOF_TIMESTAMP_RX)
 				ret = evl_copy_iots_rx(skb, u_msghdr);
 			if (likely(!ret))
-				ret = copy_datagram_to_user(u_msghdr, iov, iovlen, skb);
+				ret = copy_datagram_to_user(u_msghdr, iov, iovlen, skb, msg_uflags);
 			/*
 			 * We did not charge for rmem because multiple
 			 * sockets may listen on the same receiver, so
