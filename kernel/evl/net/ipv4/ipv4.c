@@ -252,7 +252,7 @@ int evl_net_ipv4_solicit(struct evl_socket *esk,
 	if (flags & ~EVL_NEIGH_PERMANENT)
 		return -EINVAL;
 
-	rt = ip_route_output(sock_net(esk->sk), ipaddr, 0, 0, 0, RT_SCOPE_LINK);
+	rt = ip_route_output(sock_net(esk->sk), ipaddr, 0, 0, 0, RT_SCOPE_UNIVERSE);
 	if (IS_ERR(rt))
 		return PTR_ERR(rt);
 
