@@ -819,7 +819,8 @@ static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
 			return -EFAULT;
 		ret = -ENOTSUPP;
 		if (esk->proto->solicit)
-			ret = esk->proto->solicit(esk, &solreq.addr,
+			ret = esk->proto->solicit(esk,
+				(struct sockaddr *)&solreq.addr,
 				solreq.flags);
 		break;
 	default:

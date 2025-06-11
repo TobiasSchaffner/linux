@@ -7,6 +7,7 @@
 #ifndef _EVL_UAPI_NET_SOCKET_ABI_H
 #define _EVL_UAPI_NET_SOCKET_ABI_H
 
+#include <linux/socket.h>
 #include <evl/types-abi.h>
 
 #define AF_OOB		46	/* Out-of-band domain sockets */
@@ -53,7 +54,7 @@ struct evl_netdev_activation {
 #define EVL_NEIGH_PERMANENT  0x1
 
 struct evl_net_solicit {
-	struct sockaddr addr;
+	struct __kernel_sockaddr_storage addr;
 	__u32 flags;
 };
 
