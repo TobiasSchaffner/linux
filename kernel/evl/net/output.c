@@ -261,11 +261,13 @@ void netif_tx_lock_oob(struct netdev_queue *txq) /* oob or in-band */
 {
 	evl_lock_stax(&txq->oob.tx_lock);
 }
+EXPORT_SYMBOL_GPL(netif_tx_lock_oob);
 
 void netif_tx_unlock_oob(struct netdev_queue *txq) /* oob or in-band */
 {
 	evl_unlock_stax(&txq->oob.tx_lock);
 }
+EXPORT_SYMBOL_GPL(netif_tx_unlock_oob);
 
 void __init evl_net_init_tx(void)
 {
