@@ -184,8 +184,10 @@ static int enable_oob_port(struct net_device *dev,
 		evl_init_flag(&est->tx_flag);
 		kt = start_handler_thread(real_dev, evl_net_do_tx,
 					KTHREAD_TX_PRIO, "tx");
-		if (IS_ERR(kt))
+		if (IS_ERR(kt)) {
+			ret = PTR_ERR(kt);
 			goto fail_start_tx;
+		}
 
 		est->tx_handler = kt;
 	}
@@ -194,7 +196,9 @@ static int enable_oob_port(struct net_device *dev,
 		evl_init_crossing(&rnds->crossing);
 
 	/* Divert traffic from the real device. */
-	netif_enable_oob_diversion(real_dev);
+	ret = netif_enable_oob_diversion(real_dev);
+	if (ret)
+		goto fail_enable_diversion;
 queue:
 	netif_enable_oob_port(dev);
 
@@ -204,18 +208,20 @@ queue:
 
 	return 0;
 
+fail_enable_diversion:
+	if (est->tx_handler) {
+		evl_stop_kthread(est->tx_handler);
+		evl_destroy_flag(&est->tx_flag);
+	}
 fail_start_tx:
 	/*
 	 * No skb has flowed yet, no pending recycling op. Likewise,
 	 * we cannot have any rxq in the cache or dump lists.
 	 */
-	if (netdev_is_oob_capable(real_dev)) {
-		evl_stop_kthread(est->rx_handler);
-		evl_destroy_flag(&est->tx_flag);
-	}
+	evl_stop_kthread(est->rx_handler);
+	evl_destroy_flag(&est->rx_flag);
 fail_start_rx:
 	evl_net_dev_purge_pool(real_dev);
-	evl_destroy_flag(&est->rx_flag);
 fail_build_pool:
 	evl_net_free_qdisc(est->qdisc);
 fail_alloc_qdisc:
@@ -285,12 +291,14 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	netif_disable_oob_diversion(real_dev);
 
 	evl_stop_kthread(est->rx_handler);
-	if (est->tx_handler)
+	evl_destroy_flag(&est->rx_flag);
+	if (est->tx_handler) {
 		evl_stop_kthread(est->tx_handler);
+		evl_destroy_flag(&est->tx_flag);
+	}
 
 	__set_rx_filter(est, NULL);
 	evl_net_dev_purge_pool(real_dev);
-	evl_destroy_flag(&est->rx_flag);
 	/* Once the TX kthread is stopped, qdisc is idle. */
 	evl_net_free_qdisc(est->qdisc);
 	kfree(est);
