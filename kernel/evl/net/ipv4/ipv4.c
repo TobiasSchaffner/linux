@@ -270,13 +270,16 @@ int evl_net_ipv4_solicit(struct evl_socket *esk,
 	}
 
 	if (likely(!(neigh->nud_state & NUD_NOARP))) {
-		if (!(neigh->nud_state & (NUD_VALID & ~NUD_STALE)))
-			neigh_event_send(neigh, NULL);
-
-		/* Wait up to 5s for the ARP entry to enter the cache. */
+		/*
+		 * Solicit the peer which should respond to ARP
+		 * requests. Wait for a response for at least the ARP
+		 * probe delay time.
+		 */
+		neigh_event_send(neigh, NULL);
 		ret = wait_event_interruptible_timeout(evl_arp_event,
-					(e = evl_net_get_arp_entry(dev, ipaddr)),
-					HZ * 5);
+			       (e = evl_net_get_arp_entry(dev, ipaddr)),
+				NEIGH_VAR(neigh->parms, DELAY_PROBE_TIME) + HZ
+			);
 		ret = e ? 0 : -ETIMEDOUT;
 	} else {
 		/*
