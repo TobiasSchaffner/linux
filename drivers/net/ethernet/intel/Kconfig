@@ -87,6 +87,15 @@ config E1000E_HWTS
 	 devices. The cross-timestamp is available through the PTP clock
 	 driver precise cross-timestamp ioctl (PTP_SYS_OFFSET_PRECISE).
 
+config E1000E_OOB
+	bool "Out-of-band support for Intel(R) e1000e Gigabit Ethernet"
+	depends on E1000E && NET_OOB
+	help
+	  Enable out-of-band I/O. Say Y if a companion kernel may divert
+	  the network traffic going through e1000e devices for real-time delivery.
+	  Enabling this option makes sense only in a dual kernel configuration.
+	  If unsure, disable it.
+
 config IGB
 	tristate "Intel(R) 82575/82576 PCI-Express Gigabit Ethernet support"
 	depends on PCI

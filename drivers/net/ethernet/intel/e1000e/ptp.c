@@ -39,19 +39,19 @@ static int e1000e_phc_adjfine(struct ptp_clock_info *ptp, long delta)
 	if (ret_val)
 		return ret_val;
 
-	spin_lock_irqsave(&adapter->systim_lock, flags);
-
 	incvalue = timinca & E1000_TIMINCA_INCVALUE_MASK;
 	incvalue = adjust_by_scaled_ppm(incvalue, delta);
 
 	timinca &= ~E1000_TIMINCA_INCVALUE_MASK;
 	timinca |= incvalue;
 
+	raw_spin_lock_irqsave(&adapter->systim_lock, flags);
+
 	ew32(TIMINCA, timinca);
 
 	adapter->ptp_delta = delta;
 
-	spin_unlock_irqrestore(&adapter->systim_lock, flags);
+	raw_spin_unlock_irqrestore(&adapter->systim_lock, flags);
 
 	return 0;
 }
@@ -69,9 +69,9 @@ static int e1000e_phc_adjtime(struct ptp_clock_info *ptp, s64 delta)
 						     ptp_clock_info);
 	unsigned long flags;
 
-	spin_lock_irqsave(&adapter->systim_lock, flags);
+	raw_spin_lock_irqsave(&adapter->systim_lock, flags);
 	timecounter_adjtime(&adapter->tc, delta);
-	spin_unlock_irqrestore(&adapter->systim_lock, flags);
+	raw_spin_unlock_irqrestore(&adapter->systim_lock, flags);
 
 	return 0;
 }
@@ -117,9 +117,9 @@ static int e1000e_phc_get_syncdevicetime(ktime_t *device,
 	dev_cycles = er32(SYSSTMPH);
 	dev_cycles <<= 32;
 	dev_cycles |= er32(SYSSTMPL);
-	spin_lock_irqsave(&adapter->systim_lock, flags);
+	raw_spin_lock_irqsave(&adapter->systim_lock, flags);
 	*device = ns_to_ktime(timecounter_cyc2time(&adapter->tc, dev_cycles));
-	spin_unlock_irqrestore(&adapter->systim_lock, flags);
+	raw_spin_unlock_irqrestore(&adapter->systim_lock, flags);
 
 	sys_cycles = er32(PLTSTMPH);
 	sys_cycles <<= 32;
@@ -168,13 +168,13 @@ static int e1000e_phc_gettimex(struct ptp_clock_info *ptp,
 	unsigned long flags;
 	u64 cycles, ns;
 
-	spin_lock_irqsave(&adapter->systim_lock, flags);
+	raw_spin_lock_irqsave(&adapter->systim_lock, flags);
 
 	/* NOTE: Non-monotonic SYSTIM readings may be returned */
 	cycles = e1000e_read_systim(adapter, sts);
 	ns = timecounter_cyc2time(&adapter->tc, cycles);
 
-	spin_unlock_irqrestore(&adapter->systim_lock, flags);
+	raw_spin_unlock_irqrestore(&adapter->systim_lock, flags);
 
 	*ts = ns_to_timespec64(ns);
 
@@ -200,9 +200,9 @@ static int e1000e_phc_settime(struct ptp_clock_info *ptp,
 	ns = timespec64_to_ns(ts);
 
 	/* reset the timecounter */
-	spin_lock_irqsave(&adapter->systim_lock, flags);
+	raw_spin_lock_irqsave(&adapter->systim_lock, flags);
 	timecounter_init(&adapter->tc, &adapter->cc, ns);
-	spin_unlock_irqrestore(&adapter->systim_lock, flags);
+	raw_spin_unlock_irqrestore(&adapter->systim_lock, flags);
 
 	return 0;
 }
