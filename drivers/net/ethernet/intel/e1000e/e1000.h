@@ -10,6 +10,7 @@
 #include <linux/types.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
+#include <linux/inband_work.h>
 #include <linux/io.h>
 #include <linux/netdevice.h>
 #include <linux/pci.h>
@@ -60,6 +61,12 @@ struct e1000_info;
 /* How many Tx Descriptors do we need to call netif_wake_queue ? */
 /* How many Rx Buffers do we bundle into one write to the hardware ? */
 #define E1000_RX_BUFFER_WRITE		16 /* Must be power of 2 */
+
+/* The ICR conditions we should process in-band via interrupt
+ * forwarding between execution stages (i.e. detected oob but handled
+ * in-band). */
+#define E1000_ICR_INTR_FORWARD_MASK (E1000_ICR_LSC|E1000_ICR_ECCER)
+#define E1000_ICR_OTHER_FORWARD_MASK (E1000_ICR_LSC)
 
 #define AUTO_ALL_MODES			0
 #define E1000_EEPROM_APME		0x0400
@@ -121,6 +128,26 @@ enum e1000_boards {
 	board_pch_ptp
 };
 
+#ifdef CONFIG_E1000E_OOB
+
+struct page_pool;
+
+struct e1000e_tx_flush_data {
+	struct e1000_adapter *adapter;
+	dma_addr_t dma;
+	unsigned int len;
+	struct sk_buff *skb;
+	bool mapped_as_page;
+	bool drop_skb;
+	bool persistent_mapping;
+};
+
+void e1000e_do_flush_tx(struct e1000e_tx_flush_data *d);
+
+INBAND_BATCH_WORK_DYNAMIC(e1000e_tx_flush, e1000e_do_flush_tx, struct e1000e_tx_flush_data);
+
+#endif	/* CONFIG_E1000E_OOB */
+
 struct e1000_ps_page {
 	struct page *page;
 	u64 dma; /* must be u64 - written to hw */
@@ -141,6 +168,9 @@ struct e1000_buffer {
 			unsigned int segs;
 			unsigned int bytecount;
 			u16 mapped_as_page;
+#ifdef CONFIG_E1000E_OOB
+			bool persistent_mapping;
+#endif
 		};
 		/* Rx */
 		struct {
@@ -166,6 +196,11 @@ struct e1000_ring {
 
 	/* array of buffer information structs */
 	struct e1000_buffer *buffer_info;
+
+#ifdef CONFIG_E1000E_OOB
+	struct e1000e_tx_flush inband_batch;
+	struct page_pool *oob_pool;
+#endif
 
 	char name[IFNAMSIZ + 5];
 	u32 ims_val;
@@ -194,7 +229,7 @@ struct e1000_adapter {
 	struct timer_list phy_info_timer;
 	struct timer_list blink_timer;
 
-	struct work_struct reset_task;
+	struct inband_work_struct reset_task;
 	struct work_struct watchdog_task;
 
 	const struct e1000_info *ei;
@@ -222,6 +257,10 @@ struct e1000_adapter {
 
 	struct napi_struct napi;
 
+#ifdef CONFIG_E1000E_OOB
+	unsigned int oob_rx_size;
+	u32 cached_icr;
+#endif
 	unsigned int uncorr_errors;	/* uncorrectable ECC errors */
 	unsigned int corr_errors;	/* correctable ECC errors */
 	unsigned int restart_queue;
@@ -313,7 +352,7 @@ struct e1000_adapter {
 	unsigned int flags2;
 	struct work_struct downshift_task;
 	struct work_struct update_phy_task;
-	struct work_struct print_hang_task;
+	struct inband_work_struct print_hang_task;
 
 	int phy_hang_count;
 
@@ -325,7 +364,7 @@ struct e1000_adapter {
 	struct sk_buff *tx_hwtstamp_skb;
 	unsigned long tx_hwtstamp_start;
 	struct work_struct tx_hwtstamp_work;
-	spinlock_t systim_lock;	/* protects SYSTIML/H regsters */
+	hard_spinlock_t systim_lock;	/* protects SYSTIML/H regsters */
 	struct cyclecounter cc;
 	struct timecounter tc;
 	struct ptp_clock *ptp_clock;
@@ -463,6 +502,7 @@ s32 e1000e_get_base_timinca(struct e1000_adapter *adapter, u32 *timinca);
 #define FLAG2_CHECK_SYSTIM_OVERFLOW       BIT(14)
 #define FLAG2_ENABLE_S0IX_FLOWS           BIT(15)
 #define FLAG2_DISABLE_K1		   BIT(16)
+#define FLAG2_IN_NETPOLL                  BIT(17)
 
 #define E1000_RX_DESC_PS(R, i)	    \
 	(&(((union e1000_rx_desc_packet_split *)((R).desc))[i]))
@@ -617,5 +657,24 @@ void __ew32(struct e1000_hw *hw, unsigned long reg, u32 val);
 
 #define E1000_READ_REG_ARRAY(a, reg, offset) \
 	(readl((a)->hw_addr + reg + ((offset) << 2)))
+
+/*
+ * Check whether oob support is compiled in for the driver. This tells
+ * nothing about the current execution stage, or whether oob diversion
+ * is ongoing for any IGB device.
+ */
+static inline bool e1000e_net_oob(void)
+{
+	return IS_ENABLED(CONFIG_E1000E_OOB);
+}
+
+/*
+ * Check whether the caller is running on the out-of-band stage, with
+ * the precondition that oob support is compiled in for the driver.
+ */
+static inline bool e1000e_running_oob(void)
+{
+	return e1000e_net_oob() && running_oob();
+}
 
 #endif /* _E1000_H_ */

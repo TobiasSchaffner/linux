@@ -399,6 +399,12 @@
 #define E1000_ICR_TXQ1          0x00800000 /* Tx Queue 1 Interrupt */
 #define E1000_ICR_OTHER         0x01000000 /* Other Interrupt */
 
+/* The ICR conditions we should process in-band via interrupt
+ * forwarding between execution stages (i.e. detected oob but handled
+ * in-band). */
+#define E1000_ICR_INTR_FORWARD_MASK (E1000_ICR_LSC|E1000_ICR_ECCER)
+#define E1000_ICR_OTHER_FORWARD_MASK (E1000_ICR_LSC)
+
 /* PBA ECC Register */
 #define E1000_PBA_ECC_COUNTER_MASK  0xFFF00000 /* ECC counter mask */
 #define E1000_PBA_ECC_COUNTER_SHIFT 20         /* ECC counter shift value */
