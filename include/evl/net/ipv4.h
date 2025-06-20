@@ -39,6 +39,10 @@ int evl_net_init_ipv4(struct net *net);
 
 void evl_net_cleanup_ipv4(struct net *net);
 
+int evl_net_ipv4_add_device(struct net_device *dev);
+
+void evl_net_ipv4_remove_device(struct net_device *dev);
+
 int evl_net_ipv4_solicit(struct evl_socket *esk,
 			struct sockaddr *addr, int flags);
 
