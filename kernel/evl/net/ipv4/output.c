@@ -80,6 +80,7 @@ struct sk_buff *evl_net_ipv4_build_datagram(struct evl_socket *esk,
 	struct sock *sk = esk->sk;
 	struct inet_sock *inet = inet_sk(sk);
 	int mtu, n = 0, ret = 0;
+	ktime_t start_time = 0;
 	__be16 id = 0, df = 0;
 	struct iphdr *iph;
 	__u16 frag_off;
@@ -98,15 +99,17 @@ struct sk_buff *evl_net_ipv4_build_datagram(struct evl_socket *esk,
 
 	/* Room for payload in an IP frag aligned on 8-byte boundary. */
 	maxfraglen = (mtu - sizeof(*iph)) & ~7;
-	if (datalen > maxfraglen) {
+	if (datalen > maxfraglen)
 		id = evl_read_rng_u16();
-	} else if (datalen <= IPV4_MIN_MTU || ip_dont_fragment(sk, evl_net_route_dst(ert))) {
+	else if (datalen <= IPV4_MIN_MTU || ip_dont_fragment(sk, dst))
 		df = htons(IP_DF);
-	}
 
 	netdev_dbg(dev, "build dgram: src=%pI4, dst=%pI4, mtu=%d, "
 		   " transhdrlen=%d, maxfraglen=%zd\n",
 		   &ipc->saddr, &ipc->daddr, mtu, ipc->transhdrlen, maxfraglen);
+
+	if (READ_ONCE(esk->timestamping) & EVL_SOF_TIMESTAMP_TX)
+		start_time = evl_ktime_monotonic();
 
 	for (;;) {
 		skb = evl_net_wget_skb(esk, real_dev, timeout);
@@ -138,11 +141,11 @@ struct sk_buff *evl_net_ipv4_build_datagram(struct evl_socket *esk,
 			}
 
 			/*
-			 * TX time accounting starts when obtaining
-			 * the initial buffer.
+			 * If TX time accounting is enabled, timestamp
+			 * the heading buffer.
 			 */
-			if (READ_ONCE(esk->timestamping) & EVL_SOF_TIMESTAMP_TX) {
-				skb_shinfo_oob(skb)->delivery_time = evl_ktime_monotonic();
+			if (start_time) {
+				skb_shinfo_oob(skb)->delivery_time = start_time;
 				skb_mark_oob_timestamped(skb);
 			}
 		}
