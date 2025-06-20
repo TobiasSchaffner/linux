@@ -198,22 +198,18 @@ static ssize_t offload_send_udp(struct evl_socket *esk,
 static bool find_egress_path(struct evl_socket *esk, __be32 daddr,
 			struct evl_net_route **ertp, struct evl_net_arp_entry **earpp)
 {
-	struct evl_net_arp_entry *_earp;
-	struct evl_net_route *_ert;
-	struct net_device *dev;
+	struct evl_net_arp_entry *earp;
+	struct evl_net_route *ert;
 
-	_ert = evl_net_get_ipv4_route(sock_net(esk->sk), daddr);
-	if (likely(_ert)) {
-		dev = _ert->rt->dst.dev;
-		if (netif_oob_port(dev)) {
-			_earp = evl_net_get_arp_entry(dev, daddr);
-			if (likely(_earp))  {
-				*ertp = _ert;
-				*earpp = _earp;
-				return true;
-			}
+	ert = evl_net_route_ipv4_output(sock_net(esk->sk), daddr);
+	if (likely(ert)) {
+		earp = evl_net_get_arp_entry(ert->rt->dst.dev, daddr);
+		if (likely(earp))  {
+			*ertp = ert;
+			*earpp = earp;
+			return true;
 		}
-		evl_net_put_route(_ert);
+		evl_net_put_route(ert);
 	}
 
 	return false;

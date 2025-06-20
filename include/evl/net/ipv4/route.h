@@ -26,4 +26,6 @@ void evl_net_flush_ipv4_routes(struct net *net, struct net_device *dev);
 
 struct evl_net_route *evl_net_get_ipv4_route(struct net *net, __be32 daddr);
 
+struct evl_net_route *evl_net_route_ipv4_output(struct net *net, __be32 daddr);
+
 #endif /* !_EVL_NET_IPV4_ROUTE_H */
