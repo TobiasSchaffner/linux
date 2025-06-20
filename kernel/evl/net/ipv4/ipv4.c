@@ -291,8 +291,6 @@ int evl_net_ipv4_solicit(struct evl_socket *esk,
 		 */
 		if (dev == dev_net(dev)->loopback_dev)
 			evl_net_lo_add_arp(dev);
-		else
-			ret = -EINVAL;
 	}
 
 	evl_net_put_dev(dev);
