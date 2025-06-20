@@ -34,6 +34,22 @@ void evl_cleanup_cache(struct evl_cache *cache) /* in-band */
 EXPORT_SYMBOL_GPL(evl_cleanup_cache);
 
 /*
+ * Initialize a cache entry. We may add it to the specified cache
+ * later on or not, however the cache pointer must be valid
+ * regardless.  This entry should be disposed of by any code which
+ * causes its refcount to drop to zero.
+ */
+void evl_init_cache_entry(struct evl_cache_entry *entry,
+			struct evl_cache *cache)
+{
+	entry->cache = cache;
+	refcount_set(&entry->refcnt, 1);
+	evl_init_work(&entry->work, entry_free_work);
+	entry->next = NULL;
+}
+EXPORT_SYMBOL_GPL(evl_init_cache_entry);
+
+/*
  * Cache a new entry. The cache must have been locked prior to calling
  * this routine. This call must be issued from the in-band stage.
  *
@@ -81,9 +97,7 @@ retry:
 	}
 
 	ht->nr_entries++;
-	entry->cache = cache;
-	refcount_set(&entry->refcnt, 1);
-	evl_init_work(&entry->work, entry_free_work);
+	evl_init_cache_entry(entry, cache);
 	rcu_assign_pointer(*ep, entry);
 
 	return 0;
