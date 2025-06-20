@@ -72,6 +72,8 @@ static struct evl_net_ebpf_filter *
 __set_rx_filter(struct evl_netdev_state *est,
 		struct evl_net_ebpf_filter *filter);
 
+static void disable_oob_port(struct net_device *dev);
+
 static struct evl_kthread *
 start_handler_thread(struct net_device *dev,
 		void (*fn)(void *arg),
@@ -206,7 +208,12 @@ queue:
 	list_add(&nds->next, &oob_port_list);
 	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
 
-	return 0;
+	/* Declare the oob-enabled device to the routing system. */
+	ret = evl_net_add_device_route(dev);
+	if (ret)
+		disable_oob_port(dev);
+
+	return ret;
 
 fail_enable_diversion:
 	if (est->tx_handler) {
@@ -248,6 +255,9 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	if (!netif_oob_port(dev))
 		return;
 
+	/* Remove the oob-enabled device from the routing system. */
+	evl_net_remove_device_route(dev);
+
 	/*
 	 * Make sure that no evl_down_crossing() can be issued after
 	 * we attempt to pass the crossing. Since the former can only
@@ -276,6 +286,10 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	if (EVL_WARN_ON(NET, est->refs <= 0))
 		return;
 
+	/*
+	 * We might have multiple VLAN devices acting as oob ports
+	 * sitting on the same real device, so use refcounting.
+	 */
 	if (--est->refs > 0)	/* Guarded by rtnl_lock. */
 		return;
 
@@ -475,14 +489,12 @@ int evl_netdev_event(struct notifier_block *ev_block,
 
 	switch (event) {
 	case NETDEV_UP:
-		evl_net_prepare_routing(dev);
 		break;
 	case NETDEV_GOING_DOWN:
 		if (netif_oob_port(dev)) {
 			disable_oob_port(dev);
 			evl_net_flush_routes(dev_net(dev), dev);
 		}
-		evl_net_unprepare_routing(dev);
 		break;
 	}
 

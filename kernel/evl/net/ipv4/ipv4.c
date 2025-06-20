@@ -247,11 +247,17 @@ int evl_net_ipv4_solicit(struct evl_socket *esk,
 	if (addr->sa_family != AF_INET)
 		return -EAFNOSUPPORT;
 
-	ipaddr = ((struct sockaddr_in *)addr)->sin_addr.s_addr;
-
 	if (flags & ~EVL_NEIGH_PERMANENT)
 		return -EINVAL;
 
+	ipaddr = ((struct sockaddr_in *)addr)->sin_addr.s_addr;
+
+	/*
+	 * Tell the in-band stack to resolve the route to the peer. On
+	 * success, we are called back via ip_learn_oob_route() with
+	 * the routing data, which we then index into our oob route
+	 * cache.
+	 */
 	rt = ip_route_output(sock_net(esk->sk), ipaddr, 0, 0, 0, RT_SCOPE_UNIVERSE);
 	if (IS_ERR(rt))
 		return PTR_ERR(rt);
@@ -281,16 +287,6 @@ int evl_net_ipv4_solicit(struct evl_socket *esk,
 				NEIGH_VAR(neigh->parms, DELAY_PROBE_TIME) + HZ
 			);
 		ret = e ? 0 : -ETIMEDOUT;
-	} else {
-		/*
-		 * If asked to solicit the local host at the loopback
-		 * address, attempt to (re-)cache an arp pseudo-entry
-		 * for it. This is the only way to add back the 'lo'
-		 * address to the ARP cache after it was forcibly
-		 * flushed, barring a down->up sequence for 'lo'.
-		 */
-		if (dev == dev_net(dev)->loopback_dev)
-			evl_net_lo_add_arp(dev);
 	}
 
 	evl_net_put_dev(dev);
@@ -307,6 +303,42 @@ int evl_net_ipv4_solicit(struct evl_socket *esk,
 	neigh_release(neigh);
 
 	return ret;
+}
+
+/* Declare a new oob-enabled device to the routing system. */
+int evl_net_ipv4_add_device(struct net_device *dev)
+{
+	struct oob_net_state *nets = &dev_net(dev)->oob;
+	int ret = 0;
+
+	/*
+	 * EVL performs output routing only so far, which targets
+	 * oob-enabled devices exclusively. So complain then bail out
+	 * if oob mode is not active for the device received.
+	 */
+	if (EVL_WARN_ON(NET, !netif_oob_port(dev)))
+		return 0;
+
+	/* Set an ARP pseudo-entry for the current loopback device. */
+	if (dev == dev_net(dev)->loopback_dev)
+		ret = evl_net_set_pseudo_arp(dev, htonl(INADDR_LOOPBACK),
+					&nets->ipv4.pseudo_arp.lo);
+
+	return ret;
+}
+
+/* Remove a downed device from the routing system. */
+void evl_net_ipv4_remove_device(struct net_device *dev)
+{
+	struct net *net = dev_net(dev);
+	struct oob_net_state *nets = &net->oob;
+
+	if (EVL_WARN_ON(NET, !netif_oob_port(dev)))
+		return;
+
+	if (dev == net->loopback_dev)
+		/* The current loopback device is going down. */
+		evl_net_drop_pseudo_arp(net, &nets->ipv4.pseudo_arp.lo);
 }
 
 static struct evl_net_proto *match_ipv4_domain(int type, int protocol)

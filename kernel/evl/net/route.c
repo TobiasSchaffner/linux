@@ -7,8 +7,8 @@
 #include <linux/slab.h>
 #include <net/route.h>
 #include <evl/net/socket.h>
+#include <evl/net/ipv4.h>
 #include <evl/net/ipv4/route.h>
-#include <evl/net/ipv4/arp.h>
 
 /*
  * Cache a new IP route.
@@ -77,18 +77,16 @@ void evl_net_flush_routes(struct net *net, struct net_device *dev)
 /*
  * Prepare the routing system for using an emerging device.
  */
-void evl_net_prepare_routing(struct net_device *dev)
+int evl_net_add_device_route(struct net_device *dev)
 {
-	if (dev == dev_net(dev)->loopback_dev)
-		evl_net_lo_add_arp(dev);
+	return evl_net_ipv4_add_device(dev);
 }
 
 /*
  * Drop the information related to a downed device from the routing
  * system.
  */
-void evl_net_unprepare_routing(struct net_device *dev)
+void evl_net_remove_device_route(struct net_device *dev)
 {
-	if (dev == dev_net(dev)->loopback_dev)
-		evl_net_lo_drop_arp(dev);
+	evl_net_ipv4_remove_device(dev);
 }
