@@ -151,3 +151,23 @@ void evl_net_flush_ipv4_routes(struct net *net, struct net_device *dev)
 {
 	flush_route_cache(net, dev);
 }
+
+/*
+ * Given an IPv4 address, perform a look up into our route cache in
+ * order to find an egress path via an oob port.
+ */
+struct evl_net_route *evl_net_route_ipv4_output(struct net *net, __be32 daddr)
+{
+	struct evl_net_route *ert = evl_net_get_ipv4_route(net, daddr);
+	struct net_device *dev;
+
+	if (ert) {
+		dev = ert->rt->dst.dev;
+		if (dev && netif_oob_port(dev))
+			return ert;
+		evl_net_put_route(ert);
+	}
+
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(evl_net_route_ipv4_output);
