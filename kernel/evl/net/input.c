@@ -19,6 +19,7 @@
 #include <evl/net/device.h>
 #include <evl/net/ipv4.h>
 #include <evl/net/timestamping.h>
+#include <evl/net/tap.h>
 
 /*
  * NOTE: This code cannot compete with napi_complete_done()
@@ -256,6 +257,9 @@ void napi_schedule_oob(struct napi_struct *n) /* inband/oob */
  */
 bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 {
+	struct net_device *dev = skb->dev;
+	bool picked;
+
 	skb_reset_network_header(skb);
 	if (!skb_transport_header_was_set(skb))
 		skb_reset_transport_header(skb);
@@ -267,7 +271,7 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 	 * the regular in-band stack if the filter code says that we
 	 * are not interested in it.
 	 */
-	switch (evl_net_filter_rx(skb->dev, skb)) {
+	switch (evl_net_filter_rx(dev, skb)) {
 	case EVL_RX_VLAN:
 		/*
 		 * Apply our VLAN rules to decide whether this is an
@@ -278,7 +282,8 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 		/* Direct the packet to the oob stack unconditionally. */
 		switch (skb->protocol) {
 		case htons(ETH_P_IP):
-			return evl_net_ether_accept(skb);
+			picked = evl_net_ether_accept(skb);
+			goto taps;
 		default:
 			/*
 			 * We don't deal with non-IP protocols, and
@@ -302,17 +307,32 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 	 */
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
-		return evl_net_ether_accept_vlan(skb);
+		picked = evl_net_ether_accept_vlan(skb);
+		break;
 	default:
 		/*
 		 * For those adapters without hw-accelerated VLAN
 		 * capabilities, check the ethertype directly.
 		 */
-		if (eth_type_vlan(skb->protocol))
-			return evl_net_ether_accept_vlan(skb);
+		if (eth_type_vlan(skb->protocol)) {
+			picked = evl_net_ether_accept_vlan(skb);
+			goto taps;
+		}
 
 		return false;
 	}
+taps:
+	/*
+	 * Feed in-band input taps if any. Racing with in-band updates
+	 * to the packet type chain is ok, we don't dereference it but
+	 * only use a hint to determine whether we should push the
+	 * buffer to the in-band nit, all operations are properly
+	 * serialized there.
+	 */
+	if (picked && dev_nit_active(dev))
+		evl_net_tap_in(dev, skb);
+
+	return picked;
 }
 
 /*

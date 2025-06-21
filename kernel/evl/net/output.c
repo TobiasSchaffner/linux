@@ -18,6 +18,7 @@
 #include <evl/net/socket.h>
 #include <evl/net/output.h>
 #include <evl/net/qdisc.h>
+#include <evl/net/tap.h>
 
 static void xmit_inband(struct irq_work *work);
 
@@ -81,6 +82,17 @@ static inline void do_tx(struct evl_net_qdisc *qdisc,
 	 * the socket tracking info.
 	 */
 	timestamp_at_device(skb);
+
+	/*
+	 * Feed in-band output taps if any. Racing with in-band
+	 * updates to the packet type chain is ok, we don't
+	 * dereference it but only use a hint to determine whether we
+	 * should push the buffer to the in-band nit, all operations
+	 * are properly serialized there.
+	 */
+	if (dev_nit_active(dev))
+		evl_net_tap_out(dev, skb);
+
 	evl_net_uncharge_skb_wmem(skb);
 
 	switch (oob_start_xmit(dev, skb, more)) {
