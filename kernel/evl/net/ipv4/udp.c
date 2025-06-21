@@ -50,8 +50,8 @@ static int attach_udp_socket(struct evl_socket *esk,
 static int add_receive_slot(struct evl_socket *esk) /* inband */
 {
 	struct evl_cache *cache = &esk->net->oob.ipv4.udp;
+	struct evl_net_udp_receiver *new, *old, *udp;
 	struct inet_sock *inet = inet_sk(esk->sk);
-	struct evl_net_udp_receiver *new, *old;
 	struct evl_cache_entry *entry;
 	struct __evl_net_udp_key key;
 	int ret;
@@ -78,7 +78,8 @@ static int add_receive_slot(struct evl_socket *esk) /* inband */
 
 	new->key = key;
 	INIT_LIST_HEAD(&new->queue);
-	evl_init_wait(&new->wait, &evl_mono_clock, 0);
+	udp = new;	/* So that evl-ps reports &udp->wait as wchan. */
+	evl_init_wait(&udp->wait, &evl_mono_clock, 0);
 	refcount_set(&new->refs, 1);
 
 	/* Lookup and insertion must be seen as atomic. */
