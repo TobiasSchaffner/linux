@@ -22,6 +22,7 @@
 #include <evl/net/ipv4/arp.h>
 #include <evl/net/ipv4/route.h>
 #include <evl/net/ipv4.h>
+#include <evl/net/tap.h>
 #include <evl/net.h>
 
 /*
@@ -53,6 +54,8 @@ int __init evl_net_init(void)
 	evl_net_init_tx();
 
 	evl_net_init_qdisc();
+
+	evl_net_init_taps();
 
 	ret = register_netdevice_notifier(&netdev_notifier);
 	if (ret)
