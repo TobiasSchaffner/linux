@@ -184,7 +184,7 @@ static void xmit_inband(struct irq_work *work) /* in-band, stalled */
 	/*
 	 * process_inband_tx_backlog() should run soon, kicked by tx_action.
 	 */
-	__raise_softirq_irqoff(NET_TX_SOFTIRQ);
+	raise_softirq_irqoff(NET_TX_SOFTIRQ);
 }
 
 /* oob or in-band */
