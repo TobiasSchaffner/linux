@@ -217,12 +217,6 @@ static void __free_evl_skb(struct sk_buff *skb, struct net_device *dev)
 	struct evl_netdev_state *est = dev->oob_state.estate;
 	unsigned long flags;
 
-	/* If the data storage is still shared, don't release it. */
-	if (skb->cloned &&
-	    atomic_sub_return(skb->nohdr ? (1 << SKB_DATAREF_SHIFT) + 1 : 1,
-			      &shinfo->dataref))
-		goto put_skb;
-
 	/*
 	 * Attempt to release the heading data to the originating page
 	 * pool if any.
@@ -230,7 +224,23 @@ static void __free_evl_skb(struct sk_buff *skb, struct net_device *dev)
 	if (unlikely(!skb->head))
 		goto put_skb;
 
+	/* If the data storage is still shared, don't release it. */
+	if (skb->cloned &&
+	    atomic_sub_return(skb->nohdr ? (1 << SKB_DATAREF_SHIFT) + 1 : 1,
+			      &shinfo->dataref))
+		goto put_skb;
+
+	EVL_WARN_ON(NET, atomic_read(&shinfo->dataref) < 0);
+
 	napi_pp_put_page(page_to_netmem(virt_to_page(skb->head)));
+
+	/*
+	 * Make sure skb_release_all() won't attempt to release the
+	 * data portion - we just did so - if we need to relay the
+	 * buffer downstream for finalization (see finalize_skb_inband
+	 * -> __kfree_skb -> skb_release_all).
+	 */
+	skb->head = NULL;
 
 	/*
 	 * Wake up any thread waiting for buffer space to send to the
@@ -246,8 +256,20 @@ static void __free_evl_skb(struct sk_buff *skb, struct net_device *dev)
 	evl_signal_poll_events(&est->poll_head,	POLLOUT|POLLWRNORM);
 
 put_skb:
-	EVL_WARN_ON(NET, atomic_read(&shinfo->dataref) < 0);
-	put_oob_skb(skb);
+	/*
+	 * We may receive skbs obtained from the oob pool or some
+	 * in-band kmem cache indifferently, depending on where the
+	 * skb originates from (e.g. RX path of an oob-capable device
+	 * or not). If the skb shell belongs to the oob pool, release
+	 * it immediately.  Otherwise we need a little help from the
+	 * in-band stack for finalizing this buffer, relay it
+	 * downstream for release so that the head state is flushed as
+	 * well.
+	 */
+	if (skb_is_oob(skb))
+		put_oob_skb(skb);
+	else
+		free_inband_skb(skb);
 }
 
 /*
