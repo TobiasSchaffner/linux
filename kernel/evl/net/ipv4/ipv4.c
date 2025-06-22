@@ -233,6 +233,8 @@ void __evl_net_ipv4_gc(struct evl_net_frag_tdir *ftdir)
  * evl_net_ipv4_solicit - Resolve an IPv4 address into a link-layer
  * address using ARP neighbour solicitation. This call waits for 5s
  * for the front cache to receive the ARP entry before timing out.
+ *
+ * CAUTION: This routine may return -ERESTARTSYS on timeout.
  */
 int evl_net_ipv4_solicit(struct evl_socket *esk,
 			struct sockaddr *addr, int flags)
@@ -258,7 +260,7 @@ int evl_net_ipv4_solicit(struct evl_socket *esk,
 	 * the routing data, which we then index into our oob route
 	 * cache.
 	 */
-	rt = ip_route_output(sock_net(esk->sk), ipaddr, 0, 0, 0, RT_SCOPE_UNIVERSE);
+	rt = ip_route_output(sock_net(esk->sk), ipaddr, INADDR_ANY, 0, 0, RT_SCOPE_UNIVERSE);
 	if (IS_ERR(rt))
 		return PTR_ERR(rt);
 
@@ -286,7 +288,7 @@ int evl_net_ipv4_solicit(struct evl_socket *esk,
 			       (e = evl_net_get_arp_entry(dev, ipaddr)),
 				NEIGH_VAR(neigh->parms, DELAY_PROBE_TIME) + HZ
 			);
-		ret = e ? 0 : -ETIMEDOUT;
+		ret = e ? 0 : ret ?: -ETIMEDOUT;
 	}
 
 	evl_net_put_dev(dev);
