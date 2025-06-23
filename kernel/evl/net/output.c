@@ -111,8 +111,10 @@ void evl_net_do_tx(void *arg)
 	struct net_device *dev = arg;
 	struct evl_netdev_state *est;
 	struct evl_net_qdisc *qdisc;
+	unsigned int packets_out;
 	struct sk_buff *skb;
 	LIST_HEAD(list);
+	u64 bytes_out;
 	int ret;
 
 	est = dev->oob_state.estate;
@@ -133,11 +135,18 @@ void evl_net_do_tx(void *arg)
 		 * prioritization implemented by the queueing
 		 * discipline attached to our device.
 		 */
+		packets_out = 0;
+		bytes_out = 0;
 		for (;;) {
 			bool more;
 			skb = qdisc->oob_ops->dequeue(qdisc, &more);
-			if (skb == NULL)
+			if (skb == NULL) {
+				evl_counter_add_careful(&est->stats.tx_packets, packets_out);
+				evl_counter_add_careful(&est->stats.tx_bytes, bytes_out);
 				break;
+			}
+			packets_out++;
+			bytes_out += skb->len;
 			do_tx(qdisc, dev, skb, more);
 		}
 	}

@@ -78,7 +78,9 @@ void evl_net_do_rx(void *arg)
 	struct net_device *dev = arg;
 	struct evl_netdev_state *est;
 	struct sk_buff *skb, *next;
+	unsigned int packets_in;
 	LIST_HEAD(list);
+	u64 bytes_in;
 	int ret;
 
 	est = dev->oob_state.estate;
@@ -100,12 +102,18 @@ void evl_net_do_rx(void *arg)
 		 * (RX thread).
 		 */
 		if (evl_net_move_skb_queue(&est->rx_packets, &list)) {
+			packets_in = 0;
+			bytes_in = 0;
 			list_for_each_entry_safe(skb, next, &list, list) {
 				if (skb_is_oob_timestamped(skb))
 					skb_shinfo_oob(skb)->queuing_time = evl_ktime_monotonic();
 				list_del(&skb->list);
+				packets_in++;
+				bytes_in += skb->len;
 				EVL_NET_CB(skb)->handler->ingress(skb);
 			}
+			evl_counter_add_careful(&est->stats.rx_packets, packets_in);
+			evl_counter_add_careful(&est->stats.rx_bytes, bytes_in);
 		}
 
 		evl_net_ipv4_gc(dev_net(dev));

@@ -11,6 +11,7 @@
 #include <evl/poll.h>
 #include <evl/flag.h>
 #include <evl/stax.h>
+#include <evl/stat.h>
 #include <evl/crossing.h>
 
 struct evl_net_qdisc;
@@ -52,6 +53,15 @@ struct evl_netdev_state {
 	struct evl_net_ebpf_filter __rcu *rx_filter;
 	/* Runtime state flags. */
 	unsigned long flags;
+	/* Statistics */
+	struct {
+		evl_counter64 rx_packets;
+		evl_counter64 rx_bytes;
+		evl_counter64 tx_packets;
+		evl_counter64 tx_bytes;
+		evl_counter32 pool_alloc_count;
+		evl_counter32 pool_release_count;
+	} stats;
 	/* Count of oob ports referring to this device. */
 	int refs;
 };
