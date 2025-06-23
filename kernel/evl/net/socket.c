@@ -710,6 +710,28 @@ static int socket_iocget_option(struct evl_socket *esk,
 	return -EINVAL;
 }
 
+static int socket_solicit_peer(struct evl_socket *esk,
+			struct sockaddr *addr, int flags)
+{
+	struct sock *sk = esk->sk;
+	struct net *net = sock_net(sk);
+	struct net_device *dev = NULL;
+	int ifindex, ret;
+
+	if (!esk->proto->solicit)
+		return -ENOTSUPP;
+
+	ifindex = READ_ONCE(sk->sk_bound_dev_if);
+	if (ifindex)
+		dev = evl_net_get_dev_by_index(net, ifindex);
+
+	ret = esk->proto->solicit(net, dev, addr, flags);
+	if (dev)
+		evl_net_put_dev(dev);
+
+	return ret;
+}
+
 long sock_oob_ioctl(struct file *filp, unsigned int cmd,
 		unsigned long arg)
 {
@@ -817,11 +839,8 @@ static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
 		ret = copy_from_user(&solreq, u_solreq, sizeof(solreq));
 		if (ret)
 			return -EFAULT;
-		ret = -ENOTSUPP;
-		if (esk->proto->solicit)
-			ret = esk->proto->solicit(esk,
-				(struct sockaddr *)&solreq.addr,
-				solreq.flags);
+		ret = socket_solicit_peer(esk, (struct sockaddr *)&solreq.addr,
+					solreq.flags);
 		break;
 	default:
 		ret = -ENOTTY;
