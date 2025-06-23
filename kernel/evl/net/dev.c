@@ -601,9 +601,32 @@ static int set_rx_filter(struct net_device *dev, unsigned long arg)
 	return 0;
 }
 
+#define _distance(a, b)	(s32)((a) - (b))
+
+static int get_dev_stat(struct net_device *dev, struct evl_net_devstat *devs)
+{
+	struct net_device *real_dev = evl_net_real_dev(dev);
+	struct evl_netdev_state *est = real_dev->oob_state.estate;
+	u64 alloc_count, release_count;
+
+	devs->oob_capable = netdev_is_oob_capable(real_dev);
+	devs->rx_packets = evl_counter_read_careful(&est->stats.rx_packets);
+	devs->rx_bytes = evl_counter_read_careful(&est->stats.rx_bytes);
+	devs->tx_packets = evl_counter_read_careful(&est->stats.tx_packets);
+	devs->tx_bytes = evl_counter_read_careful(&est->stats.tx_bytes);
+	devs->skb_size = est->buf_size;
+	alloc_count = evl_counter_read_careful(&est->stats.pool_alloc_count);
+	release_count = evl_counter_read_careful(&est->stats.pool_release_count);
+	devs->skb_free = est->pool_max - _distance(alloc_count, release_count);
+	devs->skb_total = est->pool_max;
+
+	return 0;
+}
+
 static long netdev_ioctl(struct file *filp, unsigned int cmd,
 			unsigned long arg)
 {
+	struct evl_net_devstat devs = { 0 }, __user *u_devs;
 	struct net_device *dev = filp->private_data;
 	int ret = -ENOTTY;
 
@@ -613,6 +636,15 @@ static long netdev_ioctl(struct file *filp, unsigned int cmd,
 		break;
 	case EVL_NDEVIOC_SWITCHOFF:
 		ret = evl_net_switch_oob_port(dev, NULL);
+		break;
+	case EVL_NDEVIOC_GETSTAT:
+		ret = get_dev_stat(dev, &devs);
+		if (ret)
+			return ret;
+		u_devs = (typeof(u_devs))arg;
+		ret = copy_to_user(u_devs, &devs, sizeof(devs));
+		if (ret)
+			return -EFAULT;
 		break;
 	}
 
