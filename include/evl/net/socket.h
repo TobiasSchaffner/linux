@@ -41,7 +41,8 @@ struct evl_net_proto {
 	int (*shutdown)(struct evl_socket *esk, int how);
 	int (*ioctl)(struct evl_socket *esk, unsigned int cmd,
 		unsigned long arg);
-	int (*solicit)(struct evl_socket *esk,
+	int (*solicit)(struct net *net,
+		struct net_device *dev,
 		struct sockaddr *addr, int flags);
 	ssize_t (*oob_send)(struct evl_socket *esk,
 			const struct user_oob_msghdr __user *u_msghdr,
