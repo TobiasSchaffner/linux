@@ -147,9 +147,13 @@ static int enable_oob_port(struct net_device *dev,
 	if (!p->bufsz)
 		p->bufsz = EVL_DEFAULT_NETDEV_BUFSZ;
 
-	/* Silently align on the current mtu if need be. */
+	/*
+	 * Use the device MTU as the bare minimum unless this is a
+	 * loopback device (those have preposterously large MTUs for
+	 * oob usage).
+	 */
 	mtu = READ_ONCE(real_dev->mtu);
-	if (p->bufsz < mtu)
+	if (!(real_dev->flags & IFF_LOOPBACK) && p->bufsz < mtu)
 		p->bufsz = mtu;
 
 	est->pool_max = p->poolsz;
