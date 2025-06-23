@@ -27,6 +27,7 @@
 #include <evl/net/input.h>
 #include <evl/net/output.h>
 #include <evl/net/route.h>
+#include <uapi/evl/net/net-abi.h>
 
 /*
  * Since we need an EVL kthread to handle traffic from the out-of-band
@@ -45,13 +46,12 @@
 /*
  * The default number of I/O pages which should be available on a
  * per-device basis for conveying out-of-band traffic if not specified
- * by an EVL_SOCKIOC_ACTIVATE request.
+ * by an EVL_NET_DEVON request.
  */
 #define EVL_DEFAULT_NETDEV_POOLSZ  2048
 /*
  * The default fixed payload size available in I/O pages for conveying
- * out-of-band traffic through the device if not specified by an
- * EVL_SOCKIOC_ACTIVATE request.
+ * out-of-band traffic through the device.
  */
 #define EVL_DEFAULT_NETDEV_BUFSZ   PAGE_SIZE
 /*
@@ -102,7 +102,7 @@ start_handler_thread(struct net_device *dev,
  * or a VLAN interface.
  */
 static int enable_oob_port(struct net_device *dev,
-			struct evl_netdev_activation *act) /* inband, rtnl_lock held */
+			struct evl_net_devparams *p) /* inband, rtnl_lock held */
 {
 	struct oob_netdev_state *rnds, *nds;
 	struct evl_netdev_state *pest, *est;
@@ -141,19 +141,19 @@ static int enable_oob_port(struct net_device *dev,
 	if (est->refs++ > 0)	/* Guarded by rtnl_lock. */
 		goto queue;
 
-	if (!act->poolsz)
-		act->poolsz = EVL_DEFAULT_NETDEV_POOLSZ;
+	if (!p->poolsz)
+		p->poolsz = EVL_DEFAULT_NETDEV_POOLSZ;
 
-	if (!act->bufsz)
-		act->bufsz = EVL_DEFAULT_NETDEV_BUFSZ;
+	if (!p->bufsz)
+		p->bufsz = EVL_DEFAULT_NETDEV_BUFSZ;
 
 	/* Silently align on the current mtu if need be. */
 	mtu = READ_ONCE(real_dev->mtu);
-	if (act->bufsz < mtu)
-		act->bufsz = mtu;
+	if (p->bufsz < mtu)
+		p->bufsz = mtu;
 
-	est->pool_max = act->poolsz;
-	est->buf_size = act->bufsz;
+	est->pool_max = p->poolsz;
+	est->buf_size = p->bufsz;
 	spin_lock_init(&est->filter_lock);
 	est->qdisc = evl_net_alloc_qdisc(&evl_net_qdisc_fifo);
 	if (IS_ERR(est->qdisc)) {
@@ -320,7 +320,7 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 }
 
 static int switch_oob_port(struct net_device *dev,
-			struct evl_netdev_activation *act) /* rtnl_lock held, in-band */
+			struct evl_net_devparams *p) /* rtnl_lock held, in-band */
 {
 	int ret = 0;
 
@@ -329,39 +329,27 @@ static int switch_oob_port(struct net_device *dev,
 	 * received by the device flowing through the in-band net core
 	 * are diverted to netif_deliver_oob().
 	 */
-	if (act)
-		ret = enable_oob_port(dev, act);
-	else
+	if (p) {
+		if (p->poolsz > EVL_MAX_NETDEV_POOLSZ ||
+			p->bufsz > EVL_MAX_NETDEV_BUFSZ)
+			ret = -EINVAL;
+		else
+			ret = enable_oob_port(dev, p);
+	} else {
 		disable_oob_port(dev);
+	}
 
 	return ret;
 }
 
-/*
- * in-band, switches the oob port state of the device bound to the
- * socket.
- */
-int evl_net_switch_oob_port(struct evl_socket *esk,
-			struct evl_netdev_activation *act)
+int evl_net_switch_oob_port(struct net_device *dev,
+			struct evl_net_devparams *p)
 {
-	struct net_device *dev;
 	int ret;
 
-	dev = esk->proto->get_netif(esk);
-	if (dev == NULL)
-		return -ENXIO;
-
-	if (act &&
-		(act->poolsz > EVL_MAX_NETDEV_POOLSZ ||
-		act->bufsz > EVL_MAX_NETDEV_BUFSZ)) {
-		ret = -EINVAL;
-	} else {
-		rtnl_lock();
-		ret = switch_oob_port(dev, act);
-		rtnl_unlock();
-	}
-
-	evl_net_put_dev(dev);
+	rtnl_lock();
+	ret = switch_oob_port(dev, p);
+	rtnl_unlock();
 
 	return ret;
 }
@@ -470,12 +458,12 @@ void evl_net_put_dev(struct net_device *dev)
  */
 int netif_oob_switch_port(struct net_device *dev, bool enabled) /* rtnl_lock held */
 {
-	struct evl_netdev_activation act = {
+	struct evl_net_devparams p = {
 		.poolsz = 0,
 		.bufsz = 0,
 	};
 
-	return switch_oob_port(dev, enabled ? &act : NULL);
+	return switch_oob_port(dev, enabled ? &p : NULL);
 }
 
 /**
@@ -619,6 +607,9 @@ static long netdev_ioctl(struct file *filp, unsigned int cmd,
 	case EVL_NDEVIOC_SETRXEBPF:
 		ret = set_rx_filter(evl_net_real_dev(dev), arg);
 		break;
+	case EVL_NDEVIOC_SWITCHOFF:
+		ret = evl_net_switch_oob_port(dev, NULL);
+		break;
 	}
 
 	return ret;
@@ -642,15 +633,10 @@ static const struct file_operations netdev_fops = {
 #endif
 };
 
-int evl_net_dev_allocfd(struct net *net, const char *devname)
+int __evl_net_dev_allocfd(struct net_device *dev)
 {
-	struct net_device *dev;
 	struct file *filp;
 	int ret, fd;
-
-	dev = evl_net_get_dev_by_name(net, devname);
-	if (!dev)
-		return -EINVAL;
 
 	filp = anon_inode_getfile("[evl-netdev]", &netdev_fops,
 				dev, O_RDWR|O_CLOEXEC);
@@ -670,6 +656,27 @@ int evl_net_dev_allocfd(struct net *net, const char *devname)
 	return fd;
 fail:
 	filp_close(filp, current->files);
+
+	return ret;
+}
+
+int evl_net_dev_allocfd(struct net *net, const char *devname)
+{
+	struct net_device *dev;
+	int ret;
+
+	dev = evl_net_get_dev_by_name(net, devname);
+	if (!dev)
+		return -EINVAL;
+
+	ret = __evl_net_dev_allocfd(dev);
+	if (ret)
+		evl_net_put_dev(dev);
+
+	/*
+	 * On success, the reference on @dev will be released by
+	 * netdev_release().
+	 */
 
 	return ret;
 }

@@ -102,27 +102,55 @@ void __init evl_net_cleanup(void)
 static long net_ioctl(struct file *filp, unsigned int cmd,
 		unsigned long arg)
 {
-	struct evl_net_devfd req, __user *u_req;
+	struct evl_net_devparams devp, __user *u_devp;
+	struct evl_net_devfd fdreq, __user *u_fdreq;
+	struct net *net = current->nsproxy->net_ns;
 	const char __user *u_name;
 	struct filename *devname;
+	struct net_device *dev;
 	long ret;
 	int ufd;
 
 	switch (cmd) {
-	case EVL_NET_GETDEVFD:
-		u_req = (typeof(u_req))arg;
-		ret = copy_from_user(&req, u_req, sizeof(req));
+	case EVL_NET_OPENPORT: /* Turn oob port on. */
+		u_devp = (typeof(u_devp))arg;
+		ret = copy_from_user(&devp, u_devp, sizeof(devp));
 		if (ret)
 			return -EFAULT;
-		u_name = evl_valptr64(req.name_ptr, const char);
+		u_name = evl_valptr64(devp.name_ptr, const char);
 		devname = getname(u_name);
 		if (IS_ERR(devname))
 			return PTR_ERR(devname);
-		ufd = evl_net_dev_allocfd(current->nsproxy->net_ns, devname->name);
+		dev = dev_get_by_name(net, devname->name);
+		putname(devname);
+		if (!dev)
+			return -EINVAL;
+		ret = evl_net_switch_oob_port(dev, &devp);
+		dev_put(dev);	/* Drop the ref. obtained from dev_get_by_name() */
+		if (ret)
+			break;
+		/* The port is left open on user-specific errors. */
+		ufd = __evl_net_dev_allocfd(dev);
+		if (ufd < 0)
+			break;
+		ret = put_user((__u32)ufd, &u_devp->fd);
+		if (ret)
+			ret = -EFAULT;
+		break;
+	case EVL_NET_GETDEVFD:	/* Get a fildes on an oob-enabled device. */
+		u_fdreq = (typeof(u_fdreq))arg;
+		ret = copy_from_user(&fdreq, u_fdreq, sizeof(fdreq));
+		if (ret)
+			return -EFAULT;
+		u_name = evl_valptr64(fdreq.name_ptr, const char);
+		devname = getname(u_name);
+		if (IS_ERR(devname))
+			return PTR_ERR(devname);
+		ufd = evl_net_dev_allocfd(net, devname->name);
 		putname(devname);
 		if (ufd < 0)
 			return ufd;
-		ret = put_user((__u32)ufd, &u_req->fd);
+		ret = put_user((__u32)ufd, &u_fdreq->fd);
 		if (ret)
 			return -EFAULT;
 		break;

@@ -813,9 +813,8 @@ __poll_t sock_oob_poll(struct file *filp,
 static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
 			unsigned long arg)
 {
-	struct evl_socket *esk = evl_sk(sk);
-	struct evl_netdev_activation act, __user *u_act;
 	struct evl_net_solicit solreq, __user *u_solreq;
+	struct evl_socket *esk = evl_sk(sk);
 	int ret;
 
 	/*
@@ -824,16 +823,6 @@ static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
 	 * request from the inband stage for those would fail.
 	 */
 	switch (cmd) {
-	case EVL_SOCKIOC_ACTIVATE: /* Turn oob port on. */
-		u_act = (typeof(u_act))arg;
-		ret = raw_copy_from_user(&act, u_act, sizeof(act));
-		if (ret)
-			return -EFAULT;
-		ret = evl_net_switch_oob_port(esk, &act);
-		break;
-	case EVL_SOCKIOC_DEACTIVATE: /* Turn oob port off. */
-		ret = evl_net_switch_oob_port(esk, NULL);
- 		break;
 	case EVL_SOCKIOC_SOLICIT:
 		u_solreq = (typeof(u_solreq))arg;
 		ret = copy_from_user(&solreq, u_solreq, sizeof(solreq));
