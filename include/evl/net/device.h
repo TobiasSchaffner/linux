@@ -28,6 +28,9 @@ struct net_device *
 evl_net_get_dev_by_index(struct net *net, int ifindex);
 
 struct net_device *
+evl_net_get_dev_by_flags(struct net *net, int flags);
+
+struct net_device *
 evl_net_get_dev_by_name(struct net *net, const char *name);
 
 void evl_net_get_dev(struct net_device *dev);
