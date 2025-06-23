@@ -46,11 +46,6 @@ struct user_oob_msghdr {
 	struct __evl_timespec timeout;
 };
 
-struct evl_netdev_activation {
-	__u64 poolsz;
-	__u64 bufsz;
-};
-
 #define EVL_NEIGH_PERMANENT  0x1
 
 struct evl_net_solicit {
@@ -82,8 +77,6 @@ struct evl_net_sockopt {
 	__u64 optlen_ptr;		/* ([const] socklen_t __user *optlen) */
 };
 
-#define EVL_SOCKIOC_ACTIVATE	_IOW(EVL_SOCKET_IOCBASE, 1, struct evl_netdev_activation)
-#define EVL_SOCKIOC_DEACTIVATE	_IO(EVL_SOCKET_IOCBASE, 2)
 #define EVL_SOCKIOC_SENDMSG	_IOW(EVL_SOCKET_IOCBASE, 3, struct user_oob_msghdr)
 #define EVL_SOCKIOC_RECVMSG	_IOWR(EVL_SOCKET_IOCBASE, 4, struct user_oob_msghdr)
 #define EVL_SOCKIOC_SOLICIT	_IOW(EVL_SOCKET_IOCBASE, 5, struct evl_net_solicit)
