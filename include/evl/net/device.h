@@ -13,13 +13,12 @@
 #include <uapi/evl/net/device-abi.h>
 #include <uapi/evl/net/bpf-abi.h>
 
-struct evl_socket;
-struct evl_netdev_activation;
+struct evl_net_devparams;
 struct notifier_block;
 struct sk_buff;
 
-int evl_net_switch_oob_port(struct evl_socket *esk,
-			    struct evl_netdev_activation *act);
+int evl_net_switch_oob_port(struct net_device *dev,
+			    struct evl_net_devparams *p);
 
 int evl_netdev_event(struct notifier_block *ev_block,
 		     unsigned long event, void *ptr);
@@ -38,6 +37,8 @@ void evl_net_get_dev(struct net_device *dev);
 void evl_net_put_dev(struct net_device *dev);
 
 void evl_net_wake_rx(struct net_device *dev);
+
+int __evl_net_dev_allocfd(struct net_device *dev);
 
 int evl_net_dev_allocfd(struct net *net, const char *devname);
 
