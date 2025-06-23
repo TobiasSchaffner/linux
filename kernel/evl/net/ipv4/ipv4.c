@@ -234,14 +234,21 @@ void __evl_net_ipv4_gc(struct evl_net_frag_tdir *ftdir)
  * address using ARP neighbour solicitation. This call waits for 5s
  * for the front cache to receive the ARP entry before timing out.
  *
- * CAUTION: This routine may return -ERESTARTSYS on timeout.
+ * @net		Network namespace this operation applies to.
+ * @dev		Preferred output device, or NULL if unspec. If given, @dev
+ *		must be enabled as an oob port.
+ * @addr	IPv4 address of the peer to solicit.
+ * @flags	Operation flags. EVL_NEIGH_PERMANENT locks the ARP entry
+ *		in the in-band cache.
+ *
+ * Returns zero on success.
  */
-int evl_net_ipv4_solicit(struct evl_socket *esk,
+int evl_net_ipv4_solicit(struct net *net,
+			struct net_device *dev,
 			struct sockaddr *addr, int flags)
 {
 	struct evl_net_arp_entry *e = NULL;
 	struct neighbour *neigh;
-	struct net_device *dev;
 	struct rtable *rt;
 	__be32 ipaddr;
 	long ret = 0;
@@ -260,7 +267,8 @@ int evl_net_ipv4_solicit(struct evl_socket *esk,
 	 * the routing data, which we then index into our oob route
 	 * cache.
 	 */
-	rt = ip_route_output(sock_net(esk->sk), ipaddr, INADDR_ANY, 0, 0, RT_SCOPE_UNIVERSE);
+	rt = ip_route_output(net, ipaddr, INADDR_ANY, 0,
+			     dev ? dev->ifindex : 0, RT_SCOPE_UNIVERSE);
 	if (IS_ERR(rt))
 		return PTR_ERR(rt);
 

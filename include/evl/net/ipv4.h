@@ -43,7 +43,8 @@ int evl_net_ipv4_add_device(struct net_device *dev);
 
 void evl_net_ipv4_remove_device(struct net_device *dev);
 
-int evl_net_ipv4_solicit(struct evl_socket *esk,
+int evl_net_ipv4_solicit(struct net *net,
+			struct net_device *dev,
 			struct sockaddr *addr, int flags);
 
 extern struct evl_socket_domain evl_net_ipv4;
