@@ -1029,7 +1029,7 @@ void __evl_schedule(void) /* oob or/and hard irqs off (CPU migration-safe) */
 	}
 
 	evl_switch_account(this_rq, &next->stat.account);
-	evl_inc_counter(&next->stat.csw);
+	evl_opt_counter_inc(&next->stat.csw);
 	raw_spin_unlock(&prev->lock);
 
 	prepare_rq_switch(this_rq, prev, next);
@@ -1239,7 +1239,7 @@ void evl_switch_inband_details(int cause, union evl_value details)
 		curr->name, evl_get_inband_pid(curr));
 
 	/* Account for switch to in-band context. */
-	evl_inc_counter(&curr->stat.isw);
+	evl_opt_counter_inc(&curr->stat.isw);
 
 	trace_evl_switched_inband(curr);
 

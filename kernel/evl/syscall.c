@@ -305,7 +305,7 @@ static int do_oob_syscall(struct irq_stage *stage, struct pt_regs *regs,
 	}
 
 	/* Update the stats and user visible info. */
-	evl_inc_counter(&curr->stat.sc);
+	evl_opt_counter_inc(&curr->stat.sc);
 	evl_sync_uwindow(curr);
 
 	trace_evl_oob_sysexit(syscall_get_return_value(tsk, regs));
@@ -403,7 +403,7 @@ done:
 	if (curr->local_info & EVL_T_IGNOVR)
 		curr->local_info &= ~EVL_T_IGNOVR;
 
-	evl_inc_counter(&curr->stat.sc);
+	evl_opt_counter_inc(&curr->stat.sc);
 	evl_sync_uwindow(curr);
 
 	trace_evl_inband_sysexit(syscall_get_return_value(tsk, regs));
