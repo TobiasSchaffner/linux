@@ -6,7 +6,7 @@
 
 #include <linux/errno.h>
 #include <linux/netdevice.h>
-#include <linux/skbuff.h>
+#include <evl/net/skb.h>
 #include <evl/net/socket.h>
 #include <evl/net/device.h>
 #include <evl/net/output.h>
@@ -52,9 +52,11 @@ static int ether_transmit_one(struct net_device *dev, struct sk_buff *skb,
 
 /**
  *  evl_net_ether_transmit - set the l2 header of an ethernet packet
- *  before passing it down to the hardware.
+ *  before passing it down to the hardware.  This routine can deal
+ *  with fragmented output.
  *
- *  This routine can deal with fragmented output.
+ *  CAUTION: unlike other calls in this family, on transmit error,
+ *  evl_net_ether_transmit() releases all the untransmitted buffers.
  */
 int evl_net_ether_transmit(struct net_device *dev, struct sk_buff *skb,
 			const void *hw_dst)
@@ -62,24 +64,31 @@ int evl_net_ether_transmit(struct net_device *dev, struct sk_buff *skb,
 	struct sk_buff *fskb, *nskb;
 	int ret;
 
-	ret = ether_transmit_one(dev, skb, hw_dst);
-	if (ret)
-		return ret;
-
 	fskb = skb_shinfo(skb)->frag_list;
-	if (fskb) {
-		do {
-			nskb = fskb->next;
-			fskb->next = NULL;
-			ret = ether_transmit_one(dev, fskb, hw_dst);
-			if (ret) {
-				fskb->next = nskb;
-				skb_shinfo(skb)->frag_list = fskb;
-				return ret;
-			}
-			fskb = nskb;
-		} while (fskb);
+	if (fskb)
 		skb_shinfo(skb)->frag_list = NULL;
+
+	ret = ether_transmit_one(dev, skb, hw_dst);
+	if (ret) {
+		evl_net_wput_skb(skb);
+		return ret;
+	}
+
+	while (fskb)  {
+		nskb = fskb->next;
+		fskb->next = NULL;
+		ret = ether_transmit_one(dev, fskb, hw_dst);
+		if (ret) {
+			fskb->next = nskb;
+			do {
+				nskb = fskb->next;
+				fskb->next = NULL;
+				evl_net_wput_skb(fskb);
+				fskb = nskb;
+			} while (fskb);
+			return ret;
+		}
+		fskb = nskb;
 	}
 
 	return 0;
