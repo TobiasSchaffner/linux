@@ -78,14 +78,6 @@ struct oob_net_state {
 		struct evl_cache routes;
 		/* Cache of active UDP4 receivers. */
 		struct evl_cache udp;
-		/* ARP pseudo-entries. */
-		struct {
-			/* ARP pseudo-entry to current loopback device. */
-			struct evl_net_arp_entry *lo;
-			/* Lock guarding the pseudo-entries for add/removal. */
-			hard_spinlock_t lock;
-		} pseudo_arp;
-		/* Lock guarding pseudo entries. */
 	} ipv4;
 };
 
