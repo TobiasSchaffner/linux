@@ -187,10 +187,8 @@ struct evl_timer {
 	struct evl_timerbase *base;
 	void (*handler)(struct evl_timer *timer);
 	const char *name;
-#ifdef CONFIG_EVL_RUNSTATS
-	struct evl_counter scheduled;
-	struct evl_counter fired;
-#endif /* CONFIG_EVL_RUNSTATS */
+	struct evl_opt_counter scheduled;
+	struct evl_opt_counter fired;
 };
 
 #define evl_tdate(__timer)	((__timer)->node.date)
@@ -291,39 +289,24 @@ void evl_set_timer_gravity(struct evl_timer *timer,
 	evl_init_timer_on_rq(__timer, &evl_mono_clock, __handler, NULL,	\
 			EVL_TIMER_IGRAVITY)
 
-#ifdef CONFIG_EVL_RUNSTATS
-
 static inline
 void evl_reset_timer_stats(struct evl_timer *timer)
 {
-	evl_set_counter(&timer->scheduled, 0);
-	evl_set_counter(&timer->fired, 0);
+	evl_opt_counter_set(&timer->scheduled, 0);
+	evl_opt_counter_set(&timer->fired, 0);
 }
 
 static inline
 void evl_account_timer_scheduled(struct evl_timer *timer)
 {
-	evl_inc_counter(&timer->scheduled);
+	evl_opt_counter_inc(&timer->scheduled);
 }
 
 static inline
 void evl_account_timer_fired(struct evl_timer *timer)
 {
-	evl_inc_counter(&timer->fired);
+	evl_opt_counter_inc(&timer->fired);
 }
-
-#else /* !CONFIG_EVL_RUNSTATS */
-
-static inline
-void evl_reset_timer_stats(struct evl_timer *timer) { }
-
-static inline
-void evl_account_timer_scheduled(struct evl_timer *timer) { }
-
-static inline
-void evl_account_timer_fired(struct evl_timer *timer) { }
-
-#endif /* !CONFIG_EVL_RUNSTATS */
 
 static inline
 void evl_set_timer_name(struct evl_timer *timer, const char *name)
