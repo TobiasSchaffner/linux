@@ -108,6 +108,20 @@ static int add_receive_slot(struct evl_socket *esk) /* inband */
 	return 0;
 }
 
+static void flush_receive_slot(struct evl_net_udp_receiver *e)
+{
+	struct sk_buff *skb, *tmp;
+
+	list_for_each_entry_safe(skb, tmp, &e->queue, list) {
+		/*
+		 * See comment in receive_udp() about not charging the
+		 * socket for rmem, applies here too.
+		 */
+		list_del(&skb->list);
+		evl_net_free_skb(skb);
+	}
+}
+
 /*
  * drop_receive_slot - remove a receive slot previously installed by
  * add_receive_slot(). Slots a refcounted, so that SO_REUSEPORT is
@@ -123,10 +137,13 @@ static void drop_receive_slot(struct evl_socket *esk) /* inband */
 	struct __evl_net_udp_key key;
 
 	e = READ_ONCE(esk->u.ip.udp.receiver);
-	if (e && refcount_dec_and_test(&e->refs)) {
-		key.dport = e->key.dport;
-		key.daddr = e->key.daddr;
-		evl_del_cache_entry(cache, &key);
+	if (e) {
+		if (refcount_dec_and_test(&e->refs)) {
+			flush_receive_slot(e); /* Flush unconsumed buffers. */
+			key.dport = e->key.dport;
+			key.daddr = e->key.daddr;
+			evl_del_cache_entry(cache, &key);
+		}
 		WRITE_ONCE(esk->u.ip.udp.receiver, NULL);
 	}
 }
