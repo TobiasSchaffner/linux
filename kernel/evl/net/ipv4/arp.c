@@ -199,26 +199,35 @@ struct evl_net_arp_entry *evl_net_get_arp_entry(struct net_device *dev, __be32 a
 		.dev = dev,
 	};
 	struct oob_net_state *nets = &dev_net(dev)->oob;
-	struct evl_net_arp_entry *earp;
 	struct evl_cache_entry *entry;
-	unsigned long flags;
-
-	if (unlikely(ipv4_is_loopback(addr))) {
-		raw_spin_lock_irqsave(&nets->ipv4.pseudo_arp.lock, flags);
-		earp = nets->ipv4.pseudo_arp.lo;
-		if (likely(earp))
-			evl_get_cache_entry(&earp->entry);
-		raw_spin_unlock_irqrestore(&nets->ipv4.pseudo_arp.lock, flags);
-		return earp;
-	}
 
 	entry = evl_lookup_cache(&nets->ipv4.arp, &key);
-	if (likely(entry)) {
-		earp = container_of(entry, struct evl_net_arp_entry, entry);
-		return earp;
-	}
+	if (likely(entry))
+		return container_of(entry, struct evl_net_arp_entry, entry);
 
 	return NULL;
+}
+
+struct evl_net_arp_entry *
+evl_net_get_arp_entry_or_pseudo(struct net_device *dev, __be32 addr,
+				struct evl_net_arp_entry *pseudo_earp)
+{
+	struct evl_net_arp_entry *earp = NULL;
+
+	/*
+	 * We don't grab any reference on the device for which a
+	 * pseudo-ARP entry is resolved, the caller is supposed to
+	 * have one already, and expected not to put back this
+	 * temporary entry.
+	 */
+	if (unlikely(ipv4_is_loopback(addr))) {
+		earp = pseudo_earp;
+		earp->key.dev = dev;
+		earp->key.addr = addr;
+	}
+
+	/* Not a pseudo-ARP, look up into the cache. */
+	return earp ?: evl_net_get_arp_entry(dev, addr);
 }
 
 static struct notifier_block netevent_notifier __read_mostly = {
@@ -248,9 +257,6 @@ int evl_net_init_arp(struct net *net)
 	if (ret)
 		return ret;
 
-	raw_spin_lock_init(&nets->ipv4.pseudo_arp.lock);
-	might_hard_lock(&nets->ipv4.pseudo_arp.lock);
-
 	register_netevent_notifier(&netevent_notifier);
 
 	return 0;
@@ -258,59 +264,6 @@ int evl_net_init_arp(struct net *net)
 
 void evl_net_cleanup_arp(struct net *net)
 {
-	struct oob_net_state *nets = &net->oob;
-
 	unregister_netevent_notifier(&netevent_notifier);
-	evl_net_drop_pseudo_arp(net, &nets->ipv4.pseudo_arp.lo);
 	evl_net_flush_arp(net);
-}
-
-static void swap_pseudo_entry(struct oob_net_state *nets,
-			struct evl_net_arp_entry *new_arp,
-			struct evl_net_arp_entry **earpp)
-{
-	struct evl_net_arp_entry *old_arp;
-	unsigned long flags;
-
-	/*
-	 * Unfortunately, plain xchg() is not an option because we
-	 * have to serialize with evl_net_get_arp_entry() testing for
-	 * nullness _and_ taking a reference atomically.
-	 */
-	raw_spin_lock_irqsave(&nets->ipv4.pseudo_arp.lock, flags);
-	old_arp = *earpp;
-	*earpp = new_arp;
-	raw_spin_unlock_irqrestore(&nets->ipv4.pseudo_arp.lock, flags);
-	if (old_arp)
-		evl_put_cache_entry(&old_arp->entry);
-}
-
-/* Create an ARP pseudo-entry for a special oob-capable device. */
-int evl_net_set_pseudo_arp(struct net_device *dev, __be32 addr,
-			struct evl_net_arp_entry **earpp)
-{
-	struct oob_net_state *nets = &dev_net(dev)->oob;
-	struct evl_net_arp_entry *earp;
-
-	earp = alloc_arp_entry(dev, addr, NULL);
-	if (!earp)
-		return -ENOMEM;
-
-	/*
-	 * CAUTION: We won't actually index this pseudo-entry into the
-	 * cache, but we still have to provide a valid cache pointer
-	 * so that release can happen via the cache->ops.drop handler.
-	 */
-	evl_init_cache_entry(&earp->entry, &nets->ipv4.arp);
-
-	swap_pseudo_entry(nets, earp, earpp);
-
-	return 0;
-}
-
-/* Drop a pseudo-ARP entry. */
-void evl_net_drop_pseudo_arp(struct net *net,
-			struct evl_net_arp_entry **earpp)
-{
-	swap_pseudo_entry(&net->oob, NULL, earpp);
 }

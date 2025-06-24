@@ -34,14 +34,12 @@ void evl_net_cleanup_arp(struct net *net);
 
 void evl_net_flush_arp(struct net *net);
 
-int evl_net_set_pseudo_arp(struct net_device *dev, __be32 addr,
-			struct evl_net_arp_entry **earpp);
-
-void evl_net_drop_pseudo_arp(struct net *net,
-			struct evl_net_arp_entry **earpp);
-
 struct evl_net_arp_entry *
 evl_net_get_arp_entry(struct net_device *dev, __be32 addr);
+
+struct evl_net_arp_entry *
+evl_net_get_arp_entry_or_pseudo(struct net_device *dev, __be32 addr,
+				struct evl_net_arp_entry *pseudo_earp);
 
 static inline void evl_net_put_arp_entry(struct evl_net_arp_entry *earp)
 {

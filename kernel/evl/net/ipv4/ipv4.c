@@ -315,40 +315,26 @@ int evl_net_ipv4_solicit(struct net *net,
 	return ret;
 }
 
-/* Declare a new oob-enabled device to the routing system. */
+/*
+ * Declare a new oob-enabled device to the routing system. Although
+ * unused at the moment, keep this in place for future needs.
+ */
 int evl_net_ipv4_add_device(struct net_device *dev)
 {
-	struct oob_net_state *nets = &dev_net(dev)->oob;
-	int ret = 0;
-
 	/*
 	 * EVL performs output routing only so far, which targets
-	 * oob-enabled devices exclusively. So complain then bail out
-	 * if oob mode is not active for the device received.
+	 * oob-enabled devices exclusively. So complain if oob mode is
+	 * not active for the device received.
 	 */
-	if (EVL_WARN_ON(NET, !netif_oob_port(dev)))
-		return 0;
-
-	/* Set an ARP pseudo-entry for the current loopback device. */
-	if (dev == dev_net(dev)->loopback_dev)
-		ret = evl_net_set_pseudo_arp(dev, htonl(INADDR_LOOPBACK),
-					&nets->ipv4.pseudo_arp.lo);
-
-	return ret;
+	EVL_WARN_ON(NET, !netif_oob_port(dev));
+	return 0;
 }
 
-/* Remove a downed device from the routing system. */
+/* Remove a disabled device from the routing system. */
 void evl_net_ipv4_remove_device(struct net_device *dev)
 {
-	struct net *net = dev_net(dev);
-	struct oob_net_state *nets = &net->oob;
-
 	if (EVL_WARN_ON(NET, !netif_oob_port(dev)))
 		return;
-
-	if (dev == net->loopback_dev)
-		/* The current loopback device is going down. */
-		evl_net_drop_pseudo_arp(net, &nets->ipv4.pseudo_arp.lo);
 }
 
 static struct evl_net_proto *match_ipv4_domain(int type, int protocol)
