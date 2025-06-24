@@ -138,10 +138,10 @@ struct evl_thread {
 	atomic_t held_mutex_count;
 	struct irq_work inband_work;
 	struct {
-		struct evl_counter isw;	/* in-band switches */
-		struct evl_counter csw;	/* context switches */
-		struct evl_counter sc;	/* OOB syscalls */
-		struct evl_counter rwa;	/* remote wakeups */
+		struct evl_opt_counter isw;	/* in-band switches */
+		struct evl_opt_counter csw;	/* context switches */
+		struct evl_opt_counter sc;	/* OOB syscalls */
+		struct evl_opt_counter rwa;	/* remote wakeups */
 		struct evl_account account; /* exec time accounting */
 		struct evl_account lastperiod;
 	} stat;

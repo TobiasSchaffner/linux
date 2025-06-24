@@ -14,6 +14,33 @@
 
 struct evl_rq;
 
+typedef struct {
+	u64 value;
+} evl_counter64;
+
+typedef struct {
+	u32 value;
+} evl_counter32;
+
+#define evl_counter_inc(__c)		(++(__c)->value)
+#define evl_counter_read(__c)		((__c)->value)
+#define evl_counter_set(__c, __v)	((__c)->value = (__v))
+#define evl_counter_add(__c, __n)	((__c)->value += (__n))
+
+/*
+ * The careful helpers won't guarantee atomic updates of the counter,
+ * but do prevent from load/store tearing and other sorts of
+ * compiler-originated shenanigans.
+ */
+#define evl_counter_read_careful(__c)	READ_ONCE((__c)->value)
+#define evl_counter_add_careful(__c, __n)			\
+	do {							\
+		typeof((__c)->value) ___oldv =			\
+			evl_counter_read_careful(__c);		\
+		WRITE_ONCE((__c)->value, ___oldv + __n);	\
+	} while (0)
+#define evl_counter_inc_careful(__c)	evl_counter_add_careful(__c, 1)
+
 #ifdef CONFIG_EVL_RUNSTATS
 
 struct evl_account {
@@ -23,9 +50,9 @@ struct evl_account {
 
 /*
  * Return current date which can be passed to other accounting
- * services for immediate accounting. We do not use sched_clock() on
- * purpose: its worst case execution time may be really bad under some
- * combination of clock data updates and high cache pressure.
+ * services. We do not use sched_clock() on purpose: its worst case
+ * execution time may be really bad under some combination of clock
+ * data updates and high cache pressure.
  */
 static inline ktime_t evl_get_timestamp(void)
 {
@@ -86,25 +113,13 @@ static inline void evl_reset_account(struct evl_account *account)
 		(__rq)->current_account = (__new_account);	\
 	} while (0)
 
-struct evl_counter {
-	unsigned long counter;
+struct evl_opt_counter {
+	unsigned long value;
 };
 
-static inline unsigned long evl_inc_counter(struct evl_counter *c)
-{
-	return c->counter++;
-}
-
-static inline unsigned long evl_get_counter(struct evl_counter *c)
-{
-	return c->counter;
-}
-
-static inline
-void evl_set_counter(struct evl_counter *c, unsigned long value)
-{
-	c->counter = value;
-}
+#define evl_opt_counter_inc(__c)		evl_counter_inc(__c)
+#define evl_opt_counter_read(__c)		evl_counter_read(__c)
+#define evl_opt_counter_set(__c, __value)	evl_counter_set(__c, __value)
 
 #else /* !CONFIG_EVL_RUNSTATS */
 
@@ -119,12 +134,12 @@ struct evl_account {
 #define evl_close_account(__rq, __new_account)	do { } while (0)
 #define evl_get_last_account_switch(__rq)		({ 0; })
 
-struct evl_counter {
+struct evl_opt_counter {
 };
 
-#define evl_inc_counter(__c) 	({ do { } while(0); 0; })
-#define evl_get_counter(__c) 	({ 0; })
-#define evl_set_counter(_c, __value)	do { } while (0)
+#define evl_opt_counter_inc(__c) 		({ do { } while(0); 0; })
+#define evl_opt_counter_read(__c) 		({ 0; })
+#define evl_opt_counter_set(__c, __value)	do { } while (0)
 
 #endif /* CONFIG_EVL_RUNSTATS */
 
