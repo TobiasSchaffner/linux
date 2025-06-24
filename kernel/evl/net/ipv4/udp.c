@@ -214,14 +214,17 @@ static ssize_t offload_send_udp(struct evl_socket *esk,
  * datagram to the in-band stack.
  */
 static bool find_egress_path(struct evl_socket *esk, __be32 daddr,
-			struct evl_net_route **ertp, struct evl_net_arp_entry **earpp)
+			struct evl_net_route **ertp,
+			struct evl_net_arp_entry **earpp,
+			struct evl_net_arp_entry *pseudo_earp)
 {
 	struct evl_net_arp_entry *earp;
 	struct evl_net_route *ert;
 
 	ert = evl_net_route_ipv4_output(sock_net(esk->sk), daddr);
 	if (likely(ert)) {
-		earp = evl_net_get_arp_entry(ert->rt->dst.dev, daddr);
+		earp = evl_net_get_arp_entry_or_pseudo(ert->rt->dst.dev, daddr,
+						pseudo_earp);
 		if (likely(earp))  {
 			*ertp = ert;
 			*earpp = earp;
@@ -290,11 +293,11 @@ static ssize_t send_udp(struct evl_socket *esk,
 			struct iovec *iov,
 			size_t iovlen)
 {
+	struct evl_net_arp_entry *earp, pseudo_earp = { 0 };
 	struct sockaddr_in in_addr, *u_in_addr;
 	struct sock *sk = esk->sk;
 	struct inet_sock *inet = inet_sk(sk);
 	struct evl_net_ipv4_cookie ipc;
-	struct evl_net_arp_entry *earp;
 	struct evl_net_route *ert;
 	struct msghdr msg = { 0 };
 	struct __evl_timespec uts;
@@ -372,7 +375,7 @@ static ssize_t send_udp(struct evl_socket *esk,
 	 * none, then offload the packet to the inband stack (as a
 	 * result, we may receive the missing information eventually).
 	 */
-	if (!find_egress_path(esk, daddr, &ert, &earp)) {
+	if (!find_egress_path(esk, daddr, &ert, &earp, &pseudo_earp)) {
 		/*
 		 * We always charge the socket even when offloading to
 		 * the in-band stack although we won't consume any
@@ -433,7 +436,9 @@ static ssize_t send_udp(struct evl_socket *esk,
 	ret = send_datagram(skb, ert->rt->dst.dev, earp, &ipc,
 			dport, inet->inet_sport, datalen);
 out:
-	evl_net_put_arp_entry(earp);
+	if (likely(earp != &pseudo_earp))
+		evl_net_put_arp_entry(earp);
+
 	evl_net_put_route(ert);
 
 	return ret ?: datalen;
