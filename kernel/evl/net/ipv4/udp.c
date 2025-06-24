@@ -246,7 +246,6 @@ static int send_datagram(struct sk_buff *skb, struct net_device *dev,
 {
 	size_t ulen = datalen + sizeof(struct udphdr);
 	struct udphdr *uh;
-	int ret;
 
 	/*
 	 * Set up our transport header. evl_net_ipv4_build_datagram()
@@ -264,11 +263,8 @@ static int send_datagram(struct sk_buff *skb, struct net_device *dev,
 
 	skb->ip_summed = CHECKSUM_NONE;
 
-	ret = evl_net_ether_transmit(dev, skb, earp->ha);
-	if (ret)
-		evl_net_wput_skb(skb);
-
-	return ret;
+	/* On error, this call releases the untransmitted buffers. */
+	return evl_net_ether_transmit(dev, skb, earp->ha);
 }
 
 /* oob */
