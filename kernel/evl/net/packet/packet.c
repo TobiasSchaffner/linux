@@ -356,7 +356,7 @@ static int bind_packet_socket(struct evl_socket *esk,
 	return ret;
 }
 
-static struct net_device *get_netif_packet(struct evl_socket *esk)
+static struct net_device *get_netif(struct evl_socket *esk)
 {
 	return  evl_net_get_dev_by_index(esk->net,
 					esk->u.packet.ifindex);
@@ -384,7 +384,7 @@ static struct net_device *find_xmit_device(struct evl_socket *esk,
 			if (namelen)
 				return ERR_PTR(-EINVAL);
 
-			dev = get_netif_packet(esk);
+			dev = get_netif(esk);
 		} else {
 			if (namelen < sizeof(addr))
 				return ERR_PTR(-EINVAL);
@@ -401,7 +401,7 @@ static struct net_device *find_xmit_device(struct evl_socket *esk,
 			dev = evl_net_get_dev_by_index(esk->net, addr.sll_ifindex);
 		}
 	} else {
-		dev = get_netif_packet(esk);
+		dev = get_netif(esk);
 	}
 
 	if (dev == NULL)
@@ -667,7 +667,7 @@ static __poll_t poll_packet(struct evl_socket *esk,
 	if (!list_empty(&esk->input) || evl_test_socket_iots(esk))
 		ret = POLLIN|POLLRDNORM;
 
-	dev = get_netif_packet(esk);
+	dev = get_netif(esk);
 	if (dev) {
 		est = dev->oob_state.estate;
 		evl_poll_watch(&est->poll_head, wait, NULL);
@@ -686,7 +686,6 @@ static struct evl_net_proto ether_packet_proto = {
 	.oob_send = send_packet,
 	.oob_poll = poll_packet,
 	.oob_receive = receive_packet,
-	.get_netif = get_netif_packet,
 };
 
 static struct evl_net_proto *
