@@ -649,18 +649,6 @@ static __poll_t poll_udp(struct evl_socket *esk,
 }
 
 /* in-band */
-static struct net_device *get_netif_udp(struct evl_socket *esk)
-{
-	int ifindex;
-
-	ifindex = READ_ONCE(esk->sk->sk_bound_dev_if);
-	if (ifindex)
-		return evl_net_get_dev_by_index(esk->net, ifindex);
-
-	return NULL;
-}
-
-/* in-band */
 static void handle_udp_inband(struct evl_socket *esk)
 {
 	struct evl_net_offload *ofld, *n;
@@ -911,6 +899,5 @@ struct evl_net_proto evl_net_udp_proto = {
 	.oob_send = send_udp,
 	.oob_poll = poll_udp,
 	.oob_receive = receive_udp,
-	.get_netif = get_netif_udp,
 	.handle_offload = handle_udp_inband,
 };

@@ -54,7 +54,6 @@ struct evl_net_proto {
 			size_t iovlen);
 	__poll_t (*oob_poll)(struct evl_socket *esk,
 			struct oob_poll_wait *wait);
-	struct net_device *(*get_netif)(struct evl_socket *esk);
 	void (*handle_offload)(struct evl_socket *esk);
 };
 
