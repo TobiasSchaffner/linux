@@ -384,7 +384,7 @@ static struct net_device *find_xmit_device(struct evl_socket *esk,
 			if (namelen)
 				return ERR_PTR(-EINVAL);
 
-			dev = esk->proto->get_netif(esk);
+			dev = get_netif_packet(esk);
 		} else {
 			if (namelen < sizeof(addr))
 				return ERR_PTR(-EINVAL);
@@ -401,7 +401,7 @@ static struct net_device *find_xmit_device(struct evl_socket *esk,
 			dev = evl_net_get_dev_by_index(esk->net, addr.sll_ifindex);
 		}
 	} else {
-		dev = esk->proto->get_netif(esk);
+		dev = get_netif_packet(esk);
 	}
 
 	if (dev == NULL)
@@ -667,7 +667,7 @@ static __poll_t poll_packet(struct evl_socket *esk,
 	if (!list_empty(&esk->input) || evl_test_socket_iots(esk))
 		ret = POLLIN|POLLRDNORM;
 
-	dev = esk->proto->get_netif(esk);
+	dev = get_netif_packet(esk);
 	if (dev) {
 		est = dev->oob_state.estate;
 		evl_poll_watch(&est->poll_head, wait, NULL);
