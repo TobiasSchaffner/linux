@@ -220,7 +220,7 @@ evl_net_get_arp_entry_or_pseudo(struct net_device *dev, __be32 addr,
 	 * have one already, and expected not to put back this
 	 * temporary entry.
 	 */
-	if (unlikely(ipv4_is_loopback(addr))) {
+	if (unlikely(ipv4_is_loopback(addr) || ipv4_is_lbcast(addr))) {
 		earp = pseudo_earp;
 		earp->key.dev = dev;
 		earp->key.addr = addr;
