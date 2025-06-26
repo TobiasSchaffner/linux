@@ -400,13 +400,12 @@ static ssize_t send_udp(struct evl_socket *esk,
 		 * in-band stage for routing and/or MAC address
 		 * resolution. So the datagram is indeed in-flight,
 		 * but we cannot guarantee a bounded delay before it
-		 * is written to the wire. In such a case, provided
-		 * the caller asked for non-blocking I/O, return
+		 * is written to the wire. In such a case, return
 		 * -EINPROGRESS. This is a way for the caller to
 		 * detect a missing peer solicitation before the
 		 * latter is sent oob data.
 		 */
-		return unlikely(msg_flags & MSG_DONTWAIT) ? -EINPROGRESS : 0;
+		return -EINPROGRESS;
 	}
 
 	/* Ok, we have an oob path for that datagram. */
