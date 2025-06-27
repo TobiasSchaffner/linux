@@ -213,27 +213,39 @@ static ssize_t offload_send_udp(struct evl_socket *esk,
  * address of this peer, then the caller will have to pass on the
  * datagram to the in-band stack.
  */
-static bool find_egress_path(struct evl_socket *esk, __be32 daddr,
+static int find_egress_path(struct evl_socket *esk,
+			__be32 daddr,
 			struct evl_net_route **ertp,
 			struct evl_net_arp_entry **earpp,
-			struct evl_net_arp_entry *pseudo_earp)
+			struct evl_net_arp_entry *pseudo_earp,
+			int msg_flags)
 {
 	struct evl_net_arp_entry *earp;
 	struct evl_net_route *ert;
+	int ret = -ENOENT;
 
 	ert = evl_net_route_ipv4_output(sock_net(esk->sk), daddr);
 	if (likely(ert)) {
+		/*
+		 *  If MSG_DONTROUTE was given, make sure the
+		 *  destination is no more than one hop away from us.
+		 */
+		if  (msg_flags & MSG_DONTROUTE && rt_nexthop(ert->rt, daddr) != daddr) {
+			ret = -EMULTIHOP;
+			goto ignore;
+		}
 		earp = evl_net_get_arp_entry_or_pseudo(ert->rt->dst.dev, daddr,
 						pseudo_earp);
 		if (likely(earp))  {
 			*ertp = ert;
 			*earpp = earp;
-			return true;
+			return 0;
 		}
+	ignore:
 		evl_net_put_route(ert);
 	}
 
-	return false;
+	return ret;
 }
 
 /*
@@ -318,9 +330,14 @@ static ssize_t send_udp(struct evl_socket *esk,
 
 	/*
 	 * Unlike BSD, we accept MSG_DONTWAIT to decline waiting on
-	 * skb contention, or offloading to the in-band stage.
+	 * skb contention, or offloading to the in-band stage.  We
+	 * interpret MSG_DONTROUTE in a slightly awkward manner, in
+	 * that it makes us verify that the destination is directly
+	 * reachable from this host (i.e. on-link TOS). IOW, it does
+	 * not affect routing, it ensures that the routing information
+	 * we use is right for the task.
 	 */
-	if (msg_flags & ~MSG_DONTWAIT)
+	if (msg_flags & ~(MSG_DONTWAIT|MSG_DONTROUTE))
 		return -EINVAL;
 
 	if (evl_socket_f_flags(esk) & O_NONBLOCK)
@@ -375,7 +392,11 @@ static ssize_t send_udp(struct evl_socket *esk,
 	 * none, then offload the packet to the inband stack (as a
 	 * result, we may receive the missing information eventually).
 	 */
-	if (!find_egress_path(esk, daddr, &ert, &earp, &pseudo_earp)) {
+	ret = find_egress_path(esk, daddr, &ert, &earp, &pseudo_earp, msg_flags);
+	if (ret == -EMULTIHOP)
+		return ret;	/* MSG_DONTROUTE cannot be honored. */
+
+	if (ret) { /* No route known from the front cache - bummer. */
 		/*
 		 * We always charge the socket even when offloading to
 		 * the in-band stack although we won't consume any
