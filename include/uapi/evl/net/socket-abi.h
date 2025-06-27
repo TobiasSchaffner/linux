@@ -46,7 +46,8 @@ struct user_oob_msghdr {
 	struct __evl_timespec timeout;
 };
 
-#define EVL_NEIGH_PERMANENT  0x1
+#define EVL_NEIGH_PERMANENT	0x1 /* Make ARP entry permanent */
+#define EVL_NEIGH_MAYROUTE	0x2 /* Allow gateways to solicited destinations */
 
 struct evl_net_solicit {
 	struct __kernel_sockaddr_storage addr;
