@@ -261,6 +261,9 @@ int evl_net_ipv4_solicit(struct net *net,
 	if (flags & ~(EVL_NEIGH_PERMANENT|EVL_NEIGH_MAYROUTE))
 		return -EINVAL;
 
+	if (dev && !netif_oob_port(dev))
+		return -ENODEV;
+
 	ipaddr = ((struct sockaddr_in *)addr)->sin_addr.s_addr;
 
 	/*
