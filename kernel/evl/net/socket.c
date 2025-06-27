@@ -722,8 +722,15 @@ static int socket_solicit_peer(struct evl_socket *esk,
 		return -ENOTSUPP;
 
 	ifindex = READ_ONCE(sk->sk_bound_dev_if);
-	if (ifindex)
+	if (ifindex) {
+		/*
+		 * If a device is bound, it must provide an enabled
+		 * oob port.
+		 */
 		dev = evl_net_get_dev_by_index(net, ifindex);
+		if (!dev)
+			return -ENODEV;
+	}
 
 	ret = esk->proto->solicit(net, dev, addr, flags);
 	if (dev)
