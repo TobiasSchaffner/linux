@@ -526,13 +526,17 @@ static ssize_t receive_udp(struct evl_socket *esk,
 	ktime_t timeout = EVL_INFINITE;
 	enum evl_tmode tmode = EVL_REL;
 	struct evl_net_udp_receiver *e;
+	struct sock *sk = esk->sk;
 	struct __evl_timespec uts;
 	struct sk_buff *skb;
 	unsigned long flags;
+	int bound_if;
 	ssize_t ret;
 
 	if (evl_socket_f_flags(esk) & O_NONBLOCK)
 		msg_flags |= MSG_DONTWAIT;
+
+	bound_if = READ_ONCE(sk->sk_bound_dev_if);
 
 	/*
 	 * The cache entry may be freed only from a RCU callback, get
@@ -552,11 +556,11 @@ again:
 		 * indefinitely until interrupted.
 		 */
 		rcu_read_unlock();
-		lock_sock(esk->sk);
+		lock_sock(sk);
 		/* Recheck binding under lock. */
 		e = READ_ONCE(esk->u.ip.udp.receiver);
 		ret = e ? 0 : add_receive_slot(esk);
-		release_sock(esk->sk);
+		release_sock(sk);
 		if (!ret)
 			goto again;
 		return ret;
@@ -605,24 +609,47 @@ again:
 	do {
 		raw_spin_lock_irqsave(&e->wait.wchan.lock, flags);
 
-		if (!list_empty(&e->queue)) {
-			skb = list_get_entry(&e->queue, struct sk_buff, list);
-			raw_spin_unlock_irqrestore(&e->wait.wchan.lock, flags);
-			/* Record the timestamps if required. */
-			ret = 0;
-			if (READ_ONCE(esk->timestamping) & EVL_SOF_TIMESTAMP_RX)
-				ret = evl_copy_iots_rx(skb, u_msghdr);
-			if (likely(!ret))
-				ret = copy_datagram_to_user(u_msghdr, iov, iovlen, skb, msg_uflags);
-			/*
-			 * We did not charge for rmem because multiple
-			 * sockets may listen on the same receiver, so
-			 * we may free the buffer directly.
-			 */
-			evl_net_free_skb(skb);
-			goto out;
+		/*
+		 * We must redo from the start, including when
+		 * throttling since some other folk might have
+		 * consumed the skb we paused on.
+		 */
+		skb = list_first_entry_or_null(&e->queue, struct sk_buff, list);
+		if (!skb)
+			goto wait;
+
+		/*
+		 * XXX: this is bad, the caller might never dequeue
+		 * due to a wrong binding, while the queue keeps
+		 * growing as nobody pulls data from it. All this
+		 * would happen hard IRQs off.
+		 */
+		while (unlikely(bound_if && skb->dev->ifindex != bound_if)) {
+			skb = list_next_entry(skb, list);
+			if (&skb->list == &e->queue)
+				goto wait;
 		}
 
+		list_del(&skb->list);
+
+		raw_spin_unlock_irqrestore(&e->wait.wchan.lock, flags);
+
+		/* Record the timestamps if required. */
+		ret = 0;
+		if (READ_ONCE(esk->timestamping) & EVL_SOF_TIMESTAMP_RX)
+			ret = evl_copy_iots_rx(skb, u_msghdr);
+
+		if (likely(!ret))
+			ret = copy_datagram_to_user(u_msghdr, iov, iovlen, skb, msg_uflags);
+		/*
+		 * We did not charge for rmem because multiple sockets
+		 * may listen on the same receiver, so we may free the
+		 * buffer directly.
+		 */
+		evl_net_free_skb(skb);
+		break;
+
+	wait:
 		if (msg_flags & MSG_DONTWAIT) {
 			raw_spin_unlock_irqrestore(&e->wait.wchan.lock, flags);
 			ret = -EWOULDBLOCK;
