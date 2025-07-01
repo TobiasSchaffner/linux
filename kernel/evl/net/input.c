@@ -352,3 +352,4 @@ void netif_schedule_oob(struct net_device *dev)
 {
 	evl_net_wake_rx(dev);
 }
+EXPORT_SYMBOL(netif_schedule_oob);
