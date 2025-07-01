@@ -609,11 +609,15 @@ static int get_dev_stat(struct net_device *dev, struct evl_net_devstat *devs)
 	struct evl_netdev_state *est = real_dev->oob_state.estate;
 	u64 alloc_count, release_count;
 
+	devs->__flags = 0;	/* Clear this first. */
 	devs->oob_capable = netdev_is_oob_capable(real_dev);
 	devs->rx_packets = evl_counter_read_careful(&est->stats.rx_packets);
 	devs->rx_bytes = evl_counter_read_careful(&est->stats.rx_bytes);
 	devs->tx_packets = evl_counter_read_careful(&est->stats.tx_packets);
 	devs->tx_bytes = evl_counter_read_careful(&est->stats.tx_bytes);
+	devs->rx_nomem = evl_counter_read_careful(&est->stats.rx_nomem);
+	devs->tx_nomem = evl_counter_read_careful(&est->stats.tx_nomem);
+	devs->csum_errors = evl_counter_read_careful(&est->stats.csum_errors);
 	devs->skb_size = est->buf_size;
 	alloc_count = evl_counter_read_careful(&est->stats.pool_alloc_count);
 	release_count = evl_counter_read_careful(&est->stats.pool_release_count);
@@ -621,6 +625,15 @@ static int get_dev_stat(struct net_device *dev, struct evl_net_devstat *devs)
 	devs->skb_total = est->pool_max;
 
 	return 0;
+}
+
+/* in-band hook, called by a driver upon oob memory shortage on RX. */
+void netif_rx_nomem_oob(struct net_device *dev)
+{
+	struct net_device *real_dev = evl_net_real_dev(dev);
+	struct evl_netdev_state *est = real_dev->oob_state.estate;
+
+	evl_counter_inc_careful(&est->stats.tx_nomem);
 }
 
 static long netdev_ioctl(struct file *filp, unsigned int cmd,
