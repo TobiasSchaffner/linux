@@ -635,6 +635,7 @@ void netif_rx_nomem_oob(struct net_device *dev)
 
 	evl_counter_inc_careful(&est->stats.tx_nomem);
 }
+EXPORT_SYMBOL(netif_rx_nomem_oob);
 
 static long netdev_ioctl(struct file *filp, unsigned int cmd,
 			unsigned long arg)
