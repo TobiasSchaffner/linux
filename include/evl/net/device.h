@@ -42,6 +42,8 @@ int __evl_net_dev_allocfd(struct net_device *dev);
 
 int evl_net_dev_allocfd(struct net *net, const char *devname);
 
+void evl_net_dev_tx_nomem(struct net_device *dev);
+
 enum evl_net_rx_action
 __evl_net_filter_rx(struct evl_netdev_state *est, struct sk_buff *skb);
 
@@ -72,6 +74,13 @@ static inline struct net_device *evl_net_real_dev(struct net_device *dev)
 		return vlan_dev_real_dev(dev);
 
 	return dev;
+}
+
+static inline struct evl_netdev_state *evl_net_get_state(struct net_device *dev)
+{
+	struct net_device *real_dev = evl_net_real_dev(dev);
+
+	return real_dev->oob_state.estate;
 }
 
 #endif

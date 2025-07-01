@@ -158,11 +158,13 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 	 * the specified timeout rule.
 	 */
 	real_dev = evl_net_real_dev(dev);
-	page = alloc_bufpage(real_dev, timeout, tmode);
-	if (IS_ERR(page))
-		return ERR_PTR(PTR_ERR(page));
-
 	est = real_dev->oob_state.estate;
+	page = alloc_bufpage(real_dev, timeout, tmode);
+	if (IS_ERR(page)) {
+		evl_counter_inc_careful(&est->stats.tx_nomem);
+		return ERR_PTR(PTR_ERR(page));
+	}
+
 	skb = build_skb(page_address(page), est->buf_size);
 	if (!skb) {
 		maybe_kick_recycler(); /* Hope for the best. */

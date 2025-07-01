@@ -852,8 +852,11 @@ int evl_net_deliver_udp(struct sk_buff *skb)
 	if (unlikely(sizeof(struct udphdr) > skb->len))
 		return -EINVAL;	/* Obviously garbled, drop that. */
 
-	if (!verify_checksum(skb))
+	if (!verify_checksum(skb)) {
+		struct evl_netdev_state *est = evl_net_get_state(skb->dev);
+		evl_counter_inc_careful(&est->stats.csum_errors);
 		return -EINVAL;
+	}
 
 	if (skb_is_oob_timestamped(skb))
 		skb_shinfo_oob(skb)->delivery_time = evl_ktime_monotonic();
