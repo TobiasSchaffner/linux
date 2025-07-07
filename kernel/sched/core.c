@@ -9228,8 +9228,8 @@ void __might_resched(const char *file, int line, unsigned int offsets)
 	       offsets & MIGHT_RESCHED_PREEMPT_MASK);
 
 	if (IS_ENABLED(CONFIG_PREEMPT_RCU)) {
-		pr_err("RCU nest depth: %d, expected: %u\n",
-		       rcu_preempt_depth(), offsets >> MIGHT_RESCHED_RCU_SHIFT);
+		pr_err("RCU nest depth: %d, expected: %u, ok? %d\n",
+		       rcu_preempt_depth(), offsets >> MIGHT_RESCHED_RCU_SHIFT, resched_offsets_ok(offsets));
 	}
 
 	if (task_stack_end_corrupted(current))
