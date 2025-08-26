@@ -48,7 +48,10 @@ static inline bool native_irqs_disabled(void)
 /* set interrupt enabled status */
 static inline void native_irq_restore(unsigned long flags)
 {
-	csr_set(CSR_STATUS, flags & SR_IE);
+	if (flags & SR_IE)
+		csr_set(CSR_STATUS, SR_IE);
+	else
+		csr_clear(CSR_STATUS, SR_IE);
 }
 
 #include <asm/irq_pipeline.h>
