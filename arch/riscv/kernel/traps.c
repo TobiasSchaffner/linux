@@ -209,7 +209,7 @@ static void do_trap_error(struct pt_regs *regs, int signo, int code,
 #define DO_ERROR_INFO(name, signo, code, str, trapnr)					\
 asmlinkage __visible __trap_section void name(struct pt_regs *regs)		\
 {										\
-	if(!mark_trap_entry_raw(signo, regs))						\
+	if(!mark_trap_entry_raw(trapnr, regs))						\
 		return;								\
 										\
 	if (user_mode(regs)) {							\
@@ -222,7 +222,7 @@ asmlinkage __visible __trap_section void name(struct pt_regs *regs)		\
 		irqentry_nmi_exit(regs, state);					\
 	}									\
 										\
-	mark_trap_exit_raw(signo, regs);	\
+	mark_trap_exit_raw(trapnr, regs);	\
 }
 
 DO_ERROR_INFO(do_trap_unknown,
