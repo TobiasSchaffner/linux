@@ -29,6 +29,8 @@
             for (__i = 0; __i < 32; __i++)              \
                 __e[__i] = (__val);                     \
             __asm__ __volatile__(                       \
+		".option push\n"			\
+		".option arch, +d\n"			\
                 "fld  f0, 0(%0)  \n"                    \
                 "fld  f1, 8(%0)  \n"                    \
                 "fld  f2, 16(%0) \n"                    \
@@ -84,6 +86,8 @@
                 __e[__i] = __val;                                  \
                                                                  \
             __asm__ __volatile__(                                  \
+		".option push\n"			\
+		".option arch, +d\n"			\
                 "fsd f0, 0(%0)   \n"                              \
                 "fsd f1, 8(%0)   \n"                              \
                 "fsd f2, 16(%0)  \n"                              \
