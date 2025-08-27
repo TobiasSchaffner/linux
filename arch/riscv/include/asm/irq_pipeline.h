@@ -41,7 +41,7 @@ unsigned long arch_irqs_virtual_to_native_flags(int stalled)
 static inline notrace
 unsigned long arch_irqs_native_to_virtual_flags(unsigned long flags)
 {
-	return (!!native_irqs_disabled_flags(flags)) << IRQMASK_i_POS;
+	return hard_irqs_disabled_flags(flags) << IRQMASK_i_POS;
 }
 
 static inline int arch_irqs_disabled_flags(unsigned long flags)
