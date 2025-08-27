@@ -267,7 +267,7 @@ asmlinkage __visible __trap_section void do_trap_insn_illegal(struct pt_regs *re
 
 		irqentry_nmi_exit(regs, state);
 	}
-
+	mark_trap_exit_raw(RISCV_TRAP_INSN_ILLEGAL, regs);
 }
 
 DO_ERROR_INFO(do_trap_load_fault,
@@ -404,6 +404,9 @@ asmlinkage __visible __trap_section void do_trap_break(struct pt_regs *regs)
 asmlinkage __visible __trap_section  __no_stack_protector
 void do_trap_ecall_u(struct pt_regs *regs)
 {
+    if(!mark_trap_entry_raw(regs->cause, regs))
+		return;
+
 	if (user_mode(regs)) {
 		long syscall = regs->a7;
 
@@ -418,6 +421,7 @@ void do_trap_ecall_u(struct pt_regs *regs)
 		if(dovetailing()) {
 			if (syscall == EXIT_SYSCALL_OOB) {
 				hard_local_irq_disable();
+				mark_trap_exit_raw(regs->cause, regs);
 				return;
 			}
 			if (syscall == EXIT_SYSCALL_TAIL)
@@ -451,7 +455,7 @@ done_inband:
 
 		irqentry_nmi_exit(regs, state);
 	}
-
+	mark_trap_exit(regs->cause, regs);
 }
 
 #ifdef CONFIG_MMU
