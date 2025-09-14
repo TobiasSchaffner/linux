@@ -72,16 +72,28 @@ static ssize_t rng_common_read(struct file *filp,
 			char __user *u_buf, size_t count)
 {
 	u32 val32;
+	u16 val16;
+	u8 val8;
+	int ret;
 
-	if (count != sizeof(val32))
+	switch (count) {
+	case sizeof(val32):
+		val32 = evl_read_rng_u32();
+		ret = raw_put_user(val32, (u32 __user *)u_buf);
+		break;
+	case sizeof(val16):
+		val16 = evl_read_rng_u16();
+		ret = raw_put_user(val16, (u16 __user *)u_buf);
+		break;
+	case sizeof(val8):
+		val8 = evl_read_rng_u8();
+		ret = raw_put_user(val8, (u8 __user *)u_buf);
+		break;
+	default:
 		return -EINVAL;
+	}
 
-	val32 = evl_read_rng_u32();
-
-	if (raw_put_user(val32, (u32 __user *)u_buf))
-		return -EFAULT;
-
-	return count;
+	return ret ? -EFAULT : count;
 }
 
 static ssize_t rng_oob_read(struct file *filp,
