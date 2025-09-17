@@ -3,6 +3,7 @@
 #define _EVL_ARM64_ASM_SYSCALL_H
 
 #include <linux/uaccess.h>
+#include <asm/compat.h>
 #include <asm/unistd.h>
 #include <asm/ptrace.h>
 #include <asm/compat.h>
