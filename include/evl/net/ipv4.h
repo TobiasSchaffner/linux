@@ -47,6 +47,8 @@ int evl_net_ipv4_solicit(struct net *net,
 			struct net_device *dev,
 			struct sockaddr *addr, int flags);
 
+extern int evl_net_ipv4_solicit_timeout;
+
 extern struct evl_socket_domain evl_net_ipv4;
 
 #endif /* !_EVL_NET_IPV4_H */

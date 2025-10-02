@@ -21,6 +21,8 @@
 #include <evl/net/ipv4/arp.h>
 #include <evl/net/ipv4/udp.h>
 
+int evl_net_ipv4_solicit_timeout = 5; /* Seconds */
+
 /*
  * Setup the IPv4 portion of the EVL state into an in-band network
  * namespace (struct net { ... struct oob_net_state oob; ... }).
@@ -231,8 +233,9 @@ void __evl_net_ipv4_gc(struct evl_net_frag_tdir *ftdir)
 
 /**
  * evl_net_ipv4_solicit - Resolve an IPv4 address into a link-layer
- * address using ARP neighbour solicitation. This call waits for 5s
- * for the front cache to receive the ARP entry before timing out.
+ * address using ARP neighbour solicitation. This call waits for the
+ * number of seconds read from evl_net_ipv4_solicit_timeout for the
+ * front cache to receive the ARP entry before timing out.
  *
  * @net		Network namespace this operation applies to.
  * @dev		Preferred output device, or NULL if unspec. If given, @dev
@@ -294,13 +297,12 @@ int evl_net_ipv4_solicit(struct net *net,
 	if (likely(!(neigh->nud_state & NUD_NOARP))) {
 		/*
 		 * Solicit the peer which should respond to ARP
-		 * requests. Wait for a response for at least the ARP
-		 * probe delay time.
+		 * requests within the allotted time.
 		 */
 		neigh_event_send(neigh, NULL);
 		ret = wait_event_interruptible_timeout(evl_arp_event,
 			       (e = evl_net_get_arp_entry(dev, ipaddr)),
-				NEIGH_VAR(neigh->parms, DELAY_PROBE_TIME) + HZ
+				evl_net_ipv4_solicit_timeout * HZ
 			);
 		ret = e ? 0 : ret ?: -ETIMEDOUT;
 	}
