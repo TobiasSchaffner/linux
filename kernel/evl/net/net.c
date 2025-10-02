@@ -183,6 +183,33 @@ static ssize_t vlans_store(struct device *dev,
 }
 static DEVICE_ATTR_RW(vlans);
 
+static ssize_t ipv4_solicit_timeout_show(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	return sysfs_emit(buf, "%d\n", evl_net_ipv4_solicit_timeout);
+}
+
+static ssize_t ipv4_solicit_timeout_store(struct device *dev,
+			struct device_attribute *attr,
+			const char *buf, size_t count)
+{
+	ssize_t ret;
+	long value;
+
+	ret = kstrtol(buf, 0, &value);
+	if (ret < 0)
+		return ret;
+
+	if (value <= 0)
+		return -EINVAL;
+
+	evl_net_ipv4_solicit_timeout = value;
+
+	return count;
+}
+static DEVICE_ATTR_RW(ipv4_solicit_timeout);
+
 static ssize_t ipv4_flush_routes_store(struct device *dev,
 				struct device_attribute *attr,
 				const char *buf, size_t count)
@@ -209,6 +236,7 @@ static DEVICE_ATTR_WO(ipv4_flush_arp);
 
 static struct attribute *net_attrs[] = {
 	&dev_attr_vlans.attr,
+	&dev_attr_ipv4_solicit_timeout.attr,
 	&dev_attr_ipv4_flush_routes.attr,
 	&dev_attr_ipv4_flush_arp.attr,
 	NULL,
