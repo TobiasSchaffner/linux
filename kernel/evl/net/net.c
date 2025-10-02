@@ -183,7 +183,7 @@ static ssize_t vlans_store(struct device *dev,
 }
 static DEVICE_ATTR_RW(vlans);
 
-static ssize_t ipv4_routes_store(struct device *dev,
+static ssize_t ipv4_flush_routes_store(struct device *dev,
 				struct device_attribute *attr,
 				const char *buf, size_t count)
 {
@@ -193,9 +193,9 @@ static ssize_t ipv4_routes_store(struct device *dev,
 
 	return count;
 }
-static DEVICE_ATTR_WO(ipv4_routes);
+static DEVICE_ATTR_WO(ipv4_flush_routes);
 
-static ssize_t arp_store(struct device *dev,
+static ssize_t ipv4_flush_arp_store(struct device *dev,
 			struct device_attribute *attr,
 			const char *buf, size_t count)
 {
@@ -205,12 +205,12 @@ static ssize_t arp_store(struct device *dev,
 
 	return count;
 }
-static DEVICE_ATTR_WO(arp);
+static DEVICE_ATTR_WO(ipv4_flush_arp);
 
 static struct attribute *net_attrs[] = {
 	&dev_attr_vlans.attr,
-	&dev_attr_ipv4_routes.attr,
-	&dev_attr_arp.attr,
+	&dev_attr_ipv4_flush_routes.attr,
+	&dev_attr_ipv4_flush_arp.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(net);
