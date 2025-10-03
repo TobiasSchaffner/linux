@@ -15,6 +15,7 @@
 #include <linux/hash.h>
 #include <linux/notifier.h>
 #include <linux/wait.h>
+#include <linux/etherdevice.h>
 #include <net/netevent.h>
 #include <net/arp.h>
 #include <evl/net/ipv4/arp.h>
@@ -208,26 +209,46 @@ struct evl_net_arp_entry *evl_net_get_arp_entry(struct net_device *dev, __be32 a
 	return NULL;
 }
 
+static struct evl_net_arp_entry *
+fill_pseudo_arp(struct net_device *dev, __be32 ipaddr,
+		const u8 *hwaddr, int hwlen,
+		struct evl_net_arp_entry *pseudo_earp)
+{
+	if (hwaddr)
+		memcpy(pseudo_earp->ha, hwaddr, hwlen);
+	else
+		memset(pseudo_earp->ha, 0, hwlen);
+
+	pseudo_earp->key.dev = dev;
+	pseudo_earp->key.addr = ipaddr;
+
+	return pseudo_earp;
+}
+
 struct evl_net_arp_entry *
-evl_net_get_arp_entry_or_pseudo(struct net_device *dev, __be32 addr,
+evl_net_get_arp_entry_or_pseudo(struct net_device *dev, __be32 ipaddr,
 				struct evl_net_arp_entry *pseudo_earp)
 {
-	struct evl_net_arp_entry *earp = NULL;
-
 	/*
 	 * We don't grab any reference on the device for which a
 	 * pseudo-ARP entry is resolved, the caller is supposed to
 	 * have one already, and expected not to put back this
 	 * temporary entry.
 	 */
-	if (unlikely(ipv4_is_loopback(addr) || ipv4_is_lbcast(addr))) {
-		earp = pseudo_earp;
-		earp->key.dev = dev;
-		earp->key.addr = addr;
-	}
+	if (unlikely(ipv4_is_loopback(ipaddr)))
+		return fill_pseudo_arp(dev, ipaddr,
+				NULL, ETH_ALEN, pseudo_earp);
+
+	if (unlikely(ipv4_is_lbcast(ipaddr)))
+		return fill_pseudo_arp(dev, ipaddr,
+				dev->broadcast, ETH_ALEN, pseudo_earp);
+
+	if (ipv4_is_multicast(ipaddr))
+		return fill_pseudo_arp(dev, ipaddr, eth_ipv4_mcast_addr_base,
+				sizeof(eth_ipv4_mcast_addr_base), pseudo_earp);
 
 	/* Not a pseudo-ARP, look up into the cache. */
-	return earp ?: evl_net_get_arp_entry(dev, addr);
+	return evl_net_get_arp_entry(dev, ipaddr);
 }
 
 static struct notifier_block netevent_notifier __read_mostly = {
