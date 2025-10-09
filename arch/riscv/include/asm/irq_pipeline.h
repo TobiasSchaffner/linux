@@ -88,6 +88,7 @@ static inline
 void arch_save_timer_regs(struct pt_regs *dst, struct pt_regs *src)
 {
 	dst->status = src->status;
+	dst->epc = src->epc;
 }
 
 #else /* !CONFIG_IRQ_PIPELINE */
