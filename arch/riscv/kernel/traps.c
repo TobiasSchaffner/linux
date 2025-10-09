@@ -22,6 +22,8 @@
 #include <linux/irq.h>
 #include <linux/kexec.h>
 #include <linux/entry-common.h>
+#include <linux/audit.h>
+#include <linux/dovetail.h>
 
 #include <asm/asm-prototypes.h>
 #include <asm/bug.h>
@@ -115,10 +117,14 @@ void die(struct pt_regs *regs, const char *str)
 static __always_inline
 bool mark_trap_entry(struct pt_regs *regs)
 {
+	oob_trap_notify(regs->cause, regs);
+
 	if (likely(running_inband())) {
 		hard_cond_local_irq_enable();
 		return true;
 	}
+
+	oob_trap_unwind(regs->cause, regs);
 
 	return false;
 }
@@ -126,15 +132,13 @@ bool mark_trap_entry(struct pt_regs *regs)
 static __always_inline
 void mark_trap_exit(struct pt_regs *regs)
 {
+	oob_trap_unwind(regs->cause, regs);
 	hard_cond_local_irq_disable();
 }
 
 void do_trap(struct pt_regs *regs, int signo, int code, unsigned long addr)
 {
 	struct task_struct *tsk = current;
-
-	if (!mark_trap_entry(regs))
-		return;
 
 	if (show_unhandled_signals && unhandled_signal(tsk, signo)
 	    && printk_ratelimit()) {
@@ -147,8 +151,6 @@ void do_trap(struct pt_regs *regs, int signo, int code, unsigned long addr)
 	}
 
 	force_sig_fault(signo, code, (void __user *)addr);
-
-	mark_trap_exit(regs);
 }
 
 static void do_trap_error(struct pt_regs *regs, int signo, int code,
@@ -174,6 +176,8 @@ static void do_trap_error(struct pt_regs *regs, int signo, int code,
 #define DO_ERROR_INFO(name, signo, code, str)					\
 asmlinkage __visible __trap_section void name(struct pt_regs *regs)		\
 {										\
+	if (!mark_trap_entry(regs))						\
+		return;								\
 	if (user_mode(regs)) {							\
 		irqentry_enter_from_user_mode(regs);				\
 		local_irq_enable();						\
@@ -188,6 +192,7 @@ asmlinkage __visible __trap_section void name(struct pt_regs *regs)		\
 		if (!stalled)							\
 			unstall_inband_nocheck();				\
 	}									\
+	mark_trap_exit(regs);							\
 }
 
 DO_ERROR_INFO(do_trap_unknown,
@@ -202,6 +207,9 @@ DO_ERROR_INFO(do_trap_insn_fault,
 asmlinkage __visible __trap_section void do_trap_insn_illegal(struct pt_regs *regs)
 {
 	bool handled;
+
+	if (!mark_trap_entry(regs))
+		return;
 
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
@@ -229,6 +237,8 @@ asmlinkage __visible __trap_section void do_trap_insn_illegal(struct pt_regs *re
 		if (!stalled)
 			unstall_inband_nocheck();
 	}
+
+	mark_trap_exit(regs);
 }
 
 DO_ERROR_INFO(do_trap_load_fault,
@@ -257,6 +267,9 @@ static void do_trap_misaligned(struct pt_regs *regs, enum misaligned_access_type
 	irqentry_state_t state;
 	int stalled;
 
+	if (!mark_trap_entry(regs))
+		return;
+
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
 		local_irq_enable();
@@ -277,6 +290,8 @@ static void do_trap_misaligned(struct pt_regs *regs, enum misaligned_access_type
 		if (!stalled)
 			unstall_inband_nocheck();
 	}
+
+	mark_trap_exit(regs);
 }
 
 asmlinkage __visible __trap_section void do_trap_load_misaligned(struct pt_regs *regs)
@@ -346,6 +361,9 @@ void handle_break(struct pt_regs *regs)
 
 asmlinkage __visible __trap_section void do_trap_break(struct pt_regs *regs)
 {
+	if (!mark_trap_entry(regs))
+		return;
+
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
 		unstall_inband_nocheck();
@@ -367,6 +385,8 @@ asmlinkage __visible __trap_section void do_trap_break(struct pt_regs *regs)
 		if (!stalled)
 			unstall_inband_nocheck();
 	}
+
+	mark_trap_exit(regs);
 }
 
 asmlinkage __visible __trap_section  __no_stack_protector
@@ -383,6 +403,15 @@ void do_trap_ecall_u(struct pt_regs *regs)
 
 		syscall = syscall_enter_from_user_mode(regs, syscall);
 
+		if(dovetailing()) {
+			if (syscall == EXIT_SYSCALL_OOB) {
+				hard_local_irq_disable();
+				return;
+			}
+			if (syscall == EXIT_SYSCALL_TAIL)
+				goto done_inband;
+		}
+
 		add_random_kstack_offset();
 
 		if (syscall >= 0 && syscall < NR_syscalls) {
@@ -390,6 +419,13 @@ void do_trap_ecall_u(struct pt_regs *regs)
 			syscall_handler(regs, syscall);
 		}
 
+done_inband:
+		/*
+		 * Dovetail: balance audit entry that generic exit
+		 * skips for in_oob_syscall().
+		 */
+		if (dovetailing() && in_oob_syscall(regs))
+			audit_syscall_exit(regs);
 		syscall_exit_to_user_mode(regs);
 	} else {
 		int stalled = test_and_stall_inband_nocheck();
@@ -445,6 +481,9 @@ bool handle_user_cfi_violation(struct pt_regs *regs)
  */
 asmlinkage __visible __trap_section void do_trap_software_check(struct pt_regs *regs)
 {
+	if (!mark_trap_entry(regs))
+		return;
+
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
 
@@ -457,6 +496,8 @@ asmlinkage __visible __trap_section void do_trap_software_check(struct pt_regs *
 		/* sw check exception coming from kernel is a bug in kernel */
 		die(regs, "Kernel BUG");
 	}
+
+	mark_trap_exit(regs);
 }
 
 #ifdef CONFIG_MMU
@@ -464,7 +505,11 @@ asmlinkage __visible noinstr void do_page_fault(struct pt_regs *regs)
 {
 	irqentry_state_t state = irqentry_enter(regs);
 
-	handle_page_fault(regs, state);
+	if (mark_trap_entry(regs)) {
+		handle_page_fault(regs, state);
+		mark_trap_exit(regs);
+	}
+
 	hard_local_irq_disable();
 	stall_inband_nocheck();
 
