@@ -137,6 +137,7 @@ config RISCV
 	select HAVE_ARCH_VMAP_STACK if MMU && 64BIT
 	select HAVE_IRQ_PIPELINE
 	select HAVE_DOVETAIL
+	select HAVE_ARCH_EVL
 	select HAVE_ASM_MODVERSIONS
 	select HAVE_CONTEXT_TRACKING_USER
 	select HAVE_DEBUG_KMEMLEAK
@@ -373,6 +374,7 @@ config AS_HAS_OPTION_ARCH
 source "arch/riscv/Kconfig.socs"
 source "arch/riscv/Kconfig.errata"
 source "kernel/Kconfig.dovetail"
+source "kernel/Kconfig.evl"
 
 menu "Platform type"
 
