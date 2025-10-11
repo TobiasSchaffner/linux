@@ -4006,7 +4006,7 @@ int gpiod_set_array_value_oob(struct gpio_chip *gc,
 		trace_gpio_value(desc_to_gpio(desc), 0, value);
 	}
 
-	gpio_chip_set_multiple(gc, mask, bits);
+	gpiochip_set_multiple(gc, mask, bits);
 
 	return 0;
 }
