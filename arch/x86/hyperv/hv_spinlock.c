@@ -43,7 +43,7 @@ static void hv_qlock_wait(u8 *byte, u8 val)
 	 * into 'idle' state by the hypervisor and kept in that state for
 	 * an unspecified amount of time.
 	 */
-	local_irq_save(flags);
+	flags = hard_local_irq_save();
 	/*
 	 * Only issue the rdmsrq() when the lock state has not changed.
 	 */
@@ -54,7 +54,7 @@ static void hv_qlock_wait(u8 *byte, u8 val)
 
 		(void)msr_val;
 	}
-	local_irq_restore(flags);
+	hard_local_irq_restore(flags);
 }
 
 /*
