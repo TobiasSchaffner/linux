@@ -161,6 +161,15 @@ static void do_sysvec_inband(struct irq_desc *desc, struct pt_regs *regs)
 		run_sysvec_on_irqstack_cond(__sysvec_kvm_posted_intr_nested_ipi, regs);
 		break;
 #endif
+#if IS_ENABLED(CONFIG_HYPERV)
+	case HYPERV_REENLIGHTENMENT_VECTOR:
+		run_sysvec_on_irqstack_cond(__sysvec_hyperv_reenlightenment,
+					regs);
+		break;
+	case HYPERV_STIMER0_VECTOR:
+		run_sysvec_on_irqstack_cond(__sysvec_hyperv_stimer0, regs);
+		break;
+#endif
 	case HYPERVISOR_CALLBACK_VECTOR:
 		run_sysvec_on_irqstack_cond(pipeline_hv_callback, regs);
 		break;
