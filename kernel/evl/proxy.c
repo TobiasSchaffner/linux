@@ -587,7 +587,7 @@ static int proxy_mmap(struct file *filp, struct vm_area_struct *vma)
 	 * on the mapper file do_mmap_pgoff() acquired before calling
 	 * us.
 	 */
-	ret = call_mmap(mapfilp, vma);
+	ret = vfs_mmap(mapfilp, vma);
 	if (ret)
 		fput(mapfilp);
 	else
