@@ -26,6 +26,7 @@
 #include <clocksource/hyperv_timer.h>
 #include <hyperv/hvhdk.h>
 #include <asm/mshyperv.h>
+#include <asm/trace/irq_vectors.h>
 
 static struct clock_event_device __percpu *hv_clock_event;
 /* Note: offset can hold negative values after hibernation. */
@@ -52,6 +53,30 @@ static bool direct_mode_enabled;
 static int stimer0_irq = -1;
 static int stimer0_message_sint;
 static __maybe_unused DEFINE_PER_CPU(long, stimer0_evt);
+
+#ifdef CONFIG_IRQ_PIPELINE
+
+#define HV_STIMER_IRQ	apicm_vector_irq(HYPERV_STIMER0_VECTOR)
+
+static irqreturn_t hv_stimer_oob_handler(int irq, void *dev_id)
+{
+	struct clock_event_device *evt = this_cpu_ptr(hv_clock_event);
+
+	trace_local_timer_entry(HYPERV_STIMER0_VECTOR);
+	clockevents_handle_event(evt);
+	trace_local_timer_exit(HYPERV_STIMER0_VECTOR);
+
+	return IRQ_HANDLED;
+}
+
+static struct irqaction hv_stimer_oob_action = {
+	.handler = hv_stimer_oob_handler,
+	.name = "Out-of-band STIMER0 timer interrupt",
+	.flags = IRQF_TIMER | IRQF_PERCPU,
+};
+#else
+#define HV_STIMER_IRQ	-1
+#endif
 
 /*
  * Common code for stimer0 interrupts coming via Direct Mode or
@@ -137,8 +162,9 @@ static int hv_stimer_init(unsigned int cpu)
 
 	ce = per_cpu_ptr(hv_clock_event, cpu);
 	ce->name = "Hyper-V clockevent";
-	ce->features = CLOCK_EVT_FEAT_ONESHOT;
+	ce->features = CLOCK_EVT_FEAT_ONESHOT | CLOCK_EVT_FEAT_PIPELINE;
 	ce->cpumask = cpumask_of(cpu);
+	ce->irq = HV_STIMER_IRQ;
 
 	/*
 	 * Lower the rating of the Hyper-V timer in a TDX VM without paravisor,
@@ -305,6 +331,12 @@ int hv_stimer_alloc(bool have_percpu_irqs)
 		hv_remove_stimer0_irq();
 		goto free_clock_event;
 	}
+
+#ifdef CONFIG_IRQ_PIPELINE
+	ret = setup_percpu_irq(HV_STIMER_IRQ, &hv_stimer_oob_action);
+	if (ret)
+		goto free_clock_event;
+#endif
 	return ret;
 
 free_clock_event:
