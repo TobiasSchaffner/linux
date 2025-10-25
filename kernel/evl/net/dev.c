@@ -349,11 +349,12 @@ static int switch_oob_port(struct net_device *dev,
 int evl_net_switch_oob_port(struct net_device *dev,
 			struct evl_net_devparams *p)
 {
+	struct net *net = dev_net(dev);
 	int ret;
 
-	rtnl_lock();
+	rtnl_net_lock(net);
 	ret = switch_oob_port(dev, p);
-	rtnl_unlock();
+	rtnl_net_unlock(net);
 
 	return ret;
 }
