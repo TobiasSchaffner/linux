@@ -99,7 +99,7 @@ static struct evl_cache_ops arp_cache_ops = {
 };
 
 /*
- * Cache a new ARP entry.
+ * Cache a new ARP entry. A previous match is replaced by the new one.
  */
 static int cache_arp_entry(struct evl_cache *cache, struct neighbour *neigh) /* in-band */
 {
@@ -207,6 +207,30 @@ struct evl_net_arp_entry *evl_net_get_arp_entry(struct net_device *dev, __be32 a
 		return container_of(entry, struct evl_net_arp_entry, entry);
 
 	return NULL;
+}
+
+/*
+ * Add a new neighbour to our ARP front cache. Any previous match is
+ * replaced by the new one.
+ */
+int evl_net_update_arp(struct neighbour *neigh) /* inband */
+{
+	struct oob_net_state *nets = &dev_net(neigh->dev)->oob;
+	struct evl_cache *cache = &nets->ipv4.arp;
+	int ret = -ESTALE;
+
+	read_lock_bh(&neigh->lock);
+
+	/*
+	 * We only cache entries for connected neighbours: recheck
+	 * under lock.
+	 */
+	if (READ_ONCE(neigh->nud_state) & NUD_CONNECTED)
+		ret = cache_arp_entry(cache, neigh);
+
+	read_unlock_bh(&neigh->lock);
+
+	return ret;
 }
 
 static struct evl_net_arp_entry *
