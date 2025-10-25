@@ -231,6 +231,42 @@ void __evl_net_ipv4_gc(struct evl_net_frag_tdir *ftdir)
 	evl_unlock_kmutex(&ftdir->lock);
 }
 
+/*
+ * Check whether a connected neighbour is available from our front
+ * cache, otherwise solicit the peer who should respond to the ARP
+ * request within the allotted time. In the latter case, probing is
+ * forced for stale entries.
+ */
+static int check_probe_neighbour(struct neighbour *neigh)
+{
+	u8 nud_state = READ_ONCE(neigh->nud_state);
+	int ret;
+
+	if (EVL_WARN_ON(NET, nud_state & NUD_NOARP))
+		return -EINVAL;
+
+	if (nud_state & NUD_CONNECTED) {
+		ret = evl_net_update_arp(neigh);
+		if (ret != -ESTALE)
+			return ret;
+		nud_state = READ_ONCE(neigh->nud_state);
+	}
+
+	if (nud_state & NUD_STALE) {
+		/* Invalidate/expire a stale entry to force probing. */
+		ret = neigh_update(neigh, NULL, NUD_NONE,
+				NEIGH_UPDATE_F_OVERRIDE|
+				NEIGH_UPDATE_F_ADMIN, 0);
+		if (ret)
+			return ret;
+	}
+
+	/* Start the probing process. */
+	neigh_event_send(neigh, NULL);
+
+	return 0;
+}
+
 /**
  * evl_net_ipv4_solicit - Resolve an IPv4 address into a link-layer
  * address using ARP neighbour solicitation. This call waits for the
@@ -249,7 +285,7 @@ void __evl_net_ipv4_gc(struct evl_net_frag_tdir *ftdir)
  */
 int evl_net_ipv4_solicit(struct net *net,
 			struct net_device *dev,
-			struct sockaddr *addr, int flags)
+			struct sockaddr *addr, int flags) /* inband */
 {
 	struct evl_net_arp_entry *e = NULL;
 	struct neighbour *neigh;
@@ -295,18 +331,16 @@ int evl_net_ipv4_solicit(struct net *net,
 	}
 
 	if (likely(!(neigh->nud_state & NUD_NOARP))) {
-		/*
-		 * Solicit the peer which should respond to ARP
-		 * requests within the allotted time.
-		 */
-		neigh_event_send(neigh, NULL);
+		ret = check_probe_neighbour(neigh);
+		if (ret)
+			goto out;
 		ret = wait_event_interruptible_timeout(evl_arp_event,
-			       (e = evl_net_get_arp_entry(dev, ipaddr)),
-				evl_net_ipv4_solicit_timeout * HZ
+						(e = evl_net_get_arp_entry(dev, ipaddr)),
+						evl_net_ipv4_solicit_timeout * HZ
 			);
 		ret = e ? 0 : ret ?: -ETIMEDOUT;
 	}
-
+out:
 	evl_net_put_dev(dev);
 
 	if (e) {
