@@ -443,15 +443,19 @@ static ssize_t send_udp(struct evl_socket *esk,
 		return -EINPROGRESS;
 	}
 
-	/* Ok, we have an oob path for that datagram. */
-
+	/*
+	 * Ok, we have an oob path for that datagram. In connected
+	 * mode (i.e. an address was bound to the socket), pick the
+	 * bound source address. Otherwise, use the source address
+	 * determined when the routing information was established
+	 * then passed to evl_net_learn_ipv4_route().
+	 */
 	saddr = inet->inet_saddr;
 	if (!saddr) {
-		if (ipv4_is_multicast(daddr)) {
+		if (ipv4_is_multicast(daddr))
 			saddr = inet->mc_addr;
-		} else {
-			saddr = inet_select_addr(ert->rt->dst.dev, daddr, RT_SCOPE_LINK);
-		}
+		else
+			saddr = ert->flowi4.saddr;
 	}
 
 	ipc.saddr = saddr;
