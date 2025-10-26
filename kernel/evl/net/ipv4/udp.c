@@ -450,9 +450,7 @@ static ssize_t send_udp(struct evl_socket *esk,
 		if (ipv4_is_multicast(daddr)) {
 			saddr = inet->mc_addr;
 		} else {
-			rcu_read_lock();
 			saddr = inet_select_addr(ert->rt->dst.dev, daddr, RT_SCOPE_LINK);
-			rcu_read_unlock();
 		}
 	}
 
