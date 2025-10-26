@@ -222,28 +222,42 @@ static int find_egress_path(struct evl_socket *esk,
 {
 	struct evl_net_arp_entry *earp;
 	struct evl_net_route *ert;
-	int ret = -ENOENT;
+	struct sock *sk = esk->sk;
+	int ret;
 
 	ert = evl_net_route_ipv4_output(sock_net(esk->sk), daddr);
-	if (likely(ert)) {
-		/*
-		 *  If MSG_DONTROUTE was given, make sure the
-		 *  destination is no more than one hop away from us.
-		 */
-		if  (msg_flags & MSG_DONTROUTE && rt_nexthop(ert->rt, daddr) != daddr) {
-			ret = -EMULTIHOP;
-			goto ignore;
-		}
-		earp = evl_net_get_arp_entry_or_pseudo(ert->rt->dst.dev, daddr,
-						pseudo_earp);
-		if (likely(earp))  {
-			*ertp = ert;
-			*earpp = earp;
-			return 0;
-		}
-	ignore:
-		evl_net_put_route(ert);
-	}
+	if (!ert)
+		return -ENOENT;
+
+	/*
+	 * Need a broadcast-enabled socket for using a broadcast
+	 * route.
+	 */
+	ret = -EACCES;
+	if ((ert->rt->rt_flags & RTCF_BROADCAST) &&
+		!sock_flag(sk, SOCK_BROADCAST))
+		goto fail;
+
+	/*
+	 *  If MSG_DONTROUTE was given, make sure the destination is
+	 *  no more than one hop away from us.
+	 */
+	ret = -EMULTIHOP;
+	if  (msg_flags & MSG_DONTROUTE && rt_nexthop(ert->rt, daddr) != daddr)
+		goto fail;
+
+	ret = -ENOENT;
+	earp = evl_net_get_arp_entry_or_pseudo(ert->rt->dst.dev, daddr,
+					pseudo_earp);
+	if (!earp)
+		goto fail;
+
+	*ertp = ert;
+	*earpp = earp;
+
+	return 0;
+fail:
+	evl_net_put_route(ert);
 
 	return ret;
 }
