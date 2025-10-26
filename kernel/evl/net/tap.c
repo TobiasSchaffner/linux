@@ -28,7 +28,9 @@ static void feed_tap_in(struct net_device *dev, struct sk_buff *skb)
 
 static void deliver_input_nit(struct evl_net_tap_data *data)
 {
+	local_bh_disable();
 	feed_tap_in(data->dev, data->skb);
+	local_bh_enable();
 	evl_net_free_skb(data->skb);
 }
 
