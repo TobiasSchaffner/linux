@@ -13,12 +13,22 @@
 struct net;
 struct evl_work;
 
+/* Excerpt from struct flowi4. */
+struct evl_net_flowi4 {
+	/* Source address. */
+	u32 saddr;
+	/* Destination address. */
+	u32 daddr;
+};
+
 /* Cached route for IP datagrams. */
 struct evl_net_route {
 	/* Generic cache entry. */
 	struct evl_cache_entry entry;
 	/* Destination as resolved in-band (in-band refcounted). */
 	struct rtable *rt;
+	/* Flow information to record from resolution. */
+	struct evl_net_flowi4 flowi4;
 	/* Index key (destination IP). */
 	u8 key[0] __aligned(4);
 };
