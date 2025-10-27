@@ -89,7 +89,7 @@ void evl_net_do_rx(void *arg)
 		while (!test_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags)) {
 			ret = evl_wait_flag(&est->rx_flag);
 			if (ret)
-				break;
+				goto flush_out;
 		}
 
 		/* Poll oob-capable drivers for feeding rx_packets. */
@@ -117,6 +117,21 @@ void evl_net_do_rx(void *arg)
 		}
 
 		evl_net_ipv4_gc(dev_net(dev));
+	}
+
+flush_out:
+	/*
+	 * Drop unconsumed buffers since the interface goes down,
+	 * don't even try to inject them into the stack so that we
+	 * won't allow trackers holding references on that device to
+	 * be created. Since we've passed the crossing in
+	 * disable_oob_port(), this is the only safe thing to do.
+	 */
+	if (evl_net_move_skb_queue(&est->rx_packets, &list)) {
+		list_for_each_entry_safe(skb, next, &list, list) {
+			list_del(&skb->list);
+			evl_net_free_skb(skb);
+		}
 	}
 }
 
