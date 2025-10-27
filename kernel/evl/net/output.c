@@ -118,17 +118,12 @@ void evl_net_do_tx(void *arg)
 	int ret;
 
 	est = dev->oob_state.estate;
+	qdisc = est->qdisc;
 
 	while (!evl_kthread_should_stop()) {
 		ret = evl_wait_flag(&est->tx_flag);
 		if (ret)
 			break;
-
-		/*
-		 * FIXME: stax-protect this against swap while pulling
-		 * packets.
-		 */
-		qdisc = est->qdisc;
 
 		/*
 		 * Transmit the traffic according to the
@@ -150,6 +145,8 @@ void evl_net_do_tx(void *arg)
 			do_tx(qdisc, dev, skb, more);
 		}
 	}
+
+	qdisc->oob_ops->flush(qdisc);
 }
 
 static void skb_xmit_inband(struct sk_buff *skb)
