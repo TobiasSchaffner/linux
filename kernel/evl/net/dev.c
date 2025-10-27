@@ -306,14 +306,24 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	evl_flush_wait(&est->tx_wait, EVL_T_RMID);
 	evl_schedule();
 
-	netif_disable_oob_diversion(real_dev);
-
-	evl_stop_kthread(est->rx_handler);
-	evl_destroy_flag(&est->rx_flag);
+	/*
+	 * The order is important: first we stop the TX thread so that
+	 * the NIC driver may assume that we won't do any hard xmit
+	 * from the oob stage anymore. Then we disable diversion in
+	 * the NIC driver before stopping the RX thread, so that we
+	 * may assume that no RX won't happen from the oob stage
+	 * anymore. In addition, proper synchronization is performed
+	 * by both threads to flush the pending traffic.
+	 */
 	if (est->tx_handler) {
 		evl_stop_kthread(est->tx_handler);
 		evl_destroy_flag(&est->tx_flag);
 	}
+
+	netif_disable_oob_diversion(real_dev);
+
+	evl_stop_kthread(est->rx_handler); /* Stop before destroy the flag. */
+	evl_destroy_flag(&est->rx_flag);
 
 	__set_rx_filter(est, NULL);
 	evl_net_dev_purge_pool(real_dev);
