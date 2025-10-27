@@ -49,7 +49,7 @@ int evl_net_add_device_route(struct net_device *dev);
 
 void evl_net_remove_device_route(struct net_device *dev);
 
-void evl_net_flush_routes(struct net *net, struct net_device *dev);
+void evl_net_retire_device(struct net_device *dev);
 
 static inline struct dst_entry *evl_net_route_dst(const struct evl_net_route *ert)
 {

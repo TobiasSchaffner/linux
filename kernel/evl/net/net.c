@@ -228,7 +228,7 @@ static ssize_t ipv4_flush_arp_store(struct device *dev,
 {
 	struct net *net = current->nsproxy->net_ns;
 
-	evl_net_flush_arp(net);
+	evl_net_flush_arp(net, NULL);
 
 	return count;
 }
