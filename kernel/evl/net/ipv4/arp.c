@@ -279,11 +279,29 @@ static struct notifier_block netevent_notifier __read_mostly = {
 	.notifier_call = netevent_handler,
 };
 
-void evl_net_flush_arp(struct net *net)
+static bool compare_arp_dev(struct evl_cache_entry *entry, void *arg)
+{
+	const struct evl_net_arp_entry *e =
+		container_of(entry, struct evl_net_arp_entry, entry);
+	struct net_device *dev = arg;
+
+	return dev == e->key.dev;
+}
+
+/*
+ * Flush the ARP entries maintained in the out-of-band front cache. If
+ * @dev is non-NULL, only the entries associated to the device are
+ * dropped. Otherwise, NULL is a wildcard for purging the cache
+ * entirely.
+ */
+void evl_net_flush_arp(struct net *net, struct net_device *dev)
 {
 	struct oob_net_state *nets = &net->oob;
 
-	evl_flush_cache(&nets->ipv4.arp);
+	if (dev)
+		evl_clean_cache(&nets->ipv4.arp, compare_arp_dev, dev);
+	else
+		evl_flush_cache(&nets->ipv4.arp);
 }
 
 int evl_net_init_arp(struct net *net)
@@ -310,5 +328,5 @@ int evl_net_init_arp(struct net *net)
 void evl_net_cleanup_arp(struct net *net)
 {
 	unregister_netevent_notifier(&netevent_notifier);
-	evl_net_flush_arp(net);
+	evl_net_flush_arp(net, NULL);
 }

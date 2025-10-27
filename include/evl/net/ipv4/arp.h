@@ -32,7 +32,7 @@ int evl_net_init_arp(struct net *net);
 
 void evl_net_cleanup_arp(struct net *net);
 
-void evl_net_flush_arp(struct net *net);
+void evl_net_flush_arp(struct net *net, struct net_device *dev);
 
 int evl_net_update_arp(struct neighbour *neigh);
 

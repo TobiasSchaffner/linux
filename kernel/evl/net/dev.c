@@ -506,7 +506,7 @@ int evl_netdev_event(struct notifier_block *ev_block,
 	case NETDEV_GOING_DOWN:
 		if (netif_oob_port(dev)) {
 			disable_oob_port(dev);
-			evl_net_flush_routes(dev_net(dev), dev);
+			evl_net_retire_device(dev);
 		}
 		break;
 	}
