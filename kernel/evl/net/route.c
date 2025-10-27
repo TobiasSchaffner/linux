@@ -9,6 +9,7 @@
 #include <evl/net/socket.h>
 #include <evl/net/ipv4.h>
 #include <evl/net/ipv4/route.h>
+#include <evl/net/ipv4/arp.h>
 
 /*
  * Cache a new IP route.
@@ -65,13 +66,14 @@ void ip_learn_oob_route(struct net *net, struct flowi4 *fl4, struct rtable *rt)
 }
 
 /*
- * Flush the routes maintained in the out-of-band front cache. If @dev
- * is non-NULL, only the routes going via the device are
- * dropped. Otherwise, NULL is a wildcard for dropping all routes.
+ * Retire a device from the routing system. This involves flushing the
+ * routes and neighbour entries maintained in their respective
+ * out-of-band front caches.
  */
-void evl_net_flush_routes(struct net *net, struct net_device *dev)
+void evl_net_retire_device(struct net_device *dev)
 {
-	evl_net_flush_ipv4_routes(net, dev);
+	evl_net_flush_ipv4_routes(dev_net(dev), dev);
+	evl_net_flush_arp(dev_net(dev), dev);
 }
 
 /*
