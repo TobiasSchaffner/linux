@@ -19,6 +19,7 @@ struct evl_net_qdisc_ops {
 	int (*init)(struct evl_net_qdisc *qdisc);
 	void (*destroy)(struct evl_net_qdisc *qdisc);
 	int (*enqueue)(struct evl_net_qdisc *qdisc, struct sk_buff *skb);
+	void (*flush)(struct evl_net_qdisc *qdisc);
 	struct sk_buff *(*dequeue)(struct evl_net_qdisc *qdisc, bool *more);
 	struct list_head next;
 };
