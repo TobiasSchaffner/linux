@@ -438,6 +438,11 @@ void evl_net_init_skb_queue(struct evl_net_skb_queue *skbq)
 
 void evl_net_destroy_skb_queue(struct evl_net_skb_queue *skbq)
 {
+	evl_net_flush_skb_queue(skbq);
+}
+
+void evl_net_flush_skb_queue(struct evl_net_skb_queue *skbq)
+{
 	evl_net_free_skb_list(&skbq->queue);
 }
 
