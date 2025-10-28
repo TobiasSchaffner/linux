@@ -33,7 +33,7 @@ int evl_net_ether_transmit_raw(struct net_device *dev, struct sk_buff *skb)
 
 	netdev_dbg(dev, "transmitting %px\n", skb);
 
-	return evl_net_transmit(skb);
+	return evl_net_transmit(dev, skb);
 }
 
 static int ether_transmit_one(struct net_device *dev, struct sk_buff *skb,
