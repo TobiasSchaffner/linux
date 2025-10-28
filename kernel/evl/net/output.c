@@ -146,7 +146,15 @@ void evl_net_do_tx(void *arg)
 		}
 	}
 
-	qdisc->oob_ops->flush(qdisc);
+	/* Purge the output queue from the buffers in flight. */
+	for (;;) {
+		bool more;
+		skb = qdisc->oob_ops->dequeue(qdisc, &more);
+		if (skb == NULL)
+			break;
+		evl_net_uncharge_skb_wmem(skb);
+		evl_net_free_skb(skb);
+	}
 }
 
 static void skb_xmit_inband(struct sk_buff *skb)
