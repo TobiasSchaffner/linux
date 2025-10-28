@@ -48,6 +48,13 @@ static struct sk_buff *dequeue_qdisc_fifo(struct evl_net_qdisc *qdisc,
 	return evl_net_get_skb_queue(&p->q, more);
 }
 
+static void flush_qdisc_fifo(struct evl_net_qdisc *qdisc)
+{
+	struct qdisc_fifo_priv *p = evl_qdisc_priv(qdisc);
+
+	evl_net_flush_skb_queue(&p->q);
+}
+
 struct evl_net_qdisc_ops evl_net_qdisc_fifo = {
 	.name	        = "oob_fifo",
 	.priv_size      = sizeof(struct qdisc_fifo_priv),
@@ -55,4 +62,5 @@ struct evl_net_qdisc_ops evl_net_qdisc_fifo = {
 	.destroy	= destroy_qdisc_fifo,
 	.enqueue	= enqueue_qdisc_fifo,
 	.dequeue	= dequeue_qdisc_fifo,
+	.flush		= flush_qdisc_fifo,
 };
