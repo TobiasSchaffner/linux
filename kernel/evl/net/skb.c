@@ -369,8 +369,10 @@ void evl_net_free_skb_list(struct list_head *list)
 	if (list_empty(list))
 		return;
 
-	list_for_each_entry_safe(skb, n, list, list)
+	list_for_each_entry_safe(skb, n, list, list) {
+		list_del(&skb->list);
 		free_skb(skb);
+	}
 
 	evl_schedule();
 	maybe_kick_recycler();
