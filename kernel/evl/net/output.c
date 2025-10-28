@@ -15,6 +15,7 @@
 #include <evl/list.h>
 #include <evl/lock.h>
 #include <evl/flag.h>
+#include <evl/net/device.h>
 #include <evl/net/socket.h>
 #include <evl/net/output.h>
 #include <evl/net/qdisc.h>
@@ -202,12 +203,12 @@ static void xmit_inband(struct irq_work *work) /* in-band, stalled */
 }
 
 /* oob or in-band */
-static int xmit_oob(struct net_device *dev, struct sk_buff *skb)
+static int xmit_oob(struct net_device *real_dev, struct sk_buff *skb)
 {
-	struct evl_netdev_state *est = dev->oob_state.estate;
+	struct evl_netdev_state *est = real_dev->oob_state.estate;
 	int ret;
 
-	ret = evl_net_sched_packet(dev, skb);
+	ret = evl_net_sched_packet(real_dev, skb);
 	if (ret)
 		return ret;
 
@@ -233,25 +234,33 @@ static int xmit_oob(struct net_device *dev, struct sk_buff *skb)
  *        the interface going down.
  *	- skb->sk == NULL.
  */
-int evl_net_transmit(struct sk_buff *skb) /* oob or in-band */
+int evl_net_transmit(struct net_device *dev, struct sk_buff *skb) /* oob or in-band */
 {
 	struct evl_net_skb_queue *rl = this_cpu_ptr(&oob_tx_relay);
-	struct net_device *dev = skb->dev;
+	struct net_device *real_dev = evl_net_real_dev(dev);
 	unsigned long flags;
 	bool kick;
 
-	if (EVL_WARN_ON(NET, !dev))
+	if (EVL_WARN_ON(NET, skb->dev != real_dev))
 		return -EINVAL;
 
 	if (EVL_WARN_ON(NET, skb->sk))
 		return -EINVAL;
 
+	/*
+	 * Synchronize with disable_oob_port() so that we won't queue
+	 * buffers for downed interfaces. The TX thread will drain any
+	 * unsent buffer that slipped in.
+	 */
+	if (!netif_oob_port(dev))
+		return -ENETDOWN;
+
 	timestamp_at_sched(skb);
 
 	skb_mark_not_on_list(skb);
 
-	if (netdev_is_oob_capable(dev))
-		return xmit_oob(dev, skb);
+	if (netdev_is_oob_capable(real_dev))
+		return xmit_oob(real_dev, skb);
 
 	/*
 	 * If running in-band, just push the skb for transmission
@@ -264,13 +273,13 @@ int evl_net_transmit(struct sk_buff *skb) /* oob or in-band */
 	}
 
 	/*
-	 * Running oob but net device is not oob-capable, resort to
-	 * relaying the traffic to the in-band stage for enqueuing.
-	 * Dovetail does ensure that __raise_softirq_irqoff() is safe
-	 * to call from the oob stage provided hard irqs are off, but
-	 * we want the softirq to be raised as soon as in-band resumes
-	 * with interrupts enabled, so we go through the irq_work
-	 * indirection first.
+	 * Running oob but the (real) net device is not oob-capable,
+	 * resort to relaying the traffic to the in-band stage for
+	 * enqueuing.  Dovetail does ensure that
+	 * __raise_softirq_irqoff() is safe to call from the oob stage
+	 * provided hard irqs are off, but we want the softirq to be
+	 * raised as soon as in-band resumes with interrupts enabled,
+	 * so we go through the irq_work indirection first.
 	 */
 	raw_spin_lock_irqsave(&rl->lock, flags);
 	kick = list_empty(&rl->queue);

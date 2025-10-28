@@ -13,7 +13,8 @@ struct sk_buff;
 
 void evl_net_do_tx(void *arg);
 
-int evl_net_transmit(struct sk_buff *skb);
+int evl_net_transmit(struct net_device *dev,
+		struct sk_buff *skb);
 
 void evl_net_init_tx(void);
 
