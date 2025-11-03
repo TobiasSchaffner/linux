@@ -26,6 +26,14 @@ comment "or 'powersave' may significantly increase latency"
 comment "on this platform during the frequency transitions."
 endif
 
+if COMPACTION
+comment "WARNING! memory compaction (CONFIG_COMPACTION) may"
+comment "cause out-of-band threads to take unwanted page faults"
+comment "despite memory locking, which would in turn drop the"
+comment "real-time guarantee EVL. You really want to disable this"
+comment "feature in any EVL-enabled kernel."
+endif
+
 endif
 
 config WARN_CPUFREQ_GOVERNOR
