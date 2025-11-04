@@ -68,7 +68,7 @@ static bool __packet_deliver(struct evl_net_rxqueue *rxq,
 	 * truckload of NICs to listen to, so keep it plain dumb which
 	 * is going to be faster in the normal case.
 	 */
-	list_for_each_entry(esk, &rxq->subscribers, next_sub) {
+	list_for_each_entry(esk, &rxq->subscribers, u.packet.next) {
 		/*
 		 * Revisit: we could filter on some "activation tag"
 		 * value calculated at activation time
@@ -203,6 +203,8 @@ static int attach_packet_socket(struct evl_socket *esk,
 	unsigned long flags;
 	u32 hkey;
 
+	INIT_LIST_HEAD(&esk->u.packet.next);
+
 	hkey = get_protocol_hash(protocol);
 
 	/*
@@ -228,11 +230,11 @@ static int attach_packet_socket(struct evl_socket *esk,
 	_rxq = find_rxqueue(hkey);
 	if (_rxq) {
 		evl_spin_lock(&_rxq->lock);
-		list_add(&esk->next_sub, &_rxq->subscribers);
+		list_add(&esk->u.packet.next, &_rxq->subscribers);
 		evl_spin_unlock(&_rxq->lock);
 	} else {
 		hash_add(protocol_hash, &rxq->hash, hkey);
-		list_add(&esk->next_sub, &rxq->subscribers);
+		list_add(&esk->u.packet.next, &rxq->subscribers);
 	}
 
 	evl_spin_unlock_irqrestore(&protocol_lock, flags);
@@ -250,14 +252,14 @@ static void destroy_packet_socket(struct evl_socket *esk)
 	unsigned long flags;
 	LIST_HEAD(tmp);
 
-	if (list_empty(&esk->next_sub))
+	if (list_empty(&esk->u.packet.next))
 		return;
 
 	evl_spin_lock_irqsave(&protocol_lock, flags);
 
 	rxq = find_rxqueue(esk->u.packet.proto_hash);
 
-	list_del_init(&esk->next_sub); /* Remove from rxq->subscribers */
+	list_del_init(&esk->u.packet.next); /* Remove from rxq->subscribers */
 	if (list_empty(&rxq->subscribers)) {
 		hash_del(&rxq->hash);
 		list_add(&rxq->next, &tmp);
