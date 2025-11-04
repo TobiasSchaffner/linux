@@ -34,13 +34,14 @@ static int attach_udp_socket(struct evl_socket *esk,
 	esk->proto = proto;
 	esk->protocol = protocol;
 	evl_net_init_ip_socket(esk);
+	INIT_LIST_HEAD(&esk->u.ip.udp.next);
 
 	return 0;
 }
 
 /*
  * set_receive_slot - install/update a receive slot for the socket to
- * wait on later. We are called whenever bind() is issued on an UDP
+ * collect input. We are called whenever bind() is issued on an UDP
  * socket from the inband stack: this enables our generic cache
  * mechanism to deal with this information since it supports
  * inband-only updates, inband/oob lookups.
@@ -50,17 +51,18 @@ static int attach_udp_socket(struct evl_socket *esk,
 static int add_receive_slot(struct evl_socket *esk) /* inband */
 {
 	struct evl_cache *cache = &esk->net->oob.ipv4.udp;
-	struct evl_net_udp_receiver *new, *old, *udp;
 	struct inet_sock *inet = inet_sk(esk->sk);
+	struct evl_net_udp_rcvslot *new, *old;
 	struct evl_cache_entry *entry;
-	struct __evl_net_udp_key key;
+	unsigned long flags;
 	int ret;
 
 	/*
 	 * Allocate without holding any lock to eliminate any risk of
-	 * lock order inversion. In most cases (i.e. without
-	 * SO_REUSEPORT), we won't find a pre-existing slot for the
-	 * [addr, port] pair, so this new slot will be used.
+	 * lock order inversion. We are unlikely to find a
+	 * pre-existing slot for the port (i.e. unless SO_REUSEPORT is
+	 * in effect), therefore this new slot will be used in most
+	 * cases.
 	 */
 	new = kzalloc(sizeof(*new), GFP_KERNEL);
 	if (!new)
@@ -73,22 +75,18 @@ static int add_receive_slot(struct evl_socket *esk) /* inband */
 	 * inband stack already parsed and checked, dealing with the
 	 * hairy reuseport logic as well. Yummie.
 	 */
-	key.dport = inet->inet_num;
-	key.daddr = inet->inet_rcv_saddr;
-
-	new->key = key;
-	INIT_LIST_HEAD(&new->queue);
-	udp = new;	/* So that evl-ps reports &udp->wait as wchan. */
-	evl_init_wait(&udp->wait, &evl_mono_clock, 0);
+	new->key.port = inet->inet_num;
+	INIT_LIST_HEAD(&new->receivers);
 	refcount_set(&new->refs, 1);
+	raw_spin_lock_init(&new->lock);
 
 	/* Lookup and insertion must be seen as atomic. */
 	evl_lock_cache(cache);
-	entry = evl_lookup_cache(cache, &key);
+	entry = evl_lookup_cache(cache, &new->key);
 	if (entry) {
-		/* Unlock prior to freeing the slot (see above). */
+		/* Unlock prior to freeing the unused slot (see above). */
 		evl_unlock_cache(cache);
-		old = container_of(entry, struct evl_net_udp_receiver, entry);
+		old = container_of(entry, struct evl_net_udp_rcvslot, entry);
 		/* One user more via reuseport, account for it. */
 		refcount_inc(&old->refs);
 		evl_put_cache_entry(entry);
@@ -103,23 +101,18 @@ static int add_receive_slot(struct evl_socket *esk) /* inband */
 		}
 	}
 
-	WRITE_ONCE(esk->u.ip.udp.receiver, new);
+	raw_spin_lock_irqsave(&new->lock, flags);
+
+	if (EVL_WARN_ON(NET, !list_empty(&esk->u.ip.udp.next)))
+		list_del(&esk->u.ip.udp.next); /* Bad news ahead anyway. */
+
+	list_add(&esk->u.ip.udp.next, &new->receivers);
+
+	WRITE_ONCE(esk->u.ip.udp.rcv_slot, new);
+
+	raw_spin_unlock_irqrestore(&new->lock, flags);
 
 	return 0;
-}
-
-static void flush_receive_slot(struct evl_net_udp_receiver *e)
-{
-	struct sk_buff *skb, *tmp;
-
-	list_for_each_entry_safe(skb, tmp, &e->queue, list) {
-		/*
-		 * See comment in receive_udp() about not charging the
-		 * socket for rmem, applies here too.
-		 */
-		list_del(&skb->list);
-		evl_net_free_skb(skb);
-	}
 }
 
 /*
@@ -133,18 +126,22 @@ static void flush_receive_slot(struct evl_net_udp_receiver *e)
 static void drop_receive_slot(struct evl_socket *esk) /* inband */
 {
 	struct evl_cache *cache = &esk->net->oob.ipv4.udp;
-	struct evl_net_udp_receiver *e;
-	struct __evl_net_udp_key key;
+	struct evl_net_udp_rcvslot *rslot;
+	unsigned long flags;
 
-	e = READ_ONCE(esk->u.ip.udp.receiver);
-	if (e) {
-		if (refcount_dec_and_test(&e->refs)) {
-			flush_receive_slot(e); /* Flush unconsumed buffers. */
-			key.dport = e->key.dport;
-			key.daddr = e->key.daddr;
-			evl_del_cache_entry(cache, &key);
-		}
-		WRITE_ONCE(esk->u.ip.udp.receiver, NULL);
+	/*
+	 * esk holds a reference on the receive slot referred to by
+	 * udp.rcv_slot.
+	 */
+	rslot = READ_ONCE(esk->u.ip.udp.rcv_slot);
+	if (rslot) {
+		raw_spin_lock_irqsave(&rslot->lock, flags);
+		list_del_init(&esk->u.ip.udp.next);
+		WRITE_ONCE(esk->u.ip.udp.rcv_slot, NULL);
+		raw_spin_unlock_irqrestore(&rslot->lock, flags);
+
+		if (refcount_dec_and_test(&rslot->refs))
+			evl_del_cache_entry(cache, &rslot->key);
 	}
 }
 
@@ -162,14 +159,10 @@ static void destroy_udp_socket(struct evl_socket *esk) /* inband */
 }
 
 /*
- * @esk->sk is locked by the inband stack on entry. In addition, the
- * latter denies double bindings for AF_INET sockets, so we know for
- * sure that @esk does not reference any receive slot yet. Likewise,
- * multiple bindings to the same destination is denied by the inband
- * stack as well, so we may assume that we are always going to create
- * a new cache entry on a unique key. Unbinding happens when the
- * socket is either shut down or destroyed on the inband side, which
- * is paired with our shutdown() and destroy() handlers.
+ * Bind a new UDP socket for oob usage. @esk->sk is locked by the
+ * inband stack on entry. Unbinding happens when the socket is either
+ * shut down or destroyed on the inband side, which is paired with our
+ * shutdown() and destroy() handlers.
  */
 static int bind_udp_socket(struct evl_socket *esk,
 			struct sockaddr *addr,
@@ -184,6 +177,8 @@ static int bind_udp_socket(struct evl_socket *esk,
 static int shutdown_udp_socket(struct evl_socket *esk, int how)
 {
 	drop_receive_slot(esk);
+	evl_net_purge_socket_input(esk);
+
 	return 0;
 }
 
@@ -541,71 +536,28 @@ static ssize_t receive_udp(struct evl_socket *esk,
 	__u32 msg_flags = 0, msg_uflags = 0;
 	ktime_t timeout = EVL_INFINITE;
 	enum evl_tmode tmode = EVL_REL;
-	struct evl_net_udp_receiver *e;
-	struct sock *sk = esk->sk;
 	struct __evl_timespec uts;
 	struct sk_buff *skb;
 	unsigned long flags;
-	int bound_if;
 	ssize_t ret;
 
 	if (evl_socket_f_flags(esk) & O_NONBLOCK)
 		msg_flags |= MSG_DONTWAIT;
 
-	bound_if = READ_ONCE(sk->sk_bound_dev_if);
-
-	/*
-	 * The cache entry may be freed only from a RCU callback, get
-	 * a safe reference on it from a RCU read side to prevent
-	 * stale access.
-	 */
-again:
-	rcu_read_lock();
-
-	e = READ_ONCE(esk->u.ip.udp.receiver);
-	if (!e) {
-		/*
-		 * If not bound prior to calling oob_recvmsg(), force
-		 * a binding to 0.0.0.0:0, which means that no receipt
-		 * will ever happen for this socket (except timestamps
-		 * if any is queued), causing this call to hang
-		 * indefinitely until interrupted.
-		 */
-		rcu_read_unlock();
-		lock_sock(sk);
-		/* Recheck binding under lock. */
-		e = READ_ONCE(esk->u.ip.udp.receiver);
-		ret = e ? 0 : add_receive_slot(esk);
-		release_sock(sk);
-		if (!ret)
-			goto again;
-		return ret;
-	}
-
-	evl_get_cache_entry(&e->entry);
-
-	rcu_read_unlock();
-
 	if (u_msghdr) {
 		ret = raw_get_user(msg_uflags, &u_msghdr->flags);
-		if (ret) {
-			ret = -EFAULT;
-			goto out;
-		}
+		if (ret)
+			return -EFAULT;
 
 		msg_flags |= msg_uflags;
 
-		if (msg_flags & ~(MSG_DONTWAIT|MSG_TIMESTAMP)) {
-			ret = -EINVAL;
-			goto out;
-		}
+		if (msg_flags & ~(MSG_DONTWAIT|MSG_TIMESTAMP))
+			return -EINVAL;
 
 		ret = raw_copy_from_user(&uts, &u_msghdr->timeout,
 					sizeof(uts));
-		if (ret) {
-			ret = -EFAULT;
-			goto out;
-		}
+		if (ret)
+			return -EFAULT;
 
 		if (msg_flags & MSG_DONTWAIT) {
 			timeout = EVL_NONBLOCK;
@@ -615,40 +567,20 @@ again:
 				tmode = EVL_ABS;
 		}
 
-		if (msg_flags & MSG_TIMESTAMP) {
-			ret = evl_collect_socket_iots(esk, u_msghdr, msg_uflags,
+		if (msg_flags & MSG_TIMESTAMP)
+			return evl_collect_socket_iots(esk, u_msghdr, msg_uflags,
 						iov, iovlen, timeout, tmode);
-			goto out;
-		}
 	}
 
 	do {
-		raw_spin_lock_irqsave(&e->wait.wchan.lock, flags);
+		raw_spin_lock_irqsave(&esk->input_wait.wchan.lock, flags);
 
-		/*
-		 * We must redo from the start, including when
-		 * throttling since some other folk might have
-		 * consumed the skb we paused on.
-		 */
-		skb = list_first_entry_or_null(&e->queue, struct sk_buff, list);
-		if (!skb)
+		if (list_empty(&esk->input))
 			goto wait;
 
-		/*
-		 * XXX: this is bad, the caller might never dequeue
-		 * due to a wrong binding, while the queue keeps
-		 * growing as nobody pulls data from it. All this
-		 * would happen hard IRQs off.
-		 */
-		while (unlikely(bound_if && skb->dev->ifindex != bound_if)) {
-			skb = list_next_entry(skb, list);
-			if (&skb->list == &e->queue)
-				goto wait;
-		}
+		skb = list_get_entry(&esk->input, struct sk_buff, list);
 
-		list_del(&skb->list);
-
-		raw_spin_unlock_irqrestore(&e->wait.wchan.lock, flags);
+		raw_spin_unlock_irqrestore(&esk->input_wait.wchan.lock, flags);
 
 		/* Record the timestamps if required. */
 		ret = 0;
@@ -657,27 +589,21 @@ again:
 
 		if (likely(!ret))
 			ret = copy_datagram_to_user(u_msghdr, iov, iovlen, skb, msg_uflags);
-		/*
-		 * We did not charge for rmem because multiple sockets
-		 * may listen on the same receiver, so we may free the
-		 * buffer directly.
-		 */
+
+		evl_net_uncharge_skb_rmem(skb);
 		evl_net_free_skb(skb);
-		break;
+		return ret;
 
 	wait:
 		if (msg_flags & MSG_DONTWAIT) {
-			raw_spin_unlock_irqrestore(&e->wait.wchan.lock, flags);
-			ret = -EWOULDBLOCK;
-			goto out;
+			raw_spin_unlock_irqrestore(&esk->input_wait.wchan.lock, flags);
+			return -EWOULDBLOCK;
 		}
 
-		evl_add_wait_queue(&e->wait, timeout, tmode);
-		raw_spin_unlock_irqrestore(&e->wait.wchan.lock, flags);
-		ret = evl_wait_schedule(&e->wait);
+		evl_add_wait_queue(&esk->input_wait, timeout, tmode);
+		raw_spin_unlock_irqrestore(&esk->input_wait.wchan.lock, flags);
+		ret = evl_wait_schedule(&esk->input_wait);
 	} while (!ret);
-out:
-	evl_put_cache_entry(&e->entry);
 
 	return ret;
 }
@@ -686,29 +612,33 @@ out:
 static __poll_t poll_udp(struct evl_socket *esk,
 			struct oob_poll_wait *wait)
 {
-	struct evl_net_udp_receiver *e;
-	__poll_t ret = 0;
+	unsigned long flags;
+	__poll_t ret;
 
 	/* Enqueue, then test. */
 	evl_poll_watch(&esk->poll_head, wait, NULL);
 
-	rcu_read_lock();
+	rcu_read_lock();	/* For checking timestamps. */
 
 	/*
 	 * We might have lingering timestamps to consume, check this
-	 * unconditionally, regardless of the presence of a receiver
-	 * queue.
+	 * unconditionally, regardless of whether messages are
+	 * pending.
 	 */
-	e = READ_ONCE(esk->u.ip.udp.receiver);
-	if (__evl_test_socket_iots(esk) || (e && !list_empty(&e->queue)))
-		ret = POLLIN|POLLRDNORM;
+	ret = POLLIN|POLLRDNORM;
+	if (!__evl_test_socket_iots(esk)) {
+		raw_spin_lock_irqsave(&esk->input_wait.wchan.lock, flags);
+		if (list_empty(&esk->input))
+			ret = 0;
+		raw_spin_unlock_irqrestore(&esk->input_wait.wchan.lock, flags);
+	}
 
 	rcu_read_unlock();
 
 	/* FIXME: Assume we can always TX, which is too optimistic. */
 	ret |= POLLOUT|POLLWRNORM;
 
-	return 0;
+	return ret;
 }
 
 /* in-band */
@@ -809,58 +739,108 @@ static inline bool verify_checksum(struct sk_buff *skb)
 	return validate_checksum(skb, ulen, check);
 }
 
-static bool __queue_for_receiver(struct evl_cache *cache,
-				struct sk_buff *skb,
-				const struct __evl_net_udp_key *key)
+/*
+ * deliver_datagram - push an incoming datagram to the input queue of
+ * interested receiver(s). @skb is not part of any queue, however it
+ * might have a frag list. We may reuse skb->list only for the heading
+ * @skb, but not for its frags, this is ok.
+ */
+static int deliver_datagram(struct sk_buff *skb)
 {
-	struct evl_cache_entry *entry = evl_lookup_cache(cache, key);
-	struct evl_net_udp_receiver *e;
+	struct net *net = dev_net(skb->dev);
+	struct evl_cache *cache = &net->oob.ipv4.udp;
+	const struct iphdr *iph = ip_hdr(skb);
+	struct udphdr *uh = udp_hdr(skb);
+	struct evl_net_udp_rcvslot *rslot;
+	struct evl_cache_entry *entry;
+	struct __evl_net_udp_key key;
+	struct evl_socket *esk;
 	unsigned long flags;
+	bool mbcast;
+	int ret = 0;
+
+	if (skb_is_oob_timestamped(skb))
+		skb_shinfo_oob(skb)->delivery_time = evl_ktime_monotonic();
+
+	rcu_read_lock();
+
+	key.port = ntohs(uh->dest);
+	entry = evl_lookup_cache(cache, &key);
+	if (!entry)
+		goto out;
+
+	rslot = container_of(entry, struct evl_net_udp_rcvslot, entry);
+	/*
+	 * We don't do input routing, the final destination is
+	 * directly known from the IP header.
+	 */
+	mbcast = ipv4_is_multicast(iph->daddr) || ipv4_is_lbcast(iph->daddr);
 
 	/*
-	 * If an entry is found, queue the incoming skb then wake up
-	 * the receiver.
+	 * Locking order: rslot->lock first, wchan->lock next.  You
+	 * have been warned.
 	 */
-	if (entry) {
-		e = container_of(entry, struct evl_net_udp_receiver, entry);
-		raw_spin_lock_irqsave(&e->wait.wchan.lock, flags);
-		list_add(&skb->list, &e->queue);
-		if (evl_wait_active(&e->wait))
-			evl_wake_up_head(&e->wait);
-		raw_spin_unlock_irqrestore(&e->wait.wchan.lock, flags);
-		evl_schedule();
-		return true;
+	raw_spin_lock_irqsave(&rslot->lock, flags);
+
+	list_for_each_entry(esk, &rslot->receivers, u.ip.udp.next) {
+		struct inet_sock *inet = inet_sk(esk->sk);
+		struct sk_buff *qskb;
+		int bound_if;
+
+		if ((inet->inet_daddr != iph->saddr && inet->inet_daddr) ||
+			(inet->inet_dport != uh->source && inet->inet_dport) ||
+			(inet->inet_rcv_saddr && inet->inet_rcv_saddr != iph->daddr)) {
+			continue;
+		}
+
+		bound_if = READ_ONCE(esk->sk->sk_bound_dev_if);
+		if (bound_if && skb->dev->ifindex != bound_if)
+			continue;
+
+		qskb = skb;
+		if (mbcast && !list_is_last(&esk->u.ip.udp.next, &rslot->receivers)) {
+			qskb = evl_net_clone_skb(skb);
+			if (qskb == NULL) {
+				evl_flush_wait(&esk->input_wait, EVL_T_NOMEM);
+				continue;
+			}
+		}
+
+		/*
+		 * This datagram may be delivered unless that socket
+		 * may not consume more memory, in which case we skip
+		 * delivery and try with the next receiver. On error,
+		 * we should not free the received skb, only its
+		 * clones.
+		 */
+		if (!evl_net_charge_skb_rmem(esk, qskb)) {
+			if (qskb != skb)
+				evl_net_free_skb(qskb);
+			continue;
+		}
+
+		raw_spin_lock(&esk->input_wait.wchan.lock);
+
+		list_add_tail(&qskb->list, &esk->input);
+		if (evl_wait_active(&esk->input_wait))
+			evl_wake_up_head(&esk->input_wait);
+
+		raw_spin_unlock(&esk->input_wait.wchan.lock);
+
+		evl_signal_poll_events(&esk->poll_head,	POLLIN|POLLRDNORM);
+		ret++;
+
+		if (!mbcast)
+			break;
 	}
 
-	return false;
-}
+	raw_spin_unlock_irqrestore(&rslot->lock, flags);
+out:
+	rcu_read_unlock();
 
-/*
- * queue_for_receiver - push an incoming datagram to the proper
- * receive slot. @skb is not part of any queue, however it might have
- * a frag list. We may reuse skb->list only for the heading @skb, but
- * not for its frags, this is ok.
- */
-static bool queue_for_receiver(struct sk_buff *skb)
-{
-	const struct iphdr *iph = ip_hdr(skb);
-	struct net *net = dev_net(skb->dev);
-	struct udphdr *uh = udp_hdr(skb);
-	struct __evl_net_udp_key key;
-	struct evl_cache *cache = &net->oob.ipv4.udp;
+	evl_schedule();
 
-	/*
-	 * First try a direct hit to the destination address and port
-	 * number.
-	 */
-	key.dport = ntohs(uh->dest);
-	key.daddr = iph->daddr;
-	if (__queue_for_receiver(cache, skb, &key))
-		return true;
-
-	/* Nope, try a waiter on the wildcard address then. */
-	key.daddr = htonl(INADDR_ANY);
-	return __queue_for_receiver(cache, skb, &key);
+	return ret;
 }
 
 int evl_net_deliver_udp(struct sk_buff *skb)
@@ -874,10 +854,7 @@ int evl_net_deliver_udp(struct sk_buff *skb)
 		return -EINVAL;
 	}
 
-	if (skb_is_oob_timestamped(skb))
-		skb_shinfo_oob(skb)->delivery_time = evl_ktime_monotonic();
-
-	return queue_for_receiver(skb) ? 0 : -ESRCH;
+	return deliver_datagram(skb) ? 0 : -ESRCH;
 }
 
 static u32 hash_udp_slot(const void *key)
@@ -891,40 +868,34 @@ static bool eq_udp_slot(const struct evl_cache_entry *entry,
 			const void *key)
 {
 	const struct __evl_net_udp_key *k = key;
-	const struct evl_net_udp_receiver *e =
-		container_of(entry, struct evl_net_udp_receiver, entry);
+	const struct evl_net_udp_rcvslot *rslot =
+		container_of(entry, struct evl_net_udp_rcvslot, entry);
 
-	return e->key.dport == k->dport && e->key.daddr == k->daddr;
+	return rslot->key.port == k->port;
 }
 
 static char *format_udp_key(const struct evl_cache_entry *entry)
 {
-	const struct evl_net_udp_receiver *e =
-		container_of(entry, struct evl_net_udp_receiver, entry);
+	const struct evl_net_udp_rcvslot *rslot =
+		container_of(entry, struct evl_net_udp_rcvslot, entry);
 
-	return kasprintf(GFP_ATOMIC, "%pI4:%u", &e->key.daddr, e->key.dport);
+	return kasprintf(GFP_ATOMIC, "%u", rslot->key.port);
 }
 
 static const void *get_udp_key(const struct evl_cache_entry *entry)
 {
-	const struct evl_net_udp_receiver *e =
-		container_of(entry, struct evl_net_udp_receiver, entry);
+	const struct evl_net_udp_rcvslot *rslot =
+		container_of(entry, struct evl_net_udp_rcvslot, entry);
 
-	return &e->key;
+	return &rslot->key;
 }
 
 static void drop_udp_slot(struct evl_cache_entry *entry) /* in-band */
 {
-	struct evl_net_udp_receiver *e =
-		container_of(entry, struct evl_net_udp_receiver, entry);
-	struct sk_buff *skb, *tmp;
+	const struct evl_net_udp_rcvslot *rslot =
+		container_of(entry, struct evl_net_udp_rcvslot, entry);
 
-	list_for_each_entry_safe(skb, tmp, &e->queue, list) {
-		list_del(&skb->list);
-		evl_net_free_skb(skb);
-	}
-
-	kfree(e);
+	kfree(rslot);
 }
 
 static struct evl_cache_ops udp_cache_ops = {
@@ -940,11 +911,11 @@ int evl_net_init_udp(struct net *net)
 	struct oob_net_state *nets = &net->oob;
 	struct evl_cache *cache;
 
-	/* Cache of active UDP4 receivers. */
+	/* Cache of active UDP4 receive slots. */
 	cache = &nets->ipv4.udp;
 	cache->ops = &udp_cache_ops;
 	cache->init_shift = EVL_NET_UDP_CACHE_SHIFT;
-	cache->name = "udp_receivers";
+	cache->name = "udp_rcv_slots";
 
 	return evl_init_cache(cache);
 }

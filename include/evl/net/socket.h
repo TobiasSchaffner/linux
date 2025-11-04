@@ -26,7 +26,7 @@ struct evl_socket;
 struct net;
 struct net_device;
 struct evl_net_offload;
-struct evl_net_udp_receiver;
+struct evl_net_udp_rcvslot;
 struct evl_net_timestamps;
 
 struct evl_net_proto {
@@ -72,9 +72,10 @@ struct evl_socket {
 	struct net *net;
 	struct hlist_node hash;
 	struct list_head input;
+	/* Queued skbs avail for receive. */
 	struct evl_wait_queue input_wait;
-	struct evl_poll_head poll_head; /* On input queue. */
-	struct list_head next_sub;	/* evl_net_rxqueue.subscribers */
+	/* Poll head for ->input_wait. */
+	struct evl_poll_head poll_head;
 	struct sock *sk;
 	atomic_t rmem_count;
 	int rmem_max;
@@ -96,6 +97,7 @@ struct evl_socket {
 			int ifindex; /* Same as real_ifindex or vlan ifindex */
 			u16 vlan_id; /* non-zero if vlan device, zero otherwise */
 			u32 proto_hash;
+			struct list_head next; /* evl_net_rxqueue.subscribers */
 		} packet;
 		/* Used by all IP protocols we support. */
 		struct {
@@ -106,7 +108,8 @@ struct evl_socket {
 				struct {
 					u32 rcv_addr;
 					u16 rcv_port;
-					struct evl_net_udp_receiver *receiver;
+					struct evl_net_udp_rcvslot *rcv_slot;
+					struct list_head next; /* in rcv_slot->receivers */
 				} udp;
 			};
 		} ip;
@@ -147,6 +150,8 @@ void evl_uncharge_socket_wmem(struct evl_socket *esk, size_t size);
 int evl_register_socket_domain(struct evl_socket_domain *domain);
 
 void evl_unregister_socket_domain(struct evl_socket_domain *domain);
+
+void evl_net_purge_socket_input(struct evl_socket *esk);
 
 void evl_net_offload_inband(struct evl_socket *esk,
 			struct evl_net_offload *ofld,
