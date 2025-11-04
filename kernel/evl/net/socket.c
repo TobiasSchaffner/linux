@@ -190,6 +190,23 @@ void evl_uncharge_socket_wmem(struct evl_socket *esk, size_t size)
 	EVL_WARN_ON(NET, count < 0);
 }
 
+void evl_net_purge_socket_input(struct evl_socket *esk)
+{
+	struct sk_buff *skb, *next;
+	unsigned long flags;
+	LIST_HEAD(list);
+
+	raw_spin_lock_irqsave(&esk->input_wait.wchan.lock, flags);
+	list_splice_init(&esk->input, &list);
+	raw_spin_unlock_irqrestore(&esk->input_wait.wchan.lock, flags);
+
+	list_for_each_entry_safe(skb, next, &list, list) {
+		skb_list_del_init(skb);
+		evl_net_uncharge_skb_rmem(skb);
+		evl_net_free_skb(skb);
+	}
+}
+
 /* in-band */
 static struct evl_net_proto *find_oob_proto(int domain, int type, int protocol)
 {
@@ -327,7 +344,6 @@ int sock_oob_attach(struct socket *sock)
 	esk->net = sock_net(sk);
 	mutex_init(&esk->lock);
 	INIT_LIST_HEAD(&esk->input);
-	INIT_LIST_HEAD(&esk->next_sub);
 	evl_init_wait(&esk->input_wait, &evl_mono_clock, 0);
 	evl_init_wait(&esk->wmem_wait, &evl_mono_clock, 0);
 	evl_init_poll_head(&esk->poll_head);
