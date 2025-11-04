@@ -13,20 +13,19 @@
 #include <evl/sem.h>
 #include <evl/mutex.h>
 
-/* Cached UDP receiver. */
-struct evl_net_udp_receiver {
+/* Cached UDP receive slot. */
+struct evl_net_udp_rcvslot {
 	/* Generic cache entry. */
 	struct evl_cache_entry entry;
-	/* Queue of pending datagrams. */
-	struct list_head queue;
-	/* Wait queue receivers sleep on. */
-	struct evl_wait_queue wait;
+	/* Queue of listening sockets. */
+	struct list_head receivers;
 	/* Users (SO_REUSEPORT) */
 	refcount_t refs;
+	/* Guards ->receivers. */
+	hard_spinlock_t lock;
 	/* The hash key must be aliasable to u32[]. */
 	struct __evl_net_udp_key {
-		u32 dport;
-		u32 daddr;
+		u32 port;
 	} key __packed;
 };
 
