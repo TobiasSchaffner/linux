@@ -86,15 +86,6 @@ static bool __packet_deliver(struct evl_net_rxqueue *rxq,
 		}
 
 		/*
-		 * This packet may be delivered to esk, attempt to
-		 * charge it to its rmem counter. If the socket may
-		 * not consume more memory, skip delivery and try with
-		 * the next subscriber.
-		 */
-		if (!evl_net_charge_skb_rmem(esk, skb))
-			continue;
-
-		/*
 		 * All sockets bound to ETH_P_ALL receive a clone of
 		 * each incoming buffer, leaving the latter unconsumed
 		 * yet. A single one among the other listeners
@@ -105,9 +96,21 @@ static bool __packet_deliver(struct evl_net_rxqueue *rxq,
 			qskb = evl_net_clone_skb(skb);
 			if (qskb == NULL) {
 				evl_flush_wait(&esk->input_wait, EVL_T_NOMEM);
-				evl_net_uncharge_skb_rmem(skb);
-				break;
+				continue;
 			}
+		}
+
+		/*
+		 * This packet may be delivered unless that socket may
+		 * not consume more memory, in which case we skip
+		 * delivery and try with the next receiver. On error,
+		 * we should not free the received skb, only its
+		 * clones.
+		 */
+		if (!evl_net_charge_skb_rmem(esk, qskb)) {
+			if (qskb != skb)
+				evl_net_free_skb(qskb);
+			continue;
 		}
 
 		raw_spin_lock(&esk->input_wait.wchan.lock);
