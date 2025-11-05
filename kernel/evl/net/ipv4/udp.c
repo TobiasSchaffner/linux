@@ -176,6 +176,13 @@ static int bind_udp_socket(struct evl_socket *esk,
  */
 static int shutdown_udp_socket(struct evl_socket *esk, int how)
 {
+	/*
+	 * We send RMID to any waiter although this is not actually a
+	 * deletion, but what we want is the latter to unblock.
+	 */
+	evl_flush_wait(&esk->input_wait, EVL_T_RMID);
+	evl_signal_poll_events(&esk->poll_head,	POLLIN|POLLRDNORM);
+	evl_schedule();
 	drop_receive_slot(esk);
 	evl_net_purge_socket_input(esk);
 
@@ -333,6 +340,9 @@ static ssize_t send_udp(struct evl_socket *esk,
 	__u64 name_ptr;
 	__be16 dport;
 
+	if (READ_ONCE(sk->sk_shutdown) & SEND_SHUTDOWN)
+		return -EPIPE;
+
 	ret = raw_get_user(msg_flags, &u_msghdr->flags);
 	if (ret)
 		return -EFAULT;
@@ -466,6 +476,10 @@ static ssize_t send_udp(struct evl_socket *esk,
 
 	ret = send_datagram(skb, ert->rt->dst.dev, earp, &ipc,
 			dport, inet->inet_sport, datalen);
+
+	/* EIDRM is special case for receiving shutdown(2) while waiting. */
+	if (ret == -EIDRM)
+		ret = -EPIPE;
 out:
 	if (likely(earp != &pseudo_earp))
 		evl_net_put_arp_entry(earp);
@@ -541,6 +555,9 @@ static ssize_t receive_udp(struct evl_socket *esk,
 	unsigned long flags;
 	ssize_t ret;
 
+	if (READ_ONCE(esk->sk->sk_shutdown) & RCV_SHUTDOWN)
+		return 0;
+
 	if (evl_socket_f_flags(esk) & O_NONBLOCK)
 		msg_flags |= MSG_DONTWAIT;
 
@@ -605,18 +622,28 @@ static ssize_t receive_udp(struct evl_socket *esk,
 		ret = evl_wait_schedule(&esk->input_wait);
 	} while (!ret);
 
-	return ret;
+	/* EIDRM is special case for receiving shutdown(2) while waiting. */
+	return ret == -EIDRM ? 0 : ret;
 }
 
 /* oob */
 static __poll_t poll_udp(struct evl_socket *esk,
 			struct oob_poll_wait *wait)
 {
+	__poll_t ret = POLLIN|POLLRDNORM|POLLOUT|POLLWRNORM;
 	unsigned long flags;
-	__poll_t ret;
+	u8 shutdown;
 
 	/* Enqueue, then test. */
 	evl_poll_watch(&esk->poll_head, wait, NULL);
+
+	shutdown = READ_ONCE(esk->sk->sk_shutdown);
+	if (shutdown & RCV_SHUTDOWN)
+		ret |= EPOLLRDHUP;
+	if (shutdown == SHUTDOWN_MASK)
+		ret = EPOLLHUP;
+	else if (shutdown & SEND_SHUTDOWN)
+		ret &= ~POLLOUT|POLLWRNORM;
 
 	rcu_read_lock();	/* For checking timestamps. */
 
@@ -625,18 +652,14 @@ static __poll_t poll_udp(struct evl_socket *esk,
 	 * unconditionally, regardless of whether messages are
 	 * pending.
 	 */
-	ret = POLLIN|POLLRDNORM;
 	if (!__evl_test_socket_iots(esk)) {
 		raw_spin_lock_irqsave(&esk->input_wait.wchan.lock, flags);
 		if (list_empty(&esk->input))
-			ret = 0;
+			ret &= ~POLLIN|POLLRDNORM;
 		raw_spin_unlock_irqrestore(&esk->input_wait.wchan.lock, flags);
 	}
 
 	rcu_read_unlock();
-
-	/* FIXME: Assume we can always TX, which is too optimistic. */
-	ret |= POLLOUT|POLLWRNORM;
 
 	return ret;
 }
@@ -789,9 +812,8 @@ static int deliver_datagram(struct sk_buff *skb)
 
 		if ((inet->inet_daddr != iph->saddr && inet->inet_daddr) ||
 			(inet->inet_dport != uh->source && inet->inet_dport) ||
-			(inet->inet_rcv_saddr && inet->inet_rcv_saddr != iph->daddr)) {
+			(inet->inet_rcv_saddr && inet->inet_rcv_saddr != iph->daddr))
 			continue;
-		}
 
 		bound_if = READ_ONCE(esk->sk->sk_bound_dev_if);
 		if (bound_if && skb->dev->ifindex != bound_if)
