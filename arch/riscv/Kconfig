@@ -770,6 +770,7 @@ config FPU
 
 config IRQ_STACKS
 	bool "Independent irq & softirq stacks" if EXPERT
+	depends on !IRQ_PIPELINE
 	default y
 	select HAVE_IRQ_EXIT_ON_IRQ_STACK
 	select HAVE_SOFTIRQ_ON_OWN_STACK
