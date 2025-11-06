@@ -11,6 +11,7 @@
 #include <linux/irq_work.h>
 #include <linux/if_vlan.h>
 #include <linux/skbuff.h>
+#include <uapi/linux/if_arp.h>
 #include <evl/thread.h>
 #include <evl/lock.h>
 #include <evl/list.h>
@@ -183,6 +184,11 @@ void evl_net_receive(struct sk_buff *skb,
 
 	EVL_NET_CB(skb)->handler = handler;
 
+	skb_reset_network_header(skb);
+	if (!skb_transport_header_was_set(skb))
+		skb_reset_transport_header(skb);
+	skb_reset_mac_len(skb);
+
 	/*
 	 * Enqueue the packet. The NIC driver is expected to call
 	 * napi_complete_done() when the RX side goes quiescent, which
@@ -283,68 +289,36 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 	struct net_device *dev = skb->dev;
 	bool picked;
 
-	skb_reset_network_header(skb);
-	if (!skb_transport_header_was_set(skb))
-		skb_reset_transport_header(skb);
-	skb_reset_mac_len(skb);
+	/* We deal with Ethernet devices only. */
+	if (unlikely(dev->type != ARPHRD_ETHER))
+		return false;
 
 	/*
 	 * Filter the incoming packet through the eBPF RX program
 	 * attached to the input device (if any), passing it down to
 	 * the regular in-band stack if the filter code says that we
-	 * are not interested in it.
+	 * are not interested in it. If no filter is active,
+	 * EVL_RX_VLAN is applied.
 	 */
 	switch (evl_net_filter_rx(dev, skb)) {
 	case EVL_RX_VLAN:
-		/*
-		 * Apply our VLAN rules to decide whether this is an
-		 * oob packet.
-		 */
+		picked = evl_net_ether_accept_vlan(skb);
+		/* Apply our regular VLAN-based filter. */
 		break;
 	case EVL_RX_ACCEPT:
-		/* Direct the packet to the oob stack unconditionally. */
-		switch (skb->protocol) {
-		case htons(ETH_P_IP):
-			picked = evl_net_ether_accept(skb);
-			goto taps;
-		default:
-			/*
-			 * We don't deal with non-IP protocols, and
-			 * the filter mistakenly told us to handle the
-			 * packet. Leave it to inband.
-			 */
-			return false;
-		}
-	case EVL_RX_SKIP:
-		/* Leave the packet to inband. */
-		return false;
+		/* Try accepting the packet regardless of VLAN tagging. */
+		picked = evl_net_ether_accept(skb);
+		break;
 	case EVL_RX_DROP:
 		/* Blackhole. */
 		evl_net_free_skb(skb);
 		return true;
-	}
-
-	/*
-	 * Fallback to VLAN-based filtering to figure out whether the
-	 * packet should be handled by the oob stack.
-	 */
-	switch (skb->protocol) {
-	case htons(ETH_P_IP):
-		picked = evl_net_ether_accept_vlan(skb);
-		break;
+	case EVL_RX_SKIP:
 	default:
-		/*
-		 * For those adapters without hw-accelerated VLAN
-		 * capabilities, check the ethertype directly.
-		 */
-		if (eth_type_vlan(skb->protocol)) {
-			picked = evl_net_ether_accept_vlan(skb);
-			goto taps;
-		}
-
+		/* Leave the packet to inband. */
 		return false;
 	}
-taps:
+
 	/*
 	 * Feed in-band input taps if any. Racing with in-band updates
 	 * to the packet type chain is ok, we don't dereference it but
