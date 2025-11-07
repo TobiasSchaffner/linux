@@ -69,13 +69,6 @@ static bool __packet_deliver(struct evl_net_rxqueue *rxq,
 	 * is going to be faster in the normal case.
 	 */
 	list_for_each_entry(esk, &rxq->subscribers, u.packet.next) {
-		/*
-		 * Revisit: we could filter on some "activation tag"
-		 * value calculated at activation time
-		 * (enable_oob_port) to eliminate spurious matches on
-		 * a newly registered device reusing an old ifindex we
-		 * initially captured at binding time.
-		 */
 		ifindex = READ_ONCE(esk->u.packet.real_ifindex);
 		if (ifindex) {
 			if (ifindex != dev->ifindex)
@@ -87,9 +80,10 @@ static bool __packet_deliver(struct evl_net_rxqueue *rxq,
 
 		/*
 		 * All sockets bound to ETH_P_ALL receive a clone of
-		 * each incoming buffer, leaving the latter unconsumed
-		 * yet. A single one among the other listeners
-		 * consumes the incoming buffer.
+		 * each incoming buffer, leaving the original one
+		 * unconsumed. When monitoring a specific protocol
+		 * instead of ETH_P_ALL, a single listener directly
+		 * receives the incoming buffer.
 		 */
 		qskb = skb;
 		if (protocol == ETH_P_ALL) {
