@@ -289,8 +289,8 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 	struct net_device *dev = skb->dev;
 	bool picked;
 
-	/* We deal with Ethernet devices only. */
-	if (unlikely(dev->type != ARPHRD_ETHER))
+	/* We deal with Ethernet and loopback devices only. */
+	if (unlikely(dev->type != ARPHRD_ETHER && dev->type != ARPHRD_LOOPBACK))
 		return false;
 
 	/*
