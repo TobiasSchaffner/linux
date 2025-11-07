@@ -426,6 +426,7 @@ struct sk_buff *evl_net_clone_skb(struct sk_buff *skb)
 
 	clone->head = NULL;	/* So we can morph safely. */
 	skb_morph(clone, skb);
+	skb_mark_oob(clone);	/* Morphing lost the marker, re-add it. */
 
 	return clone;
 }
