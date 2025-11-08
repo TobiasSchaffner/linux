@@ -821,7 +821,7 @@ static int deliver_datagram(struct sk_buff *skb)
 
 		qskb = skb;
 		if (mbcast && !list_is_last(&esk->u.ip.udp.next, &rslot->receivers)) {
-			qskb = evl_net_clone_skb(skb);
+			qskb = skb_oob_clone(skb);
 			if (qskb == NULL) {
 				evl_flush_wait(&esk->input_wait, EVL_T_NOMEM);
 				continue;

@@ -406,31 +406,6 @@ void free_skb_oob(struct sk_buff *skb) /* inband/oob */
 	maybe_kick_recycler();
 }
 
-/**
- *	evl_net_clone_skb - clone a socket buffer.
- *
- *	Allocate and build a clone of @skb, referring to the same
- *	data.
- *
- *	@skb the packet to clone.
- *
- *      CAUTION: fragments are not cloned.
- */
-struct sk_buff *evl_net_clone_skb(struct sk_buff *skb)
-{
-	struct sk_buff *clone;
-
-	clone = get_oob_skb();
-	if (!clone)
-		return NULL;
-
-	clone->head = NULL;	/* So we can morph safely. */
-	skb_morph(clone, skb);
-	skb_mark_oob(clone);	/* Morphing lost the marker, re-add it. */
-
-	return clone;
-}
-
 void evl_net_init_skb_queue(struct evl_net_skb_queue *skbq)
 {
 	INIT_LIST_HEAD(&skbq->queue);
