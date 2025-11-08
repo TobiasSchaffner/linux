@@ -73,8 +73,6 @@ void evl_net_free_skb(struct sk_buff *skb);
 
 void evl_net_free_skb_list(struct list_head *list);
 
-struct sk_buff *evl_net_clone_skb(struct sk_buff *skb);
-
 bool evl_net_charge_skb_rmem(struct evl_socket *esk,
 			struct sk_buff *skb);
 

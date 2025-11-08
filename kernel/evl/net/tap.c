@@ -58,10 +58,10 @@ void evl_net_tap_in(struct net_device *dev, struct sk_buff *skb)
 	/*
 	 * The guarantee is that we feed taps only with skbs we did
 	 * accept for oob handling (see netif_deliver_oob()),
-	 * therefore evl_net_clone_skb() is by design able to deal
-	 * with any type of buffers the oob stack accepts.
+	 * therefore skb_oob_clone() is by design able to deal with
+	 * any type of buffers the oob stack accepts.
 	 */
-	qskb = evl_net_clone_skb(skb);
+	qskb = skb_oob_clone(skb);
 	/* Failing to feed taps not considered harmful. */
 	if (unlikely(!qskb))
 		return;
@@ -99,7 +99,7 @@ void evl_net_tap_out(struct net_device *dev, struct sk_buff *skb)
 	struct evl_net_tap_data out;
 	struct sk_buff *qskb;
 
-	qskb = evl_net_clone_skb(skb);
+	qskb = skb_oob_clone(skb);
 	/* Failing to feed taps not considered harmful. */
 	if (unlikely(!qskb))
 		return;
