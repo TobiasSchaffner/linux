@@ -33,7 +33,7 @@ static bool pop_vlan_header(struct sk_buff *skb)
 	EVL_WARN_ON_ONCE(NET, skb_cloned(skb));
 	skb_push_rcsum(skb, ETH_HLEN);
 	ret = skb_vlan_pop(skb);
-	skb_pull_inline(skb, ETH_HLEN);
+	skb_pull_rcsum(skb, ETH_HLEN);
 	if (EVL_WARN_ON_ONCE(NET, ret))
 		return false;
 
