@@ -87,7 +87,7 @@ static bool __packet_deliver(struct evl_net_rxqueue *rxq,
 		 */
 		qskb = skb;
 		if (protocol == ETH_P_ALL) {
-			qskb = evl_net_clone_skb(skb);
+			qskb = skb_oob_clone(skb);
 			if (qskb == NULL) {
 				evl_flush_wait(&esk->input_wait, EVL_T_NOMEM);
 				continue;
