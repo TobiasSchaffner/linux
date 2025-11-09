@@ -7,8 +7,8 @@
  * out-of-band lookup.
  */
 
-#ifndef _EVL_CACHE_H
-#define _EVL_CACHE_H
+#ifndef _EVL_LIB_CACHE_H
+#define _EVL_LIB_CACHE_H
 
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
@@ -70,9 +70,6 @@ int evl_init_cache(struct evl_cache *cache);
 
 void evl_cleanup_cache(struct evl_cache *cache);
 
-void evl_init_cache_entry(struct evl_cache_entry *entry,
-			struct evl_cache *cache);
-
 int evl_add_cache_entry(struct evl_cache *cache,
 			struct evl_cache_entry *entry);
 
@@ -111,4 +108,4 @@ static inline void evl_unlock_cache(struct evl_cache *cache)
 	spin_unlock_bh(&cache->lock);
 }
 
-#endif /* !_EVL_CACHE_H */
+#endif /* !_EVL_LIB_CACHE_H */
