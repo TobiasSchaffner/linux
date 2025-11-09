@@ -199,29 +199,6 @@ void evl_net_receive(struct sk_buff *skb,
 	evl_net_add_skb_queue(&est->rx_packets, skb);
 }
 
-struct evl_net_rxqueue *evl_net_alloc_rxqueue(u32 hkey) /* in-band */
-{
-	struct evl_net_rxqueue *rxq;
-
-	rxq = kzalloc(sizeof(*rxq), GFP_KERNEL);
-	if (rxq == NULL)
-		return NULL;
-
-	rxq->hkey = hkey;
-	INIT_LIST_HEAD(&rxq->subscribers);
-	evl_spin_lock_init(&rxq->lock);
-
-	return rxq;
-}
-
-/* in-band */
-void evl_net_free_rxqueue(struct evl_net_rxqueue *rxq)
-{
-	EVL_WARN_ON(NET, !list_empty(&rxq->subscribers));
-
-	kfree(rxq);
-}
-
 /**
  * napi_schedule_oob - plan for polling a NAPI instance.
  *
