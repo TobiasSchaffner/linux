@@ -4,8 +4,6 @@
  * Copyright (C) 2020 Philippe Gerum  <rpm@xenomai.org>
  */
 
-#include <linux/hashtable.h>
-#include <linux/jhash.h>
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
 #include <linux/poll.h>
@@ -29,26 +27,24 @@
 #include <evl/net/timestamping.h>
 #include <evl/uaccess.h>
 
-static struct evl_net_proto *
-find_packet_proto(int protocol, struct evl_net_proto *default_proto);
+void evl_net_init_packet(struct net *net)
+{
+	struct oob_net_state *nets = &net->oob;
 
-/*
- * Lock nesting: protocol_lock -> rxq->lock -> esk->input_wait.wchan.lock
- * We use linear skbs only (no paged data).
- */
+	evl_init_rculist(&nets->packet.ipv4_listeners);
+	evl_init_rculist(&nets->packet.all_listeners);
+}
 
-#define EVL_PROTO_HASH_BITS	8
+void evl_net_cleanup_packet(struct net *net)
+{
+	struct oob_net_state *nets = &net->oob;
 
-static DEFINE_HASHTABLE(protocol_hash, EVL_PROTO_HASH_BITS);
-
-/*
- * Protects protocol_hash, shared between in-band and oob contexts,
- * never accessed from oob IRQ handlers.
- */
-static DEFINE_EVL_SPINLOCK(protocol_lock);
+	EVL_WARN_ON(NET, !evl_rculist_empty(&nets->packet.ipv4_listeners));
+	EVL_WARN_ON(NET, !evl_rculist_empty(&nets->packet.all_listeners));
+}
 
 /* oob, hard irqs off */
-static bool __packet_deliver(struct evl_net_rxqueue *rxq,
+static bool __packet_deliver(struct evl_rculist *rxq,
 			struct sk_buff *skb, int protocol)
 {
 	struct net_device *dev = skb->dev;
@@ -58,17 +54,10 @@ static bool __packet_deliver(struct evl_net_rxqueue *rxq,
 	u16 vlan_id;
 	int ifindex;
 
-	evl_spin_lock(&rxq->lock);
+	rcu_read_lock();
 
-	/*
-	 * Subscribers are searched sequentially for a matching net
-	 * device if specified, otherwise we accept traffic from any
-	 * interface. The net_device lookup could be hashed too, but
-	 * [lame excuse coming] we are not supposed to have a
-	 * truckload of NICs to listen to, so keep it plain dumb which
-	 * is going to be faster in the normal case.
-	 */
-	list_for_each_entry(esk, &rxq->subscribers, u.packet.next) {
+	evl_rculist_for_each_entry(esk, rxq, u.packet.next) {
+		/* Check device binding if set. */
 		ifindex = READ_ONCE(esk->u.packet.real_ifindex);
 		if (ifindex) {
 			if (ifindex != dev->ifindex)
@@ -121,50 +110,33 @@ static bool __packet_deliver(struct evl_net_rxqueue *rxq,
 			break;
 	}
 
-	evl_spin_unlock(&rxq->lock);
+	rcu_read_unlock();
 
 	return delivered;
 }
 
-/* protocol_lock held, hard irqs off */
-static struct evl_net_rxqueue *find_rxqueue(u32 hkey)
+static struct evl_rculist *get_rxq(struct net *net, int protocol)
 {
-	struct evl_net_rxqueue *rxq;
+	struct oob_net_state *nets = &net->oob;
 
-	hash_for_each_possible(protocol_hash, rxq, hash, hkey)
-		if (rxq->hkey == hkey)
-			return rxq;
-
-	return NULL;
-}
-
-static inline u32 get_protocol_hash(int protocol)
-{
-	u32 hsrc = protocol;
-
-	return jhash2(&hsrc, 1, 0);
+	switch (protocol) {
+	case ETH_P_IP:
+		return &nets->packet.ipv4_listeners;
+	case ETH_P_ALL:
+		return &nets->packet.all_listeners;
+	default:
+		return NULL;
+	}
 }
 
 static bool packet_deliver(struct sk_buff *skb, int protocol) /* oob */
 {
-	struct evl_net_rxqueue *rxq;
-	unsigned long flags;
-	bool ret = false;
-	u32 hkey;
+	struct evl_rculist *rxq = get_rxq(dev_net(skb->dev), protocol);
 
-	hkey = get_protocol_hash(protocol);
-	/*
-	 * Find the rx queue linking sockets attached to the protocol.
-	 */
-	evl_spin_lock_irqsave(&protocol_lock, flags); /* FIXME: this is utterly inefficient. */
+	if (WARN_ON(!rxq))
+		return false;
 
-	rxq = find_rxqueue(hkey);
-	if (rxq)
-		ret = __packet_deliver(rxq, skb, protocol);
-
-	evl_spin_unlock_irqrestore(&protocol_lock, flags);
-
-	return ret;
+	return __packet_deliver(rxq, skb, protocol);
 }
 
 /**
@@ -192,80 +164,41 @@ bool evl_net_packet_deliver(struct sk_buff *skb) /* oob */
 	return packet_deliver(skb, ntohs(skb->protocol));
 }
 
+static void do_bind(struct evl_socket *esk, int protocol)
+{
+	struct evl_rculist *rxq = get_rxq(esk->net, protocol);
+
+	esk->protocol = protocol;
+
+	if (rxq)
+		evl_add_rculist_entry(rxq, &esk->u.packet.next);
+}
+
 /* in-band. */
 static int attach_packet_socket(struct evl_socket *esk,
 				struct evl_net_proto *proto, int protocol)
 {
-	struct evl_net_rxqueue *rxq, *_rxq;
-	unsigned long flags;
-	u32 hkey;
-
-	INIT_LIST_HEAD(&esk->u.packet.next);
-
-	hkey = get_protocol_hash(protocol);
-
-	/*
-	 * We pre-allocate an rx queue then drop it if one is already
-	 * hashed for the same protocol. Not pretty but we are running
-	 * in-band, and this keeps the hard locked section short.
-	 */
-	rxq = evl_net_alloc_rxqueue(hkey);
-	if (rxq == NULL)
-		return -ENOMEM;
-
-	/*
-	 * From this point we cannot fail, packets might come in as
-	 * soon as we queue.
-	 */
-
-	evl_spin_lock_irqsave(&protocol_lock, flags);
-
+	/* If protocol is zero, we won't capture any packet yet. */
 	esk->proto = proto;
-	esk->u.packet.proto_hash = hkey;
-	esk->protocol = protocol;
-
-	_rxq = find_rxqueue(hkey);
-	if (_rxq) {
-		evl_spin_lock(&_rxq->lock);
-		list_add(&esk->u.packet.next, &_rxq->subscribers);
-		evl_spin_unlock(&_rxq->lock);
-	} else {
-		hash_add(protocol_hash, &rxq->hash, hkey);
-		list_add(&esk->u.packet.next, &rxq->subscribers);
-	}
-
-	evl_spin_unlock_irqrestore(&protocol_lock, flags);
-
-	if (_rxq)
-		evl_net_free_rxqueue(rxq);
+	do_bind(esk, protocol);
 
 	return 0;
+}
+
+static void do_unbind(struct evl_socket *esk)
+{
+	struct evl_rculist *rxq = get_rxq(esk->net, esk->protocol);
+
+	if (rxq) {
+		evl_del_rculist_entry(rxq, &esk->u.packet.next);
+		esk->protocol = 0;
+	}
 }
 
 /* in-band, esk->lock held or __sk_destruct() */
 static void destroy_packet_socket(struct evl_socket *esk)
 {
-	struct evl_net_rxqueue *rxq, *n;
-	unsigned long flags;
-	LIST_HEAD(tmp);
-
-	if (list_empty(&esk->u.packet.next))
-		return;
-
-	evl_spin_lock_irqsave(&protocol_lock, flags);
-
-	rxq = find_rxqueue(esk->u.packet.proto_hash);
-
-	list_del_init(&esk->u.packet.next); /* Remove from rxq->subscribers */
-	if (list_empty(&rxq->subscribers)) {
-		hash_del(&rxq->hash);
-		list_add(&rxq->next, &tmp);
-	}
-
-	evl_spin_unlock_irqrestore(&protocol_lock, flags);
-
-	list_for_each_entry_safe(rxq, n, &tmp, next)
-		evl_net_free_rxqueue(rxq);
+	do_unbind(esk);
 }
 
 /* in-band */
@@ -273,11 +206,9 @@ static int bind_packet_socket(struct evl_socket *esk,
 			struct sockaddr *addr,
 			int len)
 {
-	int ret, new_ifindex, real_ifindex, old_ifindex;
-	static struct evl_net_proto *proto;
+	int ret = 0, new_ifindex, real_ifindex, old_ifindex;
 	struct net_device *dev = NULL;
 	struct sockaddr_ll *sll;
-	unsigned long flags;
 	u16 vlan_id;
 
 	if (len != sizeof(*sll))
@@ -287,8 +218,7 @@ static int bind_packet_socket(struct evl_socket *esk,
 	if (sll->sll_family != AF_PACKET)
 		return -EINVAL;
 
-	proto = find_packet_proto(ntohs(sll->sll_protocol), esk->proto);
-	if (proto == NULL)
+	if (!get_rxq(esk->net, ntohs(sll->sll_protocol)))
 		return -EINVAL;
 
 	new_ifindex = sll->sll_ifindex;
@@ -316,37 +246,23 @@ static int bind_packet_socket(struct evl_socket *esk,
 		}
 	}
 
+	/* Rebind if we track a different protocol. */
 	if (esk->protocol != ntohs(sll->sll_protocol)) {
-		destroy_packet_socket(esk);
-		/*
-		 * Since the old binding was dropped, we would not
-		 * receive anything if the new binding fails. This
-		 * said, -ENOMEM is the only possible failure, so the
-		 * root issue would be way more problematic than a
-		 * dead socket.
-		 */
-		ret = attach_packet_socket(esk, proto, ntohs(sll->sll_protocol));
-		if (ret)
-			goto out;
+		do_unbind(esk);
+		do_bind(esk, ntohs(sll->sll_protocol));
 	}
 
 	/*
-	 * Ensure that all binding-related changes happen atomically
-	 * from the standpoint of oob observers.
-	 *
-	 * Revisit: cannot race with IRQs, use preemption-disabling
-	 * spinlock instead.
+	 * Change device binding information in a way which won't fool
+	 * __packet_deliver().
 	 */
-	raw_spin_lock_irqsave(&esk->oob_lock, flags);
 	if (new_ifindex != old_ifindex) {
-		/* First change the real interface, next the vid. */
+		WRITE_ONCE(esk->u.packet.vlan_id, VLAN_N_VID);
 		WRITE_ONCE(esk->u.packet.real_ifindex, real_ifindex);
-		esk->u.packet.vlan_id = vlan_id;
+		WRITE_ONCE(esk->u.packet.vlan_id, vlan_id);
 		WRITE_ONCE(esk->u.packet.ifindex, new_ifindex);
 	}
-	raw_spin_unlock_irqrestore(&esk->oob_lock, flags);
-
- out:
+out:
 	mutex_unlock(&esk->lock);
 
 	if (dev)

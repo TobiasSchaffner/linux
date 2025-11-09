@@ -95,9 +95,8 @@ struct evl_socket {
 		struct {
 			int real_ifindex;
 			int ifindex; /* Same as real_ifindex or vlan ifindex */
-			u16 vlan_id; /* non-zero if vlan device, zero otherwise */
-			u32 proto_hash;
-			struct list_head next; /* evl_net_rxqueue.subscribers */
+			u16 vlan_id; /* Zero (unfiltered) or VLAN_N_VID, otherwise vlan device */
+			struct list_head next;
 		} packet;
 		/* Used by all IP protocols we support. */
 		struct {

@@ -14,11 +14,11 @@
 #include <evl/factory.h>
 #include <evl/uaccess.h>
 #include <evl/net/qdisc.h>
-#include <evl/net/packet.h>
 #include <evl/net/device.h>
 #include <evl/net/input.h>
 #include <evl/net/output.h>
 #include <evl/net/skb.h>
+#include <evl/net/packet.h>
 #include <evl/net/ipv4/arp.h>
 #include <evl/net/ipv4/route.h>
 #include <evl/net/ipv4.h>
@@ -31,6 +31,7 @@
  */
 void net_init_oob_state(struct net *net)
 {
+	evl_net_init_packet(net);
 	evl_net_init_ipv4(net);
 }
 
@@ -41,6 +42,7 @@ void net_init_oob_state(struct net *net)
 void net_cleanup_oob_state(struct net *net)
 {
 	evl_net_cleanup_ipv4(net);
+	evl_net_cleanup_packet(net);
 }
 
 static struct notifier_block netdev_notifier = {
