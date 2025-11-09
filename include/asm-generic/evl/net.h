@@ -11,6 +11,7 @@
 #include <evl/mutex.h>
 #include <evl/timer.h>
 #include <evl/cache.h>
+#include <evl/rculist.h>
 
 #define EVL_NET_FRAGS_HASHBITS 7
 
@@ -69,6 +70,10 @@ struct evl_net_frag_tdir {
 };
 
 struct oob_net_state {
+	struct {
+		struct evl_rculist ipv4_listeners;
+		struct evl_rculist all_listeners;
+	} packet;
 	struct {
 		/* Fragment tree directory. */
 		struct evl_net_frag_tdir ftdir;
