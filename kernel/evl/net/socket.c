@@ -405,9 +405,6 @@ void sock_oob_destroy(struct sock *sk)
 {
 	struct evl_socket *esk = evl_sk(sk);
 
-	/* We are detaching, so rmem_count can be left out of sync. */
-	evl_net_free_skb_list(&esk->input);
-
 	/* Drop any timestamping data. */
 	evl_setup_socket_iots(esk, 0);
 
@@ -416,6 +413,14 @@ void sock_oob_destroy(struct sock *sk)
 
 	if (esk->proto->destroy)
 		esk->proto->destroy(esk);
+
+	/*
+	 * We might be queuing packets for input from the out-of-band
+	 * stage until the destroy() handler has run, so postpone
+	 * flush until after this happens (rmem_count can be left out
+	 * of sync).
+	 */
+	evl_net_free_skb_list(&esk->input);
 
 	if (sk->sk_family != PF_OOB && refcount_dec_and_test(&esk->refs))
 		kfree(esk);	/* meaning sk != esk. */
