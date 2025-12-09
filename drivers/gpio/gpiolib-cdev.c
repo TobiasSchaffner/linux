@@ -309,7 +309,7 @@ static long linehandle_oob_ioctl(struct file *file, unsigned int cmd,
 
 		return 0;
 	} else if (cmd == GPIOHANDLE_SET_LINE_VALUES_IOCTL) {
-		if (!test_bit(FLAG_IS_OUT, &lh->descs[0]->flags))
+		if (!test_bit(GPIOD_FLAG_IS_OUT, &lh->descs[0]->flags))
 			return -EPERM;
 
 		if (raw_copy_from_user(&ghd, ip, sizeof(ghd)))
