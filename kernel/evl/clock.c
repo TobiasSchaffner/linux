@@ -225,8 +225,7 @@ int evl_init_clock(struct evl_clock *clock,
 	 */
 	for_each_online_cpu(cpu) {
 		tmb = evl_percpu_timers(clock, cpu);
-		evl_init_tqueue(&tmb->q);
-		raw_spin_lock_init(&tmb->lock);
+		evl_init_timerbase(tmb);
 	}
 
 	clock->offset = 0;
@@ -321,7 +320,6 @@ static void do_clock_tick(struct evl_clock *clock, struct evl_timerbase *tmb)
 		 */
 		if (unlikely(timer == &rq->inband_timer)) {
 			rq->local_flags |= RQ_TPROXY;
-			rq->local_flags &= ~RQ_TDEFER;
 			continue;
 		}
 
