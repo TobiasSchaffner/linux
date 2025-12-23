@@ -82,39 +82,14 @@ static inline void double_timer_base_unlock(struct evl_timerbase *tb1,
 }
 
 /* timer base locked. */
-static bool timer_at_front(struct evl_timer *timer)
+static void program_timer(struct evl_timer *timer,
+			struct evl_timerbase *base)
 {
 	struct evl_rq *rq = evl_get_timer_rq(timer);
-	struct evl_tqueue *tq;
-	struct evl_tnode *tn;
 
-	tq = &timer->base->q;
-	tn = evl_get_tqueue_head(tq);
-	if (tn == &timer->node)
-		return true;
+	evl_enqueue_timer(timer, &base->q);
 
-	if (rq->local_flags & RQ_TDEFER) {
-		tn = evl_get_tqueue_next(tq, tn);
-		if (tn == &timer->node)
-			return true;
-	}
-
-	return false;
-}
-
-/* timer base locked. */
-static void program_timer(struct evl_timer *timer,
-			struct evl_tqueue *tq)
-{
-	struct evl_rq *rq;
-
-	evl_enqueue_timer(timer, tq);
-
-	rq = evl_get_timer_rq(timer);
-	if (!(rq->local_flags & RQ_TSTOPPED) && !timer_at_front(timer))
-		return;
-
-	if (rq != this_evl_rq())
+	if (unlikely(rq != this_evl_rq()))
 		evl_program_remote_tick(timer->clock, rq);
 	else
 		evl_program_local_tick(timer->clock);
@@ -161,7 +136,7 @@ void evl_start_timer(struct evl_timer *timer,
 	}
 
 	timer->status |= EVL_TIMER_RUNNING;
-	program_timer(timer, tq);
+	program_timer(timer, base);
 
 	unlock_timer_base(base, flags);
 }
@@ -174,7 +149,7 @@ bool evl_timer_deactivate(struct evl_timer *timer)
 	bool heading = true;
 
 	if (!(timer->status & EVL_TIMER_DEQUEUED)) {
-		heading = timer_at_front(timer);
+		heading = timer->base->heading_tnode == &timer->node;
 		evl_dequeue_timer(timer, tq);
 	}
 
@@ -190,12 +165,16 @@ static void stop_timer_locked(struct evl_timer *timer)
 
 	/*
 	 * If we removed the heading timer, reprogram the next shot if
-	 * any. If the timer was running on another CPU, let it tick.
+	 * any. If the timer was running on another CPU, let the clock
+	 * tick.
 	 */
 	if (evl_timer_is_running(timer)) {
 		heading = evl_timer_deactivate(timer);
-		if (heading && evl_timer_on_rq(timer, this_evl_rq()))
-			evl_program_local_tick(timer->clock);
+		if (heading) {
+			timer->base->heading_tnode = NULL;
+			if (evl_timer_on_rq(timer, this_evl_rq()))
+				evl_program_local_tick(timer->clock);
+		}
 	}
 }
 
@@ -387,8 +366,7 @@ void evl_move_timer(struct evl_timer *timer,
 		timer->base = new_base;
 		timer->clock = clock;
 		evl_enqueue_timer(timer, &new_base->q);
-		if (timer_at_front(timer))
-			evl_program_remote_tick(clock, rq);
+		evl_program_remote_tick(clock, rq);
 		double_timer_base_unlock(old_base, new_base);
 		hard_local_irq_restore(flags);
 	} else {
@@ -470,7 +448,7 @@ unsigned long evl_get_timer_overruns(struct evl_timer *timer)
 		evl_update_timer_date(timer);
 	}
 
-	program_timer(timer, tq);
+	program_timer(timer, base);
 done:
 	timer->consumed_ticks++;
 

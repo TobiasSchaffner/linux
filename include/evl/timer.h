@@ -156,9 +156,25 @@ void evl_remove_tnode(struct evl_tqueue *tq, struct evl_tnode *node)
 struct evl_rq;
 
 struct evl_timerbase {
+	/* Serializes all accesses to the queue and heading hint. */
 	hard_spinlock_t lock;
+	/* The queue of armed timers. */
 	struct evl_tqueue q;
+	/*
+	 * A hint pointing at the timer (node) for which a (proxy)
+	 * tick event is pending, if any. Since the next tick is
+	 * programmed each time a timer elapses, this hint cannot
+	 * point at stale timers.
+	 */
+	struct evl_tnode *heading_tnode;
 };
+
+static inline void evl_init_timerbase(struct evl_timerbase *base)
+{
+	evl_init_tqueue(&base->q);
+	raw_spin_lock_init(&base->lock);
+	base->heading_tnode = NULL;
+}
 
 static inline struct evl_timerbase *
 evl_percpu_timers(struct evl_clock *clock, int cpu)

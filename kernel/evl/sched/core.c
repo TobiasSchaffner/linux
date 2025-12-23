@@ -1017,6 +1017,12 @@ void __evl_schedule(void) /* oob or/and hard irqs off (CPU migration-safe) */
 	this_rq->curr = next;
 	leaving_inband = false;
 
+	/*
+	 * Careful: we _must_ have updated this_rq->curr before
+	 * performing the rest of the context switch code
+	 * (e.g. evl_program_local_tick() depends on this when dealing
+	 * with the in-band tick deferral).
+	 */
 	if (prev->state & EVL_T_ROOT) {
 		leave_inband(prev);
 		leaving_inband = true;

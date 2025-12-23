@@ -197,7 +197,7 @@ void evl_program_proxy_tick(struct evl_clock *clock)
 	struct clock_proxy_device *dev = __this_cpu_read(proxy_device);
 	struct clock_event_device *real_dev = dev->real_device;
 	struct evl_rq *this_rq = this_evl_rq();
-	struct evl_timerbase *tmb;
+	struct evl_timerbase *base;
 	struct evl_timer *timer;
 	struct evl_tnode *tn;
 	int64_t delta;
@@ -213,25 +213,27 @@ void evl_program_proxy_tick(struct evl_clock *clock)
 	if (this_rq->local_flags & RQ_TIMER)
 		return;
 
-	tmb = evl_this_cpu_timers(clock);
-	tn = evl_get_tqueue_head(&tmb->q);
+	base = evl_this_cpu_timers(clock);
+	tn = evl_get_tqueue_head(&base->q);
 	if (tn == NULL) {
+		base->heading_tnode = NULL;
 		this_rq->local_flags |= RQ_IDLE;
 		return;
 	}
 
 	/*
 	 * Try to defer the next in-band tick, so that it does not
-	 * preempt an OOB activity uselessly, in two cases:
+	 * preempt an out-of-band thread uselessly in the following
+	 * cases:
 	 *
 	 * 1) a rescheduling is pending for the current CPU. We may
 	 * assume that an EVL thread is about to resume, so we want to
 	 * move the in-band tick out of the way until in-band activity
 	 * resumes, unless there is no other outstanding timers.
 	 *
-	 * 2) the current EVL thread is running OOB, in which case we
-	 * may defer the in-band tick until the in-band activity
-	 * resumes.
+	 * 2) the current EVL thread is running out-of-band, in which
+	 * case we may defer the in-band tick until the in-band
+	 * context resumes on the same CPU.
 	 *
 	 * The in-band tick deferral is cleared whenever EVL is about
 	 * to yield control to the in-band code (see
@@ -243,7 +245,7 @@ void evl_program_proxy_tick(struct evl_clock *clock)
 	if (timer == &this_rq->inband_timer) {
 		if (evl_need_resched(this_rq) ||
 			!(this_rq->curr->state & EVL_T_ROOT)) {
-			tn = evl_get_tqueue_next(&tmb->q, tn);
+			tn = evl_get_tqueue_next(&base->q, tn);
 			if (tn) {
 				this_rq->local_flags |= RQ_TDEFER;
 				timer = container_of(tn, struct evl_timer, node);
@@ -251,6 +253,7 @@ void evl_program_proxy_tick(struct evl_clock *clock)
 		}
 	}
 
+	base->heading_tnode = tn;
 	t = evl_tdate(timer);
 	delta = ktime_to_ns(ktime_sub(t, evl_read_clock(clock)));
 
