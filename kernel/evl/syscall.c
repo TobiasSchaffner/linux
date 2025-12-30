@@ -148,6 +148,8 @@ void invoke_syscall(unsigned int nr, struct pt_regs *regs,
 				(unsigned int)args[1],
 				args[2]);
 		break;
+	default:
+		BUG();
 	}
 
 	error = IS_ERR_VALUE(ret) ? ret : 0;
@@ -285,8 +287,8 @@ static int do_oob_syscall(struct irq_stage *stage, struct pt_regs *regs,
 
 	/*
 	 * If the syscall originates from in-band context, hand it
-	 * over to handle_inband_syscall() where the caller would be
-	 * switched to OOB context prior to handling the request.
+	 * over to handle_pipelined_syscall() where the caller would
+	 * be switched to out-of-band context prior to handling the
 	 */
 	if (stage != &oob_stage)
 		return SYSCALL_PROPAGATE;
@@ -371,9 +373,9 @@ static int do_inband_syscall(struct pt_regs *regs, unsigned int scno,
 		return SYSCALL_PROPAGATE;
 
 	/*
-	 * Process an OOB syscall after switching current to the
-	 * out-of-band stage.  do_oob_syscall() already checked the
-	 * syscall number.
+	 * Process an out-of-band syscall after switching current to
+	 * the out-of-band stage.  do_oob_syscall() already checked
+	 * the syscall number.
 	 */
 	trace_evl_inband_sysentry(scno);
 
