@@ -329,7 +329,7 @@ void evl_drop_watchpoints(struct list_head *drop_list)
 	 * being closed. Watchpoints found in @drop_list were
 	 * registered via a call to evl_watch_fd() from wait_events()
 	 * but not unregistered by calling evl_ignore_fd() from
-	 * clear_wait() yet, so they are still valid. wpt->filp is
+	 * clear_wait() yet, so they are still valid. wpt->efilp is
 	 * valid as well, although it may become stale later on if the
 	 * last fd referencing it is being closed.
 	 *
@@ -347,7 +347,7 @@ void evl_drop_watchpoints(struct list_head *drop_list)
 			raw_spin_unlock(&poco->head->lock);
 		}
 		evl_raise_flag_nosched(wpt->flag);
-		wpt->filp = NULL;
+		wpt->efilp = NULL;
 	}
 }
 
@@ -484,7 +484,7 @@ collect:
 				goto stale;
 			curr->poll_context.active++;
 			filp = efilp->filp;
-			wpt->filp = filp;
+			wpt->efilp = efilp;
 			if (filp->f_op->oob_poll)
 				ready = filp->f_op->oob_poll(filp, &wpt->wait);
 			evl_put_file(efilp);
