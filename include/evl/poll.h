@@ -18,8 +18,6 @@
 #include <uapi/evl/types-abi.h>
 #include <uapi/evl/poll-abi.h>
 
-struct file;
-
 struct evl_poll_node {
 	struct list_head next;	/* in watchpoint->poll_nodes */
 };
@@ -34,7 +32,7 @@ struct evl_poll_watchpoint {
 	union evl_value pollval;
 	struct oob_poll_wait wait;
 	struct evl_flag *flag;
-	struct file *filp;
+	struct evl_file *efilp;
 	struct evl_poll_node node;
 };
 
