@@ -93,18 +93,6 @@ struct evl_fd *lookup_efd(unsigned int fd,
 	return NULL;
 }
 
-static inline
-struct evl_fd *unindex_efd(unsigned int fd,
-			struct files_struct *files)
-{
-	struct evl_fd *efd = lookup_efd(fd, files);
-
-	if (efd)
-		rb_erase(&efd->rb, &fd_tree);
-
-	return efd;
-}
-
 /* in-band, caller may hold files->file_lock */
 void install_inband_fd(unsigned int fd, struct file *filp,
 		struct files_struct *files)
@@ -148,9 +136,11 @@ void uninstall_inband_fd(unsigned int fd, struct file *filp,
 		return;
 
 	raw_spin_lock_irqsave(&fdt_lock, flags);
-	efd = unindex_efd(fd, files);
-	if (efd)
+	efd = lookup_efd(fd, files);
+	if (efd) {
+		rb_erase(&efd->rb, &fd_tree);
 		drop_watchpoints(efd);
+	}
 	raw_spin_unlock_irqrestore(&fdt_lock, flags);
 	evl_schedule();
 
@@ -159,29 +149,30 @@ void uninstall_inband_fd(unsigned int fd, struct file *filp,
 }
 
 /* in-band, caller holds files->file_lock */
-void replace_inband_fd(unsigned int fd, struct file *filp,
+void replace_inband_fd(unsigned int oldfd, struct file *newfilp,
 		struct files_struct *files)
 {
 	unsigned long flags;
 	struct evl_fd *efd;
 
-	if (filp->f_oob_ctx == NULL)
-		return;
-
 	raw_spin_lock_irqsave(&fdt_lock, flags);
 
-	efd = lookup_efd(fd, files);
-	if (efd) {
-		drop_watchpoints(efd);
-		efd->efilp = filp->f_oob_ctx;
+	efd = lookup_efd(oldfd, files);
+	if (!efd) {
 		raw_spin_unlock_irqrestore(&fdt_lock, flags);
+		install_inband_fd(oldfd, newfilp, files);
+	} else {
+		drop_watchpoints(efd); /* Drop the wp on the older file. */
+		efd->efilp = newfilp->f_oob_ctx;
+		if (!efd->efilp) {
+			rb_erase(&efd->rb, &fd_tree);
+			raw_spin_unlock_irqrestore(&fdt_lock, flags);
+			evl_free(efd);
+		} else {
+			raw_spin_unlock_irqrestore(&fdt_lock, flags);
+		}
 		evl_schedule();
-		return;
 	}
-
-	raw_spin_unlock_irqrestore(&fdt_lock, flags);
-
-	install_inband_fd(fd, filp, files);
 }
 
 struct evl_file *evl_get_file(unsigned int fd)
