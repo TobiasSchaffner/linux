@@ -8,6 +8,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/fs.h>
+#include <linux/file.h>
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/completion.h>
@@ -175,19 +176,30 @@ void replace_inband_fd(unsigned int oldfd, struct file *newfilp,
 	}
 }
 
+/*
+ * evl_get_file - Get an oob-enabled file by descriptor.
+ * @fd	the file descriptor
+ *
+ * Performs a lookup by file descriptor on the current file table. If
+ * an oob-enabled file is found, a reference is taken on it before
+ * returning the EVL file pointer.
+ *
+ * Dovetail enables fget() for oob callers, so this routine may be
+ * called from any stage.
+ */
 struct evl_file *evl_get_file(unsigned int fd)
 {
-	struct evl_file *efilp = NULL;
-	unsigned long flags;
-	struct evl_fd *efd;
+	struct evl_file *efilp;
+	CLASS(fd, f)(fd);
 
-	raw_spin_lock_irqsave(&fdt_lock, flags);
-	efd = lookup_efd(fd, current->files);
-	if (efd) {
-		efilp = efd->efilp;
-		evl_get_fileref(efilp);
-	}
-	raw_spin_unlock_irqrestore(&fdt_lock, flags);
+	if (unlikely(fd_empty(f)))
+		return NULL;
+
+	efilp = fd_file(f)->f_oob_ctx;
+	if (unlikely(!efilp))
+		return NULL;
+
+	evl_get_fileref(efilp);
 
 	return efilp;
 }
