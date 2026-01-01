@@ -19,6 +19,8 @@ struct evl_poll_node;
 struct evl_file {
 	struct file *filp;
 	struct evl_crossing crossing;
+	struct list_head watchpoints; /* watchpoint->node.next */
+	hard_spinlock_t lock;	      /* guards ->watchpoints */
 };
 
 struct evl_fd {
@@ -26,7 +28,6 @@ struct evl_fd {
 	struct evl_file *efilp;
 	struct files_struct *files;
 	struct rb_node rb;
-	struct list_head poll_nodes; /* poll_item->node */
 };
 
 struct evl_file_binding {
@@ -52,11 +53,6 @@ void evl_put_file(struct evl_file *efilp) /* oob */
 {
 	evl_up_crossing(&efilp->crossing);
 }
-
-struct evl_file *evl_watch_fd(unsigned int fd,
-			struct evl_poll_node *node);
-
-void evl_ignore_fd(struct evl_poll_node *node);
 
 int evl_init_files(void);
 
