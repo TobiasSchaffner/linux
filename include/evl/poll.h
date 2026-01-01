@@ -19,12 +19,12 @@
 #include <uapi/evl/poll-abi.h>
 
 struct evl_poll_node {
-	struct list_head next;	/* in watchpoint->poll_nodes */
+	struct list_head next;
 };
 
 /*
  * The watchpoint struct linked to poll heads by drivers. This watches
- * files not elements, so that we can monitor any type of EVL files.
+ * files not elements, so that we can monitor any type of EVL file.
  */
 struct evl_poll_watchpoint {
 	unsigned int fd;
@@ -38,6 +38,6 @@ struct evl_poll_watchpoint {
 
 void evl_drop_poll_table(struct evl_thread *thread);
 
-void evl_drop_watchpoints(struct list_head *drop_list);
+void evl_drop_watchpoints(struct evl_file *efilp);
 
 #endif /* !_EVL_POLL_H */
