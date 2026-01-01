@@ -317,38 +317,41 @@ static int del_item(struct poll_group *group,
 	return 0;
 }
 
-/* fdt_lock held, irqs off. */
-void evl_drop_watchpoints(struct list_head *drop_list)
+void evl_drop_watchpoints(struct evl_file *efilp)
 {
 	struct evl_poll_watchpoint *wpt;
 	struct evl_poll_connector *poco;
 	struct evl_poll_node *node;
+	unsigned long flags;
+
+	if (likely(list_empty(&efilp->watchpoints)))
+		return;
 
 	/*
-	 * Drop the watchpoints attached to a file descriptor which is
-	 * being closed. Watchpoints found in @drop_list were
-	 * registered via a call to evl_watch_fd() from wait_events()
-	 * but not unregistered by calling evl_ignore_fd() from
-	 * clear_wait() yet, so they are still valid. wpt->efilp is
-	 * valid as well, although it may become stale later on if the
-	 * last fd referencing it is being closed.
+	 * Drop the watchpoints attached to a file which is being
+	 * released, so there is no need for serializing access to the
+	 * watchpoint list since there cannot be any concurrent
+	 * updater. The watchpoints found were registered by
+	 * wait_events() but not unregistered by clear_wait() yet,
+	 * they are still active at the time of the file release.
 	 *
 	 * NOTE: poco->next is kept untouched, only the thread which
 	 * is sleeping on a watchpoint is allowed to alter such
 	 * information for any of the related connectors.
 	 */
-	list_for_each_entry(node, drop_list, next) {
+	list_for_each_entry(node, &efilp->watchpoints, next) {
 		wpt = container_of(node, struct evl_poll_watchpoint, node);
 		for_each_poll_connector(poco, wpt) {
-			raw_spin_lock(&poco->head->lock);
+			raw_spin_lock_irqsave(&poco->head->lock, flags);
 			poco->events_received |= POLLNVAL;
 			if (poco->unwatch) /* handler must NOT reschedule. */
 				poco->unwatch(poco->head);
-			raw_spin_unlock(&poco->head->lock);
+			raw_spin_unlock_irqrestore(&poco->head->lock, flags);
 		}
 		evl_raise_flag_nosched(wpt->flag);
-		wpt->efilp = NULL;
 	}
+
+	evl_schedule();
 }
 
 static inline
@@ -412,6 +415,7 @@ static int collect_events(struct poll_group *group,
 	unsigned int generation;
 	struct poll_item *item;
 	struct evl_file *efilp;
+	unsigned long flags;
 	struct file *filp;
 
 	evl_lock_kmutex(&group->item_lock);
@@ -479,15 +483,17 @@ collect:
 			}
 			/* If oob_poll() is absent, default to all events ready. */
 			ready = POLLIN|POLLOUT|POLLRDNORM|POLLWRNORM;
-			efilp = evl_watch_fd(wpt->fd, &wpt->node);
+			efilp = evl_get_file(wpt->fd);
 			if (efilp == NULL)
 				goto stale;
+			raw_spin_lock_irqsave(&efilp->lock, flags);
+			list_add(&wpt->node.next, &efilp->watchpoints);
+			raw_spin_unlock_irqrestore(&efilp->lock, flags);
 			curr->poll_context.active++;
 			filp = efilp->filp;
 			wpt->efilp = efilp;
 			if (filp->f_op->oob_poll)
 				ready = filp->f_op->oob_poll(filp, &wpt->wait);
-			evl_put_file(efilp);
 		} else {
 			ready = 0;
 			for_each_poll_connector(poco, wpt)
@@ -530,6 +536,7 @@ static inline void clear_wait(void)
 	struct evl_thread *curr = evl_current();
 	struct evl_poll_watchpoint *wpt;
 	struct evl_poll_connector *poco;
+	struct evl_file *efilp;
 	unsigned long flags;
 	int n;
 
@@ -541,15 +548,19 @@ static inline void clear_wait(void)
 	 * monitoring a valid file by construction.
 	 *
 	 * A watchpoint might no be attached to any poll head in case
-	 * oob_poll() is undefined for the device, or the related fd
-	 * is stale. Since only the caller may update the linkage of
-	 * its watchpoints, using list_empty() locklessly is safe
-	 * here.
+	 * oob_poll() is undefined for the device, or the related
+	 * fd/file is stale. Since only the caller may update the
+	 * linkage of its watchpoints, using list_empty() locklessly
+	 * is safe here (see evl_drop_watchpoints()).
 	 */
 	for (n = 0, wpt = curr->poll_context.table;
 	     n < curr->poll_context.active; n++, wpt++) {
-		evl_ignore_fd(&wpt->node);
-		/* Remove from driver's poll head(s). */
+		efilp = wpt->efilp;
+		raw_spin_lock_irqsave(&efilp->lock, flags);
+		list_del(&wpt->node.next);
+		raw_spin_unlock_irqrestore(&efilp->lock, flags);
+		evl_put_file(efilp);
+		/* Remove from driver(s) poll head(s). */
 		for_each_poll_connector(poco, wpt) {
 			raw_spin_lock_irqsave(&poco->head->lock, flags);
 			list_del(&poco->next);

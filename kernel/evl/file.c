@@ -110,20 +110,12 @@ void install_inband_fd(unsigned int fd, struct file *filp,
 		efd->fd = fd;
 		efd->files = files;
 		efd->efilp = filp->f_oob_ctx;
-		INIT_LIST_HEAD(&efd->poll_nodes);
 		raw_spin_lock_irqsave(&fdt_lock, flags);
 		ret = index_efd(efd, filp);
 		raw_spin_unlock_irqrestore(&fdt_lock, flags);
 	}
 
 	EVL_WARN_ON(CORE, ret);
-}
-
-/* fdt_lock held, irqs off. CAUTION: resched required on exit. */
-static void drop_watchpoints(struct evl_fd *efd)
-{
-	if (!list_empty(&efd->poll_nodes))
-		evl_drop_watchpoints(&efd->poll_nodes);
 }
 
 /* in-band, caller holds files->file_lock */
@@ -138,10 +130,8 @@ void uninstall_inband_fd(unsigned int fd, struct file *filp,
 
 	raw_spin_lock_irqsave(&fdt_lock, flags);
 	efd = lookup_efd(fd, files);
-	if (efd) {
+	if (efd)
 		rb_erase(&efd->rb, &fd_tree);
-		drop_watchpoints(efd);
-	}
 	raw_spin_unlock_irqrestore(&fdt_lock, flags);
 	evl_schedule();
 
@@ -163,7 +153,6 @@ void replace_inband_fd(unsigned int oldfd, struct file *newfilp,
 		raw_spin_unlock_irqrestore(&fdt_lock, flags);
 		install_inband_fd(oldfd, newfilp, files);
 	} else {
-		drop_watchpoints(efd); /* Drop the wp on the older file. */
 		efd->efilp = newfilp->f_oob_ctx;
 		if (!efd->efilp) {
 			rb_erase(&efd->rb, &fd_tree);
@@ -205,34 +194,6 @@ struct evl_file *evl_get_file(unsigned int fd)
 }
 EXPORT_SYMBOL_GPL(evl_get_file);
 
-struct evl_file *evl_watch_fd(unsigned int fd,
-			struct evl_poll_node *node)
-{
-	struct evl_file *efilp = NULL;
-	unsigned long flags;
-	struct evl_fd *efd;
-
-	raw_spin_lock_irqsave(&fdt_lock, flags);
-	efd = lookup_efd(fd, current->files);
-	if (efd) {
-		efilp = efd->efilp;
-		evl_get_fileref(efilp);
-		list_add(&node->next, &efd->poll_nodes);
-	}
-	raw_spin_unlock_irqrestore(&fdt_lock, flags);
-
-	return efilp;
-}
-
-void evl_ignore_fd(struct evl_poll_node *node)
-{
-	unsigned long flags;
-
-	raw_spin_lock_irqsave(&fdt_lock, flags);
-	list_del(&node->next);
-	raw_spin_unlock_irqrestore(&fdt_lock, flags);
-}
-
 /**
  * evl_open_file - Open new file with oob capabilities
  *
@@ -244,6 +205,8 @@ int evl_open_file(struct evl_file *efilp, struct file *filp)
 	efilp->filp = filp;
 	filp->f_oob_ctx = efilp; /* mark filp as oob-capable. */
 	evl_init_crossing(&efilp->crossing);
+	INIT_LIST_HEAD(&efilp->watchpoints);
+	raw_spin_lock_init(&efilp->lock);
 
 	return 0;
 }
@@ -259,6 +222,8 @@ EXPORT_SYMBOL_GPL(evl_open_file);
  */
 void evl_release_file(struct evl_file *efilp)
 {
+	evl_drop_watchpoints(efilp);
+
 	/*
 	 * Release the original reference on @efilp. If oob references
 	 * are still pending (e.g. some thread is still blocked in
