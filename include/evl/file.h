@@ -7,7 +7,6 @@
 #ifndef _EVL_FILE_H
 #define _EVL_FILE_H
 
-#include <linux/rbtree.h>
 #include <linux/list.h>
 #include <evl/crossing.h>
 
@@ -21,13 +20,6 @@ struct evl_file {
 	struct evl_crossing crossing;
 	struct list_head watchpoints; /* watchpoint->node.next */
 	hard_spinlock_t lock;	      /* guards ->watchpoints */
-};
-
-struct evl_fd {
-	unsigned int fd;
-	struct evl_file *efilp;
-	struct files_struct *files;
-	struct rb_node rb;
 };
 
 struct evl_file_binding {
