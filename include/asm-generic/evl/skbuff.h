@@ -2,8 +2,6 @@
 #ifndef _ASM_GENERIC_EVL_SKBUFF_H
 #define _ASM_GENERIC_EVL_SKBUFF_H
 
-#ifdef CONFIG_EVL_NET
-
 #include <linux/ktime.h>
 
 struct net_device;
@@ -18,12 +16,5 @@ struct skb_shared_oob {
 	/* Time at kernel/user boundary. */
 	ktime_t delivery_time;
 };
-
-#else  /* !CONFIG_EVL_NET */
-
-struct skb_shared_oob {
-};
-
-#endif	/* !CONFIG_EVL_NET */
 
 #endif /* !_ASM_GENERIC_EVL_SKBUFF_H */

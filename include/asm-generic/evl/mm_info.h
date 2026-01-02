@@ -2,8 +2,6 @@
 #ifndef _ASM_GENERIC_EVL_MM_INFO_H
 #define _ASM_GENERIC_EVL_MM_INFO_H
 
-#ifdef CONFIG_EVL
-
 #include <linux/list.h>
 #include <evl/wait.h>
 
@@ -18,11 +16,5 @@ struct oob_mm_state {
 	struct list_head ptrace_sync;
 	struct evl_wait_queue ptsync_barrier;
 };
-
-#else
-
-struct oob_mm_state { };
-
-#endif	/* !CONFIG_EVL */
 
 #endif /* !_ASM_GENERIC_EVL_MM_INFO_H */

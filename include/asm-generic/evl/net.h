@@ -2,8 +2,6 @@
 #ifndef _ASM_GENERIC_EVL_NET_H
 #define _ASM_GENERIC_EVL_NET_H
 
-#ifdef CONFIG_EVL_NET
-
 #include <linux/hashtable.h>
 #include <linux/rbtree.h>
 #include <net/inet_frag.h>
@@ -88,17 +86,5 @@ struct oob_net_state {
 
 void net_init_oob_state(struct net *net);
 void net_cleanup_oob_state(struct net *net);
-
-#else
-
-struct oob_net_state {
-};
-
-struct net;
-
-static inline void net_init_oob_state(struct net *net) { }
-static inline void net_cleanup_oob_state(struct net *net) { }
-
-#endif
 
 #endif /* !_ASM_GENERIC_EVL_NET_H */
