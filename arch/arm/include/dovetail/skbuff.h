@@ -2,6 +2,10 @@
 #ifndef _EVL_DOVETAIL_SKBUFF_H
 #define _EVL_DOVETAIL_SKBUFF_H
 
+#ifdef CONFIG_EVL
 #include <asm-generic/evl/skbuff.h>
+#else
+#include_next <dovetail/skbuff.h>
+#endif
 
 #endif /* !_EVL_DOVETAIL_SKBUFF_H */
