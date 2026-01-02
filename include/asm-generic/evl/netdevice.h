@@ -2,8 +2,6 @@
 #ifndef _ASM_GENERIC_EVL_NETDEVICE_H
 #define _ASM_GENERIC_EVL_NETDEVICE_H
 
-#ifdef CONFIG_EVL_NET
-
 #include <linux/list.h>
 #include <linux/rcupdate.h>
 #include <net/page_pool/types.h>
@@ -88,23 +86,5 @@ static inline void netqueue_destroy_oob(struct oob_netqueue_state *qs)
 {
 	evl_destroy_stax(&qs->tx_lock);
 }
-
-#else  /* !CONFIG_EVL_NET */
-
-struct oob_netdev_state {
-};
-
-struct oob_netqueue_state {
-};
-
-static inline void netqueue_init_oob(struct oob_netqueue_state *qs)
-{
-}
-
-static inline void netqueue_destroy_oob(struct oob_netqueue_state *qs)
-{
-}
-
-#endif	/* !CONFIG_EVL_NET */
 
 #endif /* !_ASM_GENERIC_EVL_NETDEVICE_H */
