@@ -58,13 +58,13 @@ struct domain_list_head {
 /*
  * EVL sockets are always bound to an EVL file (see
  * sock_oob_attach()). We may access our extended socket context via
- * filp->f_oob_ctx or sock->sk->sk_oob_ctx, which works for all socket
- * families.
+ * filp->f_oob_state.data or sock->sk->sk_oob_ctx, which works for all
+ * socket families.
  */
 static inline struct evl_socket *evl_sk_from_file(struct file *filp)
 {
-	return filp->f_oob_ctx ?
-		container_of(filp->f_oob_ctx, struct evl_socket, efile) :
+	return filp->f_oob_state.data ?
+		container_of(filp->f_oob_state.data, struct evl_socket, efile) :
 		NULL;
 }
 
