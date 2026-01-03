@@ -58,8 +58,8 @@ struct domain_list_head {
 /*
  * EVL sockets are always bound to an EVL file (see
  * sock_oob_attach()). We may access our extended socket context via
- * filp->f_oob_state.data or sock->sk->sk_oob_ctx, which works for all
- * socket families.
+ * filp->f_oob_state.data or sock->sk->sk_oob_state.data, which works
+ * for all socket families.
  */
 static inline struct evl_socket *evl_sk_from_file(struct file *filp)
 {
@@ -70,7 +70,7 @@ static inline struct evl_socket *evl_sk_from_file(struct file *filp)
 
 static inline struct evl_socket *evl_sk(struct sock *sk)
 {
-	return sk->sk_oob_ctx;
+	return sk->sk_oob_state.data;
 }
 
 static inline u32 get_domain_hash(int af_domain)
@@ -286,7 +286,7 @@ void evl_net_offload_inband(struct evl_socket *esk,
  *   mere AF_OOB socket for EVL-specific protocols.
  *
  * - we have no oob extension context for @sock yet
- *   (sock->sk->sk_oob_ctx is NULL)
+ *   (sock->sk->sk_oob_state.data is NULL)
  */
 int sock_oob_attach(struct socket *sock)
 {
@@ -359,7 +359,7 @@ int sock_oob_attach(struct socket *sock)
 	if (ret)
 		goto fail_attach;
 
-	sk->sk_oob_ctx = esk;
+	sk->sk_oob_state.data = esk;
 
 	return 0;
 
@@ -425,7 +425,7 @@ void sock_oob_destroy(struct sock *sk)
 	if (sk->sk_family != PF_OOB && refcount_dec_and_test(&esk->refs))
 		kfree(esk);	/* meaning sk != esk. */
 
-	sk->sk_oob_ctx = NULL;
+	sk->sk_oob_state.data = NULL;
 }
 
 /*
