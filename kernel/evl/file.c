@@ -39,7 +39,7 @@ struct evl_file *evl_get_file(unsigned int fd)
 	if (unlikely(fd_empty(f)))
 		return NULL;
 
-	efilp = fd_file(f)->f_oob_ctx;
+	efilp = fd_file(f)->f_oob_state.data;
 	if (unlikely(!efilp))
 		return NULL;
 
@@ -58,7 +58,7 @@ EXPORT_SYMBOL_GPL(evl_get_file);
 int evl_open_file(struct evl_file *efilp, struct file *filp)
 {
 	efilp->filp = filp;
-	filp->f_oob_ctx = efilp; /* mark filp as oob-capable. */
+	filp->f_oob_state.data = efilp; /* mark filp as oob-capable. */
 	evl_init_crossing(&efilp->crossing);
 	INIT_LIST_HEAD(&efilp->watchpoints);
 	raw_spin_lock_init(&efilp->lock);
