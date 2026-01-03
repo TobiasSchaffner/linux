@@ -17,4 +17,10 @@ struct oob_mm_state {
 	struct evl_wait_queue ptsync_barrier;
 };
 
+static inline void init_oob_mm_state(struct oob_mm_state *state)
+{
+	/* Actual init happens later on for oob threads only. */
+	memset(state, 0, sizeof(*state));
+}
+
 #endif /* !_ASM_GENERIC_EVL_MM_INFO_H */
