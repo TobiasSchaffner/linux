@@ -821,35 +821,7 @@ static struct evl_thread *__pick_next_thread(struct evl_rq *rq)
 /* rq->curr->lock + rq->lock held, hard irqs off. */
 static struct evl_thread *pick_next_thread(struct evl_rq *rq)
 {
-	struct oob_mm_state *oob_mm;
-	struct evl_thread *next;
-
-	for (;;) {
-		next = __pick_next_thread(rq);
-		oob_mm = next->oob_mm;
-		if (unlikely(!oob_mm)) /* Includes the root thread. */
-			break;
-		/*
-		 * Obey any pending request for a ptsync freeze.
-		 * Either we freeze @next before a sigwake event lifts
-		 * EVL_T_PTSYNC, setting EVL_T_PTSTOP, or after in which case
-		 * we already have EVL_T_PTSTOP set so we don't have to
-		 * raise EVL_T_PTSYNC. The basic assumption is that we
-		 * should get SIGSTOP/SIGTRAP for any thread involved.
-		 */
-		if (likely(!test_bit(EVL_MM_PTSYNC_BIT, &oob_mm->flags)))
-			break;	/* Fast and most likely path. */
-		if (next->info & (EVL_T_PTSTOP|EVL_T_PTSIG|EVL_T_KICKED))
-			break;
-		/*
-		 * NOTE: We hold next->rq->lock by construction, so
-		 * changing next->state is ok despite that we don't
-		 * hold next->lock. This properly serializes with
-		 * evl_kick_thread() which might raise EVL_T_PTSTOP.
-		 */
-		next->state |= EVL_T_PTSYNC;
-		next->state &= ~EVL_T_READY;
-	}
+	struct evl_thread *next = __pick_next_thread(rq);
 
 	set_next_running(rq, next);
 
@@ -1045,36 +1017,6 @@ void __evl_schedule(void) /* oob or/and hard irqs off (CPU migration-safe) */
 }
 EXPORT_SYMBOL_GPL(__evl_schedule);
 
-/* this_rq->lock held, hard irqs off. */
-static void start_ptsync_locked(struct evl_thread *stopper,
-				struct evl_rq *this_rq)
-{
-	struct oob_mm_state *oob_mm = stopper->oob_mm;
-
-	if (!test_and_set_bit(EVL_MM_PTSYNC_BIT, &oob_mm->flags)) {
-#ifdef CONFIG_SMP
-		cpumask_copy(&this_rq->resched_cpus, &evl_oob_cpus);
-		cpumask_clear_cpu(raw_smp_processor_id(), &this_rq->resched_cpus);
-#endif
-		evl_set_self_resched(this_rq);
-	}
-}
-
-void evl_start_ptsync(struct evl_thread *stopper)
-{
-	struct evl_rq *this_rq;
-	unsigned long flags;
-
-	if (EVL_WARN_ON(CORE, !(stopper->state & EVL_T_USER)))
-		return;
-
-	flags = hard_local_irq_save();
-	this_rq = this_evl_rq();
-	raw_spin_lock(&this_rq->lock);
-	start_ptsync_locked(stopper, this_rq);
-	raw_spin_unlock_irqrestore(&this_rq->lock, flags);
-}
-
 void resume_oob_task(struct task_struct *p) /* inband, oob stage stalled */
 {
 	struct evl_thread *thread = evl_thread_from_task(p);
@@ -1199,21 +1141,6 @@ void evl_switch_inband_details(int cause, union evl_value details)
 	curr->state |= EVL_T_INBAND;
 	curr->local_info &= ~EVL_T_SYSRST;
 	notify = curr->state & EVL_T_USER && cause > EVL_HMDIAG_NONE;
-
-	/*
-	 * If we are initiating the ptsync sequence on breakpoint or
-	 * SIGSTOP/SIGINT is pending, do not send any HM notification
-	 * since switching in-band is ok.
-	 */
-	if (cause == EVL_HMDIAG_TRAP) {
-		curr->info |= EVL_T_PTSTOP;
-		curr->info &= ~EVL_T_PTJOIN;
-		start_ptsync_locked(curr, this_rq);
-	} else if (curr->info & EVL_T_PTSIG) {
-		curr->info &= ~EVL_T_PTSIG;
-		notify = false;
-	}
-
 	curr->info &= ~EVL_THREAD_INFO_MASK;
 
 	evl_set_resched(this_rq);
