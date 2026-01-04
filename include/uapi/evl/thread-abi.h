@@ -24,7 +24,7 @@
 #define EVL_T_INBAND  0x00000080 /* Running in-band */
 #define EVL_T_HALT    0x00000100 /* Halted */
 #define EVL_T_BOOST   0x00000200 /* PI/PP boost undergoing */
-#define EVL_T_PTSYNC  0x00000400 /* Synchronizing on ptrace event */
+#define EVL_T_FREEZE  0x00000400 /* Frozen on ptrace() synchronization */
 #define EVL_T_RRB     0x00000800 /* Undergoes round-robin scheduling */
 #define EVL_T_ROOT    0x00001000 /* Root thread (in-band kernel placeholder) */
 #define EVL_T_WEAK    0x00002000 /* Weak scheduling (in-band) */
@@ -32,7 +32,7 @@
 #define EVL_T_WOSS    0x00008000 /* Warn on stage switch (HM) */
 #define EVL_T_WOLI    0x00010000 /* Warn on locking inconsistency (HM) */
 #define EVL_T_WOSX    0x00020000 /* Warn on stage exclusion (HM) */
-#define EVL_T_PTRACE  0x00040000 /* Stopped on ptrace event */
+#define EVL_T_PTRACE  0x00040000 /* Stopped by ptrace() */
 #define EVL_T_OBSERV  0x00080000 /* Observable (only for export to userland) */
 #define EVL_T_HMSIG   0x00100000 /* Notify HM events via SIGDEBUG */
 #define EVL_T_HMOBS   0x00200000 /* Notify HM events via observable */
@@ -52,9 +52,7 @@
 #define EVL_T_BCAST   0x00000200 /* Woken up upon resource broadcast */
 #define EVL_T_SIGNAL  0x00000400 /* Event monitor signaled */
 #define EVL_T_SXALERT 0x00000800 /* Stage exclusion alert (HM notified) */
-#define EVL_T_PTSIG   0x00001000 /* Ptrace signal is pending */
-#define EVL_T_PTSTOP  0x00002000 /* Ptrace stop is ongoing */
-#define EVL_T_PTJOIN  0x00004000 /* Ptracee should join ptsync barrier */
+/* free: 0x0000001000-0x0000004000 */
 #define EVL_T_NOMEM   0x00008000 /* No memory to complete the operation */
 
 /* Local information flags (private to current thread) */
@@ -83,7 +81,7 @@
  * 'T' -> Stopped on ptrace event
  * 'o' -> Observable
  */
-#define EVL_THREAD_STATE_LABELS  "SWDpRUZXHb#r...t..To.."
+#define EVL_THREAD_STATE_LABELS  "SWDpRUZXHb.r...t..To.."
 
 /* Health monitoring diag codes (via observable or SIGDEBUG). */
 #define EVL_HMDIAG_SIGDEMOTE	1

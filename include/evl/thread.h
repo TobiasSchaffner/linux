@@ -30,7 +30,7 @@
 /* All bits which may cause an EVL thread to block in oob context. */
 #define EVL_THREAD_BLOCK_BITS	(EVL_T_SUSP|EVL_T_PEND|EVL_T_DELAY|	\
 				EVL_T_WAIT|EVL_T_DORMANT|		\
-				EVL_T_INBAND|EVL_T_HALT|EVL_T_PTSYNC)
+				EVL_T_INBAND|EVL_T_HALT|EVL_T_FREEZE)
 /* Information bits an EVL thread may receive from a blocking op. */
 #define EVL_THREAD_INFO_MASK	(EVL_T_RMID|EVL_T_TIMEO|EVL_T_BREAK|	\
 				EVL_T_KICKED|EVL_T_BCAST|EVL_T_NOMEM)
@@ -40,7 +40,8 @@
 
 /*
  * These are special internal values of HM diags which are never sent
- * to user-space, but specifically handled by evl_switch_inband().
+ * to user-space, but specifically handled by
+ * evl_switch_inband_details().
  */
 #define EVL_HMDIAG_NONE   0
 #define EVL_HMDIAG_TRAP  -1
@@ -120,11 +121,18 @@ struct evl_thread {
 	struct list_head tp_link;	/* evl_rq->tp.threads */
 #endif
 	struct list_head rq_next;	/* evl_rq->policy.runqueue */
-	struct list_head next;		/* in evl_thread_list */
 
 	/*
-	 * Thread-local data only the owner may modify, therefore it
-	 * may do so locklessly.
+	 * Other shared data.
+	 */
+	struct list_head next;		/* in evl_thread_list (thread_list_lock) */
+	struct list_head mm_next;	/* in oob_mm->threads (oob_mm->lock) */
+	struct list_head ptrace_next;	/* in oob_mm->ptrace_queue (oob_mm->lock) */
+	u32 ptrace_seq;			/* guarded by oob_mm->lock */
+
+	/*
+	 * Thread-local data which only the owner may modify
+	 * (i.e. lockless access).
 	 */
 	struct dovetail_altsched_context altsched;
 	__u32 local_info;
@@ -142,7 +150,7 @@ struct evl_thread {
 		struct evl_opt_counter csw;	/* context switches */
 		struct evl_opt_counter sc;	/* OOB syscalls */
 		struct evl_opt_counter rwa;	/* remote wakeups */
-		struct evl_account account; /* exec time accounting */
+		struct evl_account account;	/* exec time accounting */
 		struct evl_account lastperiod;
 	} stat;
 	struct evl_user_window *u_window;
@@ -156,7 +164,6 @@ struct evl_thread {
 	kernel_cap_t raised_cap;
 	struct list_head kill_next;
 	struct oob_mm_state *oob_mm;	/* Mostly RO. */
-	struct list_head ptsync_next;	/* covered by oob_mm->lock. */
 	struct evl_observable *observable;
 	char *name;
 };
