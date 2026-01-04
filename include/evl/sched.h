@@ -324,6 +324,27 @@ void evl_switch_inband(int cause);
 
 void evl_switch_inband_details(int cause, union evl_value details);
 
+/*
+ * evl_exit_to_user - epilogue of a synchronous oob (sys)call.
+ *
+ * Prepare for returning to user space from an out-of-band kernel
+ * context. We check whether an event might require us to demote to
+ * in-band on our way out.
+ */
+static __always_inline void evl_exit_to_user(void)
+{
+	struct evl_thread *curr = evl_current();
+
+	oob_context_only();
+
+	evl_test_cancel();
+
+	if (signal_pending(current) || curr->info & EVL_T_KICKED)
+		evl_switch_inband(EVL_HMDIAG_SIGDEMOTE);
+	else if (curr->state & EVL_T_WEAK && !atomic_read(&curr->held_mutex_count))
+		evl_switch_inband(EVL_HMDIAG_NONE);
+}
+
 static inline int evl_preempt_count(void)
 {
 	return dovetail_current_state()->preempt_count;
