@@ -218,7 +218,13 @@ int __evl_wait_schedule(struct evl_wait_channel *wchan)
 	if (info & EVL_T_NOMEM)
 		return -ENOMEM;
 
-	return info & EVL_T_TIMEO ? -ETIMEDOUT : -EINTR;
+	if (info & EVL_T_TIMEO)
+		return -ETIMEDOUT;
+
+	if (info & EVL_T_KICKED && signal_pending(current))
+		return -ERESTARTSYS;
+
+	return -EINTR;
 }
 EXPORT_SYMBOL_GPL(__evl_wait_schedule);
 

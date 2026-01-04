@@ -236,7 +236,7 @@ struct evl_thread *evl_thread_from_task(struct task_struct *p)
 	return dovetail_task_state(p)->thread;
 }
 
-static inline void evl_test_cancel(void)
+static __always_inline void evl_test_cancel(void)
 {
 	struct evl_thread *curr = evl_current();
 

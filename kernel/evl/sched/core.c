@@ -1177,10 +1177,12 @@ void evl_switch_inband_details(int cause, union evl_value details)
 	trace_evl_switch_inband(cause);
 
 	/*
-	 * This is the only location where we may assert EVL_T_INBAND for
-	 * a thread. Basic assumption: switching to the inband stage
-	 * only applies to the current thread running out-of-band on
-	 * this CPU. See caveat about dovetail_leave_oob() below.
+	 * This is the only location where we may assert EVL_T_INBAND
+	 * for a thread, open coding a simplified version of
+	 * evl_sleep_on() on purpose. Basic assumption: switching to
+	 * the inband stage only applies to the current thread running
+	 * out-of-band on this CPU. See caveat about
+	 * dovetail_leave_oob() below.
 	 */
 	hard_local_irq_disable();
 	irq_work_queue(&curr->inband_work);
