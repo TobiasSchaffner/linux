@@ -156,46 +156,6 @@ void invoke_syscall(unsigned int nr, struct pt_regs *regs,
 	syscall_set_return_value(current, regs, error, ret);
 }
 
-static void prepare_for_signal(struct task_struct *p,
-			struct evl_thread *curr,
-			struct pt_regs *regs)
-{
-	unsigned long flags;
-
-	/*
-	 * @curr == this_evl_rq()->curr over oob so no need to grab
-	 * @curr->lock (i.e. @curr cannot go away under out feet).
-	 */
-	raw_spin_lock_irqsave(&curr->rq->lock, flags);
-
-	/*
-	 * We are called from out-of-band mode only to act upon a
-	 * pending signal receipt. We may observe signal_pending(p)
-	 * which implies that EVL_T_KICKED was set too
-	 * (handle_sigwake_event()), or EVL_T_KICKED alone which means
-	 * that we have been unblocked from a wait for some other
-	 * reason.
-	 */
-	if (curr->info & EVL_T_KICKED) {
-		if (signal_pending(p)) {
-			int retval = -ERESTARTSYS;
-			if (curr->local_info & EVL_T_NORST) {
-				retval = -EINTR;
-				curr->local_info &= ~EVL_T_NORST;
-			}
-			syscall_set_return_value(current, regs, retval, 0);
-			curr->info &= ~EVL_T_BREAK;
-		}
-		curr->info &= ~EVL_T_KICKED;
-	}
-
-	raw_spin_unlock_irqrestore(&curr->rq->lock, flags);
-
-	evl_test_cancel();
-
-	evl_switch_inband(EVL_HMDIAG_SIGDEMOTE);
-}
-
 /*
  * Intercepting __NR_clock_gettime (or __NR_clock_gettime64 on 32bit
  * archs) here means that we are handling a fallback syscall for
@@ -297,15 +257,33 @@ static int do_oob_syscall(struct irq_stage *stage, struct pt_regs *regs,
 
 	invoke_syscall(scno, regs, args);
 
-	/* Syscall might have switched in-band, recheck. */
-	if (!evl_is_inband()) {
-		if (signal_pending(tsk) || (curr->info & EVL_T_KICKED))
-			prepare_for_signal(tsk, curr, regs);
-		else if ((curr->state & EVL_T_WEAK) &&
-			!atomic_read(&curr->held_mutex_count))
-			evl_switch_inband(EVL_HMDIAG_NONE);
-	}
+	/*
+	 * The syscall might have (already) switched in-band, recheck
+	 * before determining if we need to demote.
+	 */
+	if (unlikely(evl_is_inband()))
+		goto do_stop;
 
+	/*
+	 * Epilogue: we might have to demote the caller to the in-band
+	 * stage, if any of the following conditions is true:
+	 *
+	 * - __evl_wait_schedule() woke up on a (in-band) signal
+	 *   receipt while the syscall was waiting out-of-band for
+	 *   some event to happen. In such a case, the syscall handler
+	 *   should have returned -ERESTARTSYS, as received from
+	 *   evl_wait_schedule().
+	 *
+	 * - evl_kick_thread() was called for current in order to
+	 *   forcibly demote it (e.g. mayday trap). This also covers a
+	 *   signal receipt.
+	 *
+	 * - the caller is undergoing the SCHED_WEAK policy, which
+	 *   means that we have to switch it back to the in-band stage
+	 *   on the syscall return path.
+	 */
+	evl_exit_to_user();
+do_stop:
 	/* Update the stats and user visible info. */
 	evl_opt_counter_inc(&curr->stat.sc);
 	evl_sync_uwindow(curr);
@@ -360,8 +338,9 @@ static int do_inband_syscall(struct pt_regs *regs, unsigned int scno,
 
 	/*
 	 * Catch cancellation requests pending for threads undergoing
-	 * the weak scheduling policy, which won't cross
-	 * prepare_for_signal() frequently as they run mostly in-band.
+	 * the weak scheduling policy which issue in-band
+	 * syscalls. Those are less likely to cross evl_exit_to_user()
+	 * as they should run in-band most of the time.
 	 */
 	evl_test_cancel();
 
@@ -394,13 +373,10 @@ static int do_inband_syscall(struct pt_regs *regs, unsigned int scno,
 
 	invoke_syscall(scno, regs, args);
 
-	if (!evl_is_inband()) {
-		if (signal_pending(tsk) || (curr->info & EVL_T_KICKED))
-			prepare_for_signal(tsk, curr, regs);
-		else if ((curr->state & EVL_T_WEAK) &&
-			!atomic_read(&curr->held_mutex_count))
-			evl_switch_inband(EVL_HMDIAG_NONE);
-	}
+	if (unlikely(evl_is_inband()))
+		goto done;
+
+	evl_exit_to_user();
 done:
 	if (curr->local_info & EVL_T_IGNOVR)
 		curr->local_info &= ~EVL_T_IGNOVR;
