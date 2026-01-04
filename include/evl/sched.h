@@ -173,8 +173,13 @@ struct evl_sched_class {
 
 #define EVL_CLASS_WEIGHT(n)	(n * EVL_CLASS_WEIGHT_FACTOR)
 
+/* All EVL threads known from the core. */
 #define for_each_evl_thread(__thread)				\
 	list_for_each_entry(__thread, &evl_thread_list, next)
+
+/* All EVL threads sharing the same mm, i.e. process. */
+#define for_each_evl_sibling_thread(__thread, __mm_state)	\
+	list_for_each_entry(__thread, &(__mm_state)->threads, mm_next)
 
 static inline struct evl_rq *evl_cpu_rq(int cpu)
 {
@@ -280,8 +285,6 @@ void evl_migrate_thread(struct evl_thread *thread,
 { }
 
 #endif /* !CONFIG_SMP */
-
-void evl_start_ptsync(struct evl_thread *stopper);
 
 #define for_each_evl_cpu(cpu)		\
 	for_each_online_cpu(cpu)	\
