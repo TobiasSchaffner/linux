@@ -212,7 +212,7 @@ static int rtswitch_pend_nrt(struct rtswitch_context *ctx,
 	task->base.flags &= ~HECTIC_OOB_WAIT;
 
 	if (down_interruptible(&task->nrt_synch))
-		return -EINTR;
+		return -ERESTARTSYS;
 
 	if (ctx->failed)
 		return 1;
@@ -278,7 +278,7 @@ static int rtswitch_to_nrt(struct rtswitch_context *ctx,
 			evl_end_fpu();
 
 			if (down_interruptible(&from->nrt_synch))
-				return -EINTR;
+				return -ERESTARTSYS;
 			if (ctx->failed)
 				return 1;
 			if (fp_val != expected) {
@@ -303,7 +303,7 @@ static int rtswitch_to_nrt(struct rtswitch_context *ctx,
 			evl_end_fpu();
 
 			if (down_interruptible(&from->nrt_synch))
-				return -EINTR;
+				return -ERESTARTSYS;
 			if (ctx->failed)
 				return 1;
 			if (fp_val != expected) {
@@ -328,7 +328,7 @@ static int rtswitch_to_nrt(struct rtswitch_context *ctx,
 		}
 
 	if (down_interruptible(&from->nrt_synch))
-		return -EINTR;
+		return -ERESTARTSYS;
 
 	if (ctx->failed)
 		return 1;

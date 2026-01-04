@@ -62,7 +62,6 @@
 #define EVL_T_SYSRST  0x00000001 /* Thread awaiting syscall restart after signal */
 #define EVL_T_IGNOVR  0x00000002 /* Overrun detection temporarily disabled */
 #define EVL_T_INFAULT 0x00000004 /* In fault handling */
-#define EVL_T_NORST   0x00000008 /* Disable syscall restart */
 
 /*
  * Must follow strictly the declaration order of the state flags

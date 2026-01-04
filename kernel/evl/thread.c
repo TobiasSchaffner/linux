@@ -508,6 +508,7 @@ void evl_sleep_on_locked(ktime_t timeout, enum evl_tmode timeout_mode,
 	struct evl_thread *curr = evl_current();
 	struct evl_rq *rq = curr->rq;
 	unsigned long oldstate;
+	int oldinfo;
 
 	/* Sleeping while preemption is disabled is a bug. */
 	EVL_WARN_ON(CORE, evl_preempt_count() != 0);
@@ -517,18 +518,17 @@ void evl_sleep_on_locked(ktime_t timeout, enum evl_tmode timeout_mode,
 	trace_evl_sleep_on(timeout, timeout_mode, clock, wchan);
 
 	oldstate = curr->state;
+	oldinfo = curr->info;
+	curr->info &= ~EVL_THREAD_INFO_MASK;
 
 	/*
 	 * If a request to switch to in-band context is pending
-	 * (EVL_T_KICKED), raise EVL_T_BREAK then return immediately.
+	 * (EVL_T_KICKED) for the caller, raise EVL_T_BREAK then
+	 * return immediately.
 	 */
-	if (likely(!(oldstate & EVL_THREAD_BLOCK_BITS))) {
-		if (curr->info & EVL_T_KICKED) {
-			curr->info &= ~(EVL_T_RMID|EVL_T_TIMEO);
-			curr->info |= EVL_T_BREAK;
-			return;
-		}
-		curr->info &= ~EVL_THREAD_INFO_MASK;
+	if (oldinfo & EVL_T_KICKED && !(oldstate & EVL_THREAD_BLOCK_BITS)) {
+		curr->info |= EVL_T_BREAK;
+		return;
 	}
 
 	/*
@@ -636,6 +636,7 @@ void evl_hold_thread(struct evl_thread *thread, int mask)
 {
 	unsigned long oldstate, flags;
 	struct evl_rq *rq;
+	int oldinfo;
 
 	if (EVL_WARN_ON(CORE, mask & ~(EVL_T_SUSP|EVL_T_HALT|EVL_T_DORMANT)))
 		return;
@@ -645,20 +646,18 @@ void evl_hold_thread(struct evl_thread *thread, int mask)
 	rq = evl_get_thread_rq(thread, flags);
 
 	oldstate = thread->state;
+	oldinfo = thread->info;
+	if (thread == rq->curr)
+		thread->info &= ~EVL_THREAD_INFO_MASK;
 
 	/*
 	 * If a request to switch to in-band context is pending for
 	 * the target thread (EVL_T_KICKED), raise EVL_T_BREAK for it then
 	 * return immediately.
 	 */
-	if (likely(!(oldstate & EVL_THREAD_BLOCK_BITS))) {
-		if (thread->info & EVL_T_KICKED) {
-			thread->info &= ~(EVL_T_RMID|EVL_T_TIMEO);
-			thread->info |= EVL_T_BREAK;
-			goto out;
-		}
-		if (thread == rq->curr)
-			thread->info &= ~EVL_THREAD_INFO_MASK;
+	if (oldinfo & EVL_T_KICKED && !(oldstate & EVL_THREAD_BLOCK_BITS)) {
+		thread->info |= EVL_T_BREAK;
+		goto out;
 	}
 
 	if (oldstate & EVL_T_READY) {
@@ -680,7 +679,7 @@ void evl_hold_thread(struct evl_thread *thread, int mask)
 		evl_set_resched(rq);
 	else if (((oldstate & (EVL_THREAD_BLOCK_BITS|EVL_T_USER)) == (EVL_T_INBAND|EVL_T_USER)))
 		dovetail_request_ucall(thread->altsched.task);
- out:
+out:
 	evl_put_thread_rq(thread, rq, flags);
 }
 
@@ -875,6 +874,7 @@ int evl_wait_period(unsigned long *overruns_r)
 	struct evl_thread *curr;
 	struct evl_clock *clock;
 	ktime_t now;
+	int info;
 
 	curr = evl_current();
 	if (unlikely(!evl_timer_is_running(&curr->ptimer)))
@@ -889,10 +889,14 @@ int evl_wait_period(unsigned long *overruns_r)
 		evl_sleep_on(EVL_INFINITE, EVL_REL, clock, NULL); /* EVL_T_WAIT */
 		hard_local_irq_restore(flags);
 		evl_schedule();
-		if (unlikely(curr->info & EVL_T_BREAK))
+		info = curr->info;
+		if (unlikely(info & EVL_T_KICKED && signal_pending(current)))
+			return -ERESTARTSYS;
+		if (unlikely(info & EVL_T_BREAK))
 			return -EINTR;
-	} else
+	} else {
 		hard_local_irq_restore(flags);
+	}
 
 	overruns = evl_get_timer_overruns(&curr->ptimer);
 	if (overruns) {
@@ -1030,7 +1034,7 @@ int evl_join_thread(struct evl_thread *thread, bool uninterruptible)
 	else {
 		ret = wait_for_completion_interruptible(&thread->exited);
 		if (ret < 0)
-			return -EINTR;
+			return -EINTR; /* No restart. */
 	}
 
 	if (switched)
@@ -1240,7 +1244,8 @@ void evl_kick_thread(struct evl_thread *thread, int info)
 	 * in-band switch point (either from the EVL syscall return
 	 * path, or from the mayday trap).
 	 */
-	evl_release_thread_locked(thread, EVL_T_SUSP|EVL_T_HALT|EVL_T_PTSYNC, EVL_T_KICKED);
+	evl_release_thread_locked(thread, EVL_T_SUSP|EVL_T_HALT|EVL_T_PTSYNC,
+				EVL_T_KICKED);
 
 	/*
 	 * We may send mayday signals to userland threads only.
@@ -1443,7 +1448,7 @@ int evl_killall(int mask)
 			count + nrkilled - evl_nrthreads,
 			mask & EVL_T_USER ? "user" : "kernel");
 
-	return ret < 0 ? -EINTR : 0;
+	return ret < 0 ? -EINTR : 0; /* Don't restart on signal. */
 }
 EXPORT_SYMBOL_GPL(evl_killall);
 

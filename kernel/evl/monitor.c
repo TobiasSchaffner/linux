@@ -671,9 +671,13 @@ static int wait_gated_event(struct evl_monitor *event,
 	 * userland to issue UNWAIT to recover (or exit, whichever
 	 * comes first).
 	 *
-	 * Consequently, disable syscall restart from kernel upon
-	 * interrupted wait, because the caller does not hold the
-	 * mutex until UNWAIT happens.
+	 * Consequently, we disable syscall restart upon interrupted
+	 * wait, because the caller does not hold the mutex until
+	 * UNWAIT happens.
+	 *
+	 * NOTE: this routine returns two statuses to the user, the
+	 * syscall errno value on error and the operation status in
+	 * any case (success or error).
 	 */
 	ret = evl_wait_schedule(&event->wait_queue);
 	if (ret) {
@@ -684,27 +688,48 @@ static int wait_gated_event(struct evl_monitor *event,
 		raw_spin_unlock_irqrestore(&gate->lock, flags);
 
 		/*
-		 * Disable syscall restart upon signal (only), user
-		 * receives -EINTR and a zero status in this case. If
-		 * the caller was forcibly unblocked for any other
-		 * reason, both the return value and the status word
-		 * are set to -EINTR.
+		 * Upon signal received while waiting for the event we
+		 * don't restart the syscall. Instead, the user
+		 * receives errno set to EINTR and the operation
+		 * status set to zero. The caller should issue
+		 * MONIOC_UNWAIT in order to retry locking the gate
+		 * before calling us again.
 		 */
-		if (ret == -EINTR && signal_pending(current)) {
-			curr->local_info |= EVL_T_NORST;
+		if (ret == -ERESTARTSYS) {
+			ret = -EINTR;
 			goto put;
 		}
+
+		/*
+		 * Next, check for other reasons for interrupting the
+		 * wait. One of them is the event being destroyed, we
+		 * don't reacquire the gate lock then. Otherwise, we
+		 * might have been forcibly unblocked by
+		 * evl_kick_thread() or evl_unblock_thread(), in which
+		 * case we need to reacquire the gate lock prior to
+		 * exiting this routine.  In any of those cases, the
+		 * syscall is deemed on error, with errno set
+		 * accordingly and the operation status set to the
+		 * negated errno value (e.g. EIDRM and -EIDRM
+		 * respectively upon event deletion, EINTR and -EINTR
+		 * for other causes).
+		 */
 		op_ret = ret;
 		if (ret == -EIDRM)
 			goto put;
 	}
 
 	ret = __enter_monitor(gate, NULL);
-	if (ret == -EINTR) {
-		if (signal_pending(current))
-			curr->local_info |= EVL_T_NORST;
-		op_ret = -EAGAIN;
-	}
+
+	/*
+	 * If we failed grabbing the gate lock due to a pending
+	 * in-band signal to handle asap, the user receives errno set
+	 * to EINTR and the operation status set to zero. The caller
+	 * should issue MONIOC_UNWAIT in order to retry locking the
+	 * gate before calling us again.
+	 */
+	if (ret == -ERESTARTSYS)
+		ret = -EINTR;
 put:
 	evl_put_file(efilp);
 out:

@@ -974,7 +974,8 @@ static int run_measurement(struct latmus_runner *runner,
 
 	/*
 	 * Copy the last bulk of consolidated measurements and the
-	 * histogram distribution data back to userland.
+	 * histogram distribution data back to userland. We don't
+	 * restart on signal.
 	 */
 	last.min_lat = state->min_lat;
 	last.max_lat = state->max_lat;
