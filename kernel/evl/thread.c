@@ -870,9 +870,9 @@ EXPORT_SYMBOL_GPL(evl_set_period);
 
 int evl_wait_period(unsigned long *overruns_r)
 {
-	unsigned long overruns, flags;
 	struct evl_thread *curr;
 	struct evl_clock *clock;
+	unsigned long overruns;
 	ktime_t now;
 	int info;
 
@@ -882,20 +882,16 @@ int evl_wait_period(unsigned long *overruns_r)
 
 	trace_evl_thread_wait_period(curr);
 
-	flags = hard_local_irq_save();
 	clock = curr->ptimer.clock;
 	now = evl_read_clock(clock);
 	if (likely(now < evl_get_timer_next_date(&curr->ptimer))) {
 		evl_sleep_on(EVL_INFINITE, EVL_REL, clock, NULL); /* EVL_T_WAIT */
-		hard_local_irq_restore(flags);
 		evl_schedule();
 		info = curr->info;
 		if (unlikely(info & EVL_T_KICKED && signal_pending(current)))
 			return -ERESTARTSYS;
 		if (unlikely(info & EVL_T_BREAK))
 			return -EINTR;
-	} else {
-		hard_local_irq_restore(flags);
 	}
 
 	overruns = evl_get_timer_overruns(&curr->ptimer);
