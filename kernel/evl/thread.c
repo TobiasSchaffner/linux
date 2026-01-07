@@ -710,9 +710,12 @@ static void evl_release_thread_locked(struct evl_thread *thread,
 			evl_requeue_thread(thread);
 			goto ready;
 		}
-	} else if (oldstate & EVL_T_READY)
+	} else if (thread->state & EVL_THREAD_BLOCK_BITS) {
+		return;
+	} else if (oldstate & EVL_T_READY) {
 		/* Ends up in round-robin (group rotation). */
 		evl_dequeue_thread(thread);
+	}
 
 	/* Enqueue at the tail of priority group. */
 	evl_enqueue_thread(thread);
