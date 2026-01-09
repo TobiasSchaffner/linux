@@ -1715,23 +1715,25 @@ static void handle_migration_event(struct dovetail_migration_data *d)
 		return;
 
 	/*
-	 * Detect an EVL thread sleeping in OOB context which is
-	 * required to migrate to another CPU by the in-band kernel.
+	 * Detect an EVL thread sleeping in out-of-band context - or
+	 * which would be held at the next transition to the
+	 * out-of-band stage - which is required to migrate to another
+	 * CPU by the in-band kernel.
 	 *
 	 * We may NOT fix up thread->sched immediately using the
 	 * migration call, because the latter always has to take place
 	 * on behalf of the target thread itself while running
-	 * in-band. Therefore, that thread needs to switch to in-band
+	 * in-band. Therefore, the latter needs to switch to in-band
 	 * context first, so that check_cpu_affinity() may do the
-	 * fixup at the next transition to OOB. We expedite such
-	 * transition for user threads by requesting them to call back
-	 * asap via the RETUSER event.
+	 * fixup at the next transition to the out-of-band stage. We
+	 * expedite such transition for user threads by requesting
+	 * them to call back asap via the RETUSER event.
 	 */
 	if (thread->state & (EVL_THREAD_BLOCK_BITS & ~EVL_T_INBAND)) {
-		evl_kick_thread(thread, 0);
-		evl_schedule();
 		if (thread->state & EVL_T_USER)
 			dovetail_request_ucall(thread->altsched.task);
+		evl_kick_thread(thread, 0);
+		evl_schedule();
 	}
 #endif
 }
