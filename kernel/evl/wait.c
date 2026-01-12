@@ -153,30 +153,55 @@ bool evl_requeue_wait(struct evl_wait_channel *wchan, struct evl_thread *waiter)
 }
 EXPORT_SYMBOL_GPL(evl_requeue_wait);
 
+int evl_sleep_schedule(void)
+{
+	int info;
+
+	evl_schedule();
+
+	info = evl_current()->info;
+	if (likely(!(info & (EVL_T_RMID|EVL_T_NOMEM|EVL_T_TIMEO|EVL_T_BREAK)))) /* Fast path. */
+		return 0;
+
+	if (info & EVL_T_RMID)
+		return -EIDRM;
+
+	if (info & EVL_T_NOMEM)
+		return -ENOMEM;
+
+	if (info & EVL_T_TIMEO)
+		return -ETIMEDOUT;
+
+	if (info & EVL_T_KICKED && signal_pending(current))
+		return -ERESTARTSYS;
+
+	return -EINTR;
+}
+
 int __evl_wait_schedule(struct evl_wait_channel *wchan)
 {
 	struct evl_thread *curr = evl_current();
 	unsigned long flags;
-	int info;
+	int ret;
 
-	evl_schedule();
+	ret = evl_sleep_schedule();
 
 	trace_evl_finish_wait(wchan);
 
 	/*
 	 * Upon return from a wait state, the following logic applies
-	 * depending on the information flags:
+	 * depending on the return status from evl_sleep_schedule():
 	 *
-	 * - if none of EVL_T_RMID, EVL_T_NOMEM, EVL_T_TIMEO or EVL_T_BREAK is set, we
-	 * got a wakeup upon a successful operation. In this case, we
-	 * should not be linked to the waitqueue anymore. NOTE: the
-	 * caller may need to check for EVL_T_BCAST if the signal is not
-	 * paired with a condition but works as a pulse instead.
+	 * - if zero, we got a wakeup upon a successful operation. In
+	 * this case, we should not be linked to the waitqueue
+	 * anymore. NOTE: the caller may need to check for EVL_T_BCAST
+	 * if the signal is not paired with a condition but works as a
+	 * pulse instead.
 	 *
-	 * - if EVL_T_RMID is set, evl_flush_wait() removed us from the
-	 * waitqueue before the wait channel got destroyed, and
-	 * therefore cannot be referred to anymore since it may be
-	 * stale: -EIDRM is returned.
+	 * - if -EIDRM, evl_flush_wait() removed us from the waitqueue
+	 * before the wait channel got destroyed, and therefore cannot
+	 * be referred to anymore since it may be stale: -EIDRM is
+	 * returned.
 	 *
 	 * - otherwise, we may still be linked to the waitqueue if the
 	 * wait was aborted prior to receiving any wakeup, in which
@@ -193,8 +218,7 @@ int __evl_wait_schedule(struct evl_wait_channel *wchan)
 	 * stale resource left over upon a timeout or break condition
 	 * returned to the caller.
 	 */
-	info = evl_current()->info;
-	if (likely(!(info & (EVL_T_RMID|EVL_T_NOMEM|EVL_T_TIMEO|EVL_T_BREAK)))) { /* Fast path. */
+	if (likely(!ret)) {
 		if (IS_ENABLED(CONFIG_EVL_DEBUG_CORE)) {
 			bool empty;
 			raw_spin_lock_irqsave(&wchan->lock, flags);
@@ -205,7 +229,7 @@ int __evl_wait_schedule(struct evl_wait_channel *wchan)
 		return 0;
 	}
 
-	if (info & EVL_T_RMID)
+	if (ret == -EIDRM)
 		return -EIDRM;
 
 	raw_spin_lock_irqsave(&wchan->lock, flags);
@@ -215,16 +239,7 @@ int __evl_wait_schedule(struct evl_wait_channel *wchan)
 
 	raw_spin_unlock_irqrestore(&wchan->lock, flags);
 
-	if (info & EVL_T_NOMEM)
-		return -ENOMEM;
-
-	if (info & EVL_T_TIMEO)
-		return -ETIMEDOUT;
-
-	if (info & EVL_T_KICKED && signal_pending(current))
-		return -ERESTARTSYS;
-
-	return -EINTR;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(__evl_wait_schedule);
 
