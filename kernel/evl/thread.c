@@ -890,7 +890,7 @@ int evl_wait_period(unsigned long *overruns_r)
 	struct evl_clock *clock;
 	unsigned long overruns;
 	ktime_t now;
-	int info;
+	int ret;
 
 	curr = evl_current();
 	if (unlikely(!evl_timer_is_running(&curr->ptimer)))
@@ -902,12 +902,9 @@ int evl_wait_period(unsigned long *overruns_r)
 	now = evl_read_clock(clock);
 	if (likely(now < evl_get_timer_next_date(&curr->ptimer))) {
 		evl_sleep_on(EVL_INFINITE, EVL_REL, clock, NULL); /* EVL_T_WAIT */
-		evl_schedule();
-		info = curr->info;
-		if (unlikely(info & EVL_T_KICKED && signal_pending(current)))
-			return -ERESTARTSYS;
-		if (unlikely(info & EVL_T_BREAK))
-			return -EINTR;
+		ret = evl_sleep_schedule();
+		if (ret == -ERESTARTSYS || ret == -EINTR)
+			return ret;
 	}
 
 	overruns = evl_get_timer_overruns(&curr->ptimer);
