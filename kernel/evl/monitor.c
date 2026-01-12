@@ -592,36 +592,31 @@ static int post_mask(struct evl_monitor *event, int bits, bool bcast)
 static int wait_gated_event(struct evl_monitor *event,
 			struct evl_monitor_waitreq *req,
 			ktime_t timeout,
-			enum evl_tmode tmode,
-			s32 *r_op_ret)
+			enum evl_tmode tmode)
 {
 	struct evl_thread *curr = evl_current();
 	struct evl_monitor *gate;
-	int ret = 0, op_ret = 0;
 	struct evl_file *efilp;
 	unsigned long flags;
 	struct evl_rq *rq;
+	int ret = 0;
 
-	if (event->protocol != EVL_EVENT_GATED) {
-		op_ret = -EINVAL;
-		goto out;
-	}
+	if (event->protocol != EVL_EVENT_GATED)
+		return -EINVAL;
 
 	/* Find the gate monitor protecting us. */
 	gate = get_monitor_by_fd(req->gatefd, &efilp);
-	if (gate == NULL) {
-		op_ret = -EINVAL;
-		goto out;
-	}
+	if (gate == NULL)
+		return -EINVAL;
 
 	if (gate->type != EVL_MONITOR_GATE) {
-		op_ret = -EINVAL;
+		ret = -EINVAL;
 		goto put;
 	}
 
 	/* Make sure we actually passed the gate. */
 	if (!evl_is_mutex_owner(gate->mutex.fastlock, fundle_of(curr))) {
-		op_ret = -EPERM;
+		ret = -EPERM;
 		goto put;
 	}
 
@@ -640,7 +635,7 @@ static int wait_gated_event(struct evl_monitor *event,
 		event->state->u.event.gate_offset = evl_shared_offset(gate->state);
 	} else if (event->gate != gate) {
 		raw_spin_unlock_irqrestore(&gate->lock, flags);
-		op_ret = -EBADFD;
+		ret = -EBADFD;
 		goto put;
 	}
 
@@ -662,22 +657,12 @@ static int wait_gated_event(struct evl_monitor *event,
 	raw_spin_unlock_irqrestore(&gate->lock, flags);
 
 	/*
-	 * Actually wait on the event. If a break condition is raised
-	 * such as an inband signal pending, do not attempt to
-	 * reacquire the gate lock just yet as this might block
-	 * indefinitely (in theory) and we want the inband signal to
-	 * be handled asap. So exit to user mode, allowing any pending
-	 * signal to be handled during the transition, then expect
-	 * userland to issue UNWAIT to recover (or exit, whichever
-	 * comes first).
-	 *
-	 * Consequently, we disable syscall restart upon interrupted
-	 * wait, because the caller does not hold the mutex until
-	 * UNWAIT happens.
-	 *
-	 * NOTE: this routine returns two statuses to the user, the
-	 * syscall errno value on error and the operation status in
-	 * any case (success or error).
+	 * Wait on the event proper. If any error is received, do not
+	 * attempt to reacquire the gate lock just yet as this might
+	 * block indefinitely (in theory), and we want any request for
+	 * switching to in-band context to be honored asap. The user
+	 * should issue MONIOC_UNWAIT in order to grab the gate lock
+	 * back whenever it makes sense.
 	 */
 	ret = evl_wait_schedule(&event->wait_queue);
 	if (ret) {
@@ -686,54 +671,14 @@ static int wait_gated_event(struct evl_monitor *event,
 		untrack_event(event, gate);
 		raw_spin_unlock(&event->wait_queue.wchan.lock);
 		raw_spin_unlock_irqrestore(&gate->lock, flags);
-
-		/*
-		 * Upon signal received while waiting for the event we
-		 * don't restart the syscall. Instead, the user
-		 * receives errno set to EINTR and the operation
-		 * status set to zero. The caller should issue
-		 * MONIOC_UNWAIT in order to retry locking the gate
-		 * before calling us again.
-		 */
-		if (ret == -ERESTARTSYS) {
-			ret = -EINTR;
-			goto put;
-		}
-
-		/*
-		 * Next, check for other reasons for interrupting the
-		 * wait. One of them is the event being destroyed, we
-		 * don't reacquire the gate lock then. Otherwise, we
-		 * might have been forcibly unblocked by
-		 * evl_kick_thread() or evl_unblock_thread(), in which
-		 * case we need to reacquire the gate lock prior to
-		 * exiting this routine.  In any of those cases, the
-		 * syscall is deemed on error, with errno set
-		 * accordingly and the operation status set to the
-		 * negated errno value (e.g. EIDRM and -EIDRM
-		 * respectively upon event deletion, EINTR and -EINTR
-		 * for other causes).
-		 */
-		op_ret = ret;
-		if (ret == -EIDRM)
-			goto put;
+	} else {
+		ret = __enter_monitor(gate, NULL);
 	}
 
-	ret = __enter_monitor(gate, NULL);
-
-	/*
-	 * If we failed grabbing the gate lock due to a pending
-	 * in-band signal to handle asap, the user receives errno set
-	 * to EINTR and the operation status set to zero. The caller
-	 * should issue MONIOC_UNWAIT in order to retry locking the
-	 * gate before calling us again.
-	 */
 	if (ret == -ERESTARTSYS)
-		ret = -EINTR;
+		ret = -EINTR;	/* Prevent syscall restart. */
 put:
 	evl_put_file(efilp);
-out:
-	*r_op_ret = op_ret;
 
 	return ret;
 }
@@ -741,18 +686,16 @@ out:
 static int wait_monitor(struct file *filp,
 			struct evl_monitor_waitreq *req,
 			struct timespec64 *ts64,
-			s32 *r_op_ret,
 			s32 *r_value,
 			bool exact_match)
 {
 	struct evl_monitor *event = element_of(filp, struct evl_monitor);
 	enum evl_tmode tmode;
 	ktime_t timeout;
+	int ret;
 
-	if (event->type != EVL_MONITOR_EVENT) {
-		*r_op_ret = -EINVAL;
-		return 0;
-	}
+	if (event->type != EVL_MONITOR_EVENT)
+		return -EINVAL;
 
 	timeout = timespec64_to_ktime(*ts64);
 	tmode = timeout ? EVL_ABS : EVL_REL;
@@ -760,19 +703,19 @@ static int wait_monitor(struct file *filp,
 	if (req->gatefd < 0) {
 		switch (event->protocol) {
 		case EVL_EVENT_COUNT:
-			*r_op_ret = wait_count(filp, timeout, tmode);
+			ret = wait_count(filp, timeout, tmode);
 			break;
 		case EVL_EVENT_MASK:
-			*r_op_ret = wait_mask_oob(filp, timeout, tmode, req->value,
-						exact_match, r_value);
+			ret = wait_mask_oob(filp, timeout, tmode, req->value,
+					exact_match, r_value);
 			break;
 		default:
-			*r_op_ret = -EINVAL;
+			ret = -EINVAL;
 		}
-		return *r_op_ret;
+		return ret;
 	}
 
-	return wait_gated_event(event, req, timeout, tmode, r_op_ret);
+	return wait_gated_event(event, req, timeout, tmode);
 }
 
 static int unwait_monitor(struct evl_monitor *event,
@@ -887,7 +830,7 @@ static long monitor_oob_ioctl(struct file *filp, unsigned int cmd,
 	};
 	bool exact_match = false;
 	struct timespec64 ts64;
-	s32 op_ret, value = 0;
+	s32 value = 0;
 	long ret;
 
 	switch (cmd) {
@@ -906,9 +849,8 @@ static long monitor_oob_ioctl(struct file *filp, unsigned int cmd,
 		if ((unsigned long)uts.tv_nsec >= ONE_BILLION)
 			return -EINVAL;
 		ts64 = u_timespec_to_timespec64(uts);
-		ret = wait_monitor(filp, &wreq, &ts64, &op_ret, &value, exact_match);
-		raw_put_user(op_ret, &u_wreq->status);
-		if (!ret && !op_ret)
+		ret = wait_monitor(filp, &wreq, &ts64, &value, exact_match);
+		if (!ret)
 			raw_put_user(value, &u_wreq->value);
 		break;
 	case EVL_MONIOC_UNWAIT:
