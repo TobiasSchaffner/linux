@@ -1339,7 +1339,7 @@ static void sig_irqwork(struct irq_work *work)
 	sigd = container_of(work, struct sig_irqwork_data, work);
 	do_inband_signal(sigd->thread, sigd->signo, sigd->sigval);
 	evl_put_element(&sigd->thread->element);
-	evl_free(sigd);
+	evl_free_rcu(sigd);
 }
 
 void evl_signal_thread(struct evl_thread *thread, int sig, int arg)
