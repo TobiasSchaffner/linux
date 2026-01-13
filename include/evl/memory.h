@@ -12,6 +12,7 @@
 #include <linux/atomic.h>
 #include <linux/spinlock.h>
 #include <linux/rbtree.h>
+#include <linux/rcupdate.h>
 #include <evl/list.h>
 #include <evl/factory.h>
 #include <uapi/evl/types-abi.h>
@@ -130,6 +131,19 @@ static inline void *evl_alloc(size_t size)
 static inline void evl_free(void *ptr)
 {
 	evl_free_chunk(&evl_system_heap, ptr);
+}
+
+static inline void __evl_free_rcu(struct rcu_head *rcu)
+{
+	evl_free(rcu);
+}
+
+static inline void evl_free_rcu(void *ptr)
+{
+	struct rcu_head *rcu = ptr;
+	BUILD_BUG_ON(sizeof(*rcu) > 1 << EVL_HEAP_MIN_LOG2);
+	init_rcu_head(rcu);
+	call_rcu(rcu, __evl_free_rcu);
 }
 
 int evl_init_memory(void);
