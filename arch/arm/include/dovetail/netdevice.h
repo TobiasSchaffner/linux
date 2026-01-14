@@ -2,7 +2,7 @@
 #ifndef _EVL_DOVETAIL_NETDEVICE_H
 #define _EVL_DOVETAIL_NETDEVICE_H
 
-#ifdef CONFIG_EVL
+#ifdef CONFIG_NET_OOB
 #include <asm-generic/evl/netdevice.h>
 #else
 #include_next <dovetail/netdevice.h>
