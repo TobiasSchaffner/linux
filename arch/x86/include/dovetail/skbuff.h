@@ -2,7 +2,7 @@
 #ifndef _EVL_DOVETAIL_SKBUFF_H
 #define _EVL_DOVETAIL_SKBUFF_H
 
-#ifdef CONFIG_EVL
+#ifdef CONFIG_NET_OOB
 #include <asm-generic/evl/skbuff.h>
 #else
 #include_next <dovetail/skbuff.h>
