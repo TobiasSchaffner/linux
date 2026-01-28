@@ -384,7 +384,7 @@ static int linehandle_create(struct gpio_device *gdev, void __user *ip)
 
 	if (oob_handling_requested(lflags)) {
 		if (gdev->chip->ngpio > CONFIG_GPIOLIB_FASTPATH_LIMIT) {
-			chip_warn(gdev->chip,
+			gpiochip_warn(gdev->chip,
 				"too many lines for out-of-band handling"
 				" (%u > %u fastpath)\n",
 				gdev->chip->ngpio, CONFIG_GPIOLIB_FASTPATH_LIMIT);
