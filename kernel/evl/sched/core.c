@@ -15,6 +15,7 @@
 #include <linux/mmu_context.h>
 #include <asm/div64.h>
 #include <asm/switch_to.h>
+#include <evl/lock.h>
 #include <evl/sched.h>
 #include <evl/thread.h>
 #include <evl/timer.h>
@@ -160,6 +161,7 @@ static void init_rq(struct evl_rq *rq, int cpu)
 	rq->rrb_timer_name = kstrdup("[rrb-timer]", GFP_KERNEL);
 #endif
 	raw_spin_lock_init(&rq->lock);
+	might_hard_lock(&rq->lock);
 
 	for_each_evl_sched_class(sched_class) {
 		if (sched_class->sched_init)
