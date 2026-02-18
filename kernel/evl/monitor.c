@@ -237,9 +237,32 @@ static int tryenter_monitor(struct evl_monitor *gate)
 	return evl_trylock_mutex(&gate->mutex);
 }
 
-static void __exit_monitor(struct evl_monitor *gate,
-			struct evl_thread *curr)
+/*
+ * __exit_monitor - drops a gate mutex.
+ *
+ * Called with gate->mutex locked, hard irqs off. If the mutex guards
+ * a signaled event, wake up the waiters before dropping the lock. The
+ * whole wakeup+exit sequence must appear as atomic.
+ */
+static void __exit_monitor(struct evl_monitor *gate, struct evl_thread *curr) /* irqs off */
 {
+	struct evl_monitor_state *state = gate->state;
+	struct evl_monitor *event, *n;
+
+	/*
+	 * Since gate->mutex is held, we can manipulate the state
+	 * flags racelessly.
+	 */
+	if (state->flags & EVL_MONITOR_SIGNALED) {
+		state->flags &= ~EVL_MONITOR_SIGNALED;
+		list_for_each_entry_safe(event, n, &gate->events, next) {
+			raw_spin_lock(&event->wait_queue.wchan.lock);
+			if (event->state->flags & EVL_MONITOR_SIGNALED)
+				wakeup_waiters(event, gate);
+			raw_spin_unlock(&event->wait_queue.wchan.lock);
+		}
+	}
+
 	/*
 	 * If we are about to release the lock which is still pending
 	 * PP (i.e. we never got scheduled out while holding it),
@@ -253,9 +276,7 @@ static void __exit_monitor(struct evl_monitor *gate,
 
 static int exit_monitor(struct evl_monitor *gate)
 {
-	struct evl_monitor_state *state = gate->state;
 	struct evl_thread *curr = evl_current();
-	struct evl_monitor *event, *n;
 	unsigned long flags;
 
 	if (gate->type != EVL_MONITOR_GATE)
@@ -270,25 +291,6 @@ static int exit_monitor(struct evl_monitor *gate)
 	 */
 	raw_spin_lock_irqsave(&gate->lock, flags);
 
-	/*
-	 * While gate.mutex is still held by current, we can
-	 * manipulate the state flags racelessly.
-	 */
-	if (state->flags & EVL_MONITOR_SIGNALED) {
-		state->flags &= ~EVL_MONITOR_SIGNALED;
-		list_for_each_entry_safe(event, n, &gate->events, next) {
-			raw_spin_lock(&event->wait_queue.wchan.lock);
-			if (event->state->flags & EVL_MONITOR_SIGNALED)
-				wakeup_waiters(event, gate);
-			raw_spin_unlock(&event->wait_queue.wchan.lock);
-		}
-	}
-
-	/*
-	 * The whole wakeup+exit sequence must appear as atomic, drop
-	 * the gate lock last so that we are fully covered until the
-	 * monitor is released.
-	 */
 	__exit_monitor(gate, curr);
 
 	raw_spin_unlock_irqrestore(&gate->lock, flags);
