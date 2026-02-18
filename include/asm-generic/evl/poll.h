@@ -20,16 +20,6 @@ struct oob_poll_wait {
 	} connectors[EVL_POLL_NR_CONNECTORS];
 };
 
-struct oob_poll_queue {
-	struct evl_poll_head head;
-};
-
-static inline
-void init_oob_poll_queue(struct oob_poll_queue *pwq)
-{
-	evl_init_poll_head(&pwq->head);
-}
-
 #define poll_signal_oob(__pwq, __mask)	\
 	evl_signal_poll_events(&(__pwq)->head, __mask)
 
