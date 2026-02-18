@@ -38,6 +38,6 @@ struct evl_poll_watchpoint {
 
 void evl_drop_poll_table(struct evl_thread *thread);
 
-void evl_drop_watchpoints(struct evl_file *efilp);
+void evl_release_watchers(struct evl_file *efilp);
 
 #endif /* !_EVL_POLL_H */
