@@ -77,19 +77,13 @@ EXPORT_SYMBOL_GPL(evl_open_file);
  */
 void evl_release_file(struct evl_file *efilp)
 {
-	evl_drop_watchpoints(efilp);
+	evl_release_watchers(efilp);
 
 	/*
 	 * Release the original reference on @efilp. If oob references
 	 * are still pending (e.g. some thread is still blocked in
 	 * fops->oob_read()), we must wait for them to be dropped
 	 * before allowing the in-band code to dismantle @efilp->filp.
-	 *
-	 * NOTE: In-band and out-of-band fds are working together in
-	 * lockstep mode via dovetail_install/uninstall_fd() calls.
-	 * Therefore, we can't livelock with evl_get_file() as @efilp
-	 * was removed from the fd tree before fops->release() called
-	 * us.
 	 */
 	evl_pass_crossing(&efilp->crossing);
 }
