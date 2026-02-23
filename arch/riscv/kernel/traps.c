@@ -112,9 +112,29 @@ void die(struct pt_regs *regs, const char *str)
 		make_task_dead(SIGSEGV);
 }
 
+static __always_inline
+bool mark_trap_entry(struct pt_regs *regs)
+{
+	if (likely(running_inband())) {
+		hard_cond_local_irq_enable();
+		return true;
+	}
+
+	return false;
+}
+
+static __always_inline
+void mark_trap_exit(struct pt_regs *regs)
+{
+	hard_cond_local_irq_disable();
+}
+
 void do_trap(struct pt_regs *regs, int signo, int code, unsigned long addr)
 {
 	struct task_struct *tsk = current;
+
+	if (!mark_trap_entry(regs))
+		return;
 
 	if (show_unhandled_signals && unhandled_signal(tsk, signo)
 	    && printk_ratelimit()) {
@@ -127,6 +147,8 @@ void do_trap(struct pt_regs *regs, int signo, int code, unsigned long addr)
 	}
 
 	force_sig_fault(signo, code, (void __user *)addr);
+
+	mark_trap_exit(regs);
 }
 
 static void do_trap_error(struct pt_regs *regs, int signo, int code,
@@ -137,6 +159,12 @@ static void do_trap_error(struct pt_regs *regs, int signo, int code,
 	if (user_mode(regs)) {
 		do_trap(regs, signo, code, addr);
 	} else {
+		/*
+		 * Dovetail: If we trapped from kernel space, either
+		 * we can fix up the situation, or we can't and we may
+		 * happily crash with hard irqs off. Either way, don't
+		 * bother.
+		 */
 		if (!fixup_exception(regs))
 			die(regs, str);
 	}
@@ -153,9 +181,12 @@ asmlinkage __visible __trap_section void name(struct pt_regs *regs)		\
 		local_irq_disable();						\
 		irqentry_exit_to_user_mode(regs);				\
 	} else {								\
+		int stalled = test_and_stall_inband_nocheck();			\
 		irqentry_state_t state = irqentry_nmi_enter(regs);		\
 		do_trap_error(regs, signo, code, regs->epc, "Oops - " str);	\
 		irqentry_nmi_exit(regs, state);					\
+		if (!stalled)							\
+			unstall_inband_nocheck();				\
 	}									\
 }
 
@@ -174,22 +205,29 @@ asmlinkage __visible __trap_section void do_trap_insn_illegal(struct pt_regs *re
 
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
-		local_irq_enable();
+		unstall_inband_nocheck();
+		hard_local_irq_enable();
 
 		handled = riscv_v_first_use_handler(regs);
+
+		hard_local_irq_disable();
+		stall_inband_nocheck();
+
 		if (!handled)
 			do_trap_error(regs, SIGILL, ILL_ILLOPC, regs->epc,
 				      "Oops - illegal instruction");
 
-		local_irq_disable();
 		irqentry_exit_to_user_mode(regs);
 	} else {
+		int stalled = test_and_stall_inband_nocheck();
 		irqentry_state_t state = irqentry_nmi_enter(regs);
 
 		do_trap_error(regs, SIGILL, ILL_ILLOPC, regs->epc,
 			      "Oops - illegal instruction");
 
 		irqentry_nmi_exit(regs, state);
+		if (!stalled)
+			unstall_inband_nocheck();
 	}
 }
 
@@ -217,11 +255,13 @@ static const struct {
 static void do_trap_misaligned(struct pt_regs *regs, enum misaligned_access_type type)
 {
 	irqentry_state_t state;
+	int stalled;
 
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
 		local_irq_enable();
 	} else {
+		stalled = test_and_stall_inband_nocheck();
 		state = irqentry_nmi_enter(regs);
 	}
 
@@ -234,6 +274,8 @@ static void do_trap_misaligned(struct pt_regs *regs, enum misaligned_access_type
 		irqentry_exit_to_user_mode(regs);
 	} else {
 		irqentry_nmi_exit(regs, state);
+		if (!stalled)
+			unstall_inband_nocheck();
 	}
 }
 
@@ -306,18 +348,24 @@ asmlinkage __visible __trap_section void do_trap_break(struct pt_regs *regs)
 {
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
-		local_irq_enable();
+		unstall_inband_nocheck();
+		hard_local_irq_enable();
 
 		handle_break(regs);
 
-		local_irq_disable();
+		hard_local_irq_disable();
+		stall_inband_nocheck();
+
 		irqentry_exit_to_user_mode(regs);
 	} else {
+		int stalled = test_and_stall_inband_nocheck();
 		irqentry_state_t state = irqentry_nmi_enter(regs);
 
 		handle_break(regs);
 
 		irqentry_nmi_exit(regs, state);
+		if (!stalled)
+			unstall_inband_nocheck();
 	}
 }
 
@@ -344,12 +392,15 @@ void do_trap_ecall_u(struct pt_regs *regs)
 
 		syscall_exit_to_user_mode(regs);
 	} else {
+		int stalled = test_and_stall_inband_nocheck();
 		irqentry_state_t state = irqentry_nmi_enter(regs);
 
 		do_trap_error(regs, SIGILL, ILL_ILLTRP, regs->epc,
 			"Oops - environment call from U-mode");
 
 		irqentry_nmi_exit(regs, state);
+		if (!stalled)
+			unstall_inband_nocheck();
 	}
 
 }
@@ -413,13 +464,72 @@ asmlinkage __visible noinstr void do_page_fault(struct pt_regs *regs)
 {
 	irqentry_state_t state = irqentry_enter(regs);
 
-	handle_page_fault(regs);
-
-	local_irq_disable();
+	handle_page_fault(regs, state);
+	hard_local_irq_disable();
+	stall_inband_nocheck();
 
 	irqentry_exit(regs, state);
 }
 #endif
+
+#ifdef CONFIG_IRQ_PIPELINE
+
+extern void (*handle_arch_irq)(struct pt_regs *);
+
+static void noinstr handle_riscv_irq_pipelined(struct pt_regs *regs)
+{
+	struct pt_regs *old_regs = set_irq_regs(regs);
+	handle_arch_irq(regs);
+	set_irq_regs(old_regs);
+}
+
+DEFINE_PER_CPU(int, irq_nesting);
+
+static void noinstr handle_riscv_irq_pipelined_on_stack(struct pt_regs *regs)
+{
+	int nesting = this_cpu_inc_return(irq_nesting);
+
+	if (IS_ENABLED(CONFIG_IRQ_STACKS) && nesting == 1)
+		call_on_irq_stack(regs, handle_riscv_irq_pipelined);
+	else
+		handle_riscv_irq_pipelined(regs);
+	this_cpu_dec(irq_nesting);
+}
+
+asmlinkage void noinstr do_irq(struct pt_regs *regs)
+{
+	irqentry_state_t state;
+	struct irq_stage_data *prevd;
+
+	/* OOB fast path: Log the IRQ and return. */
+	if (unlikely(running_oob() || irqs_disabled())) {
+		instrumentation_begin();
+		prevd = handle_irq_pipelined_prepare(regs);
+		handle_riscv_irq_pipelined(regs);
+		handle_irq_pipelined_finish(prevd, regs);
+		if (running_inband() && user_mode(regs)) {
+			stall_inband_nocheck();
+			irqentry_exit_to_user_mode(regs);
+		}
+		instrumentation_end();
+		return;
+	}
+
+	/* Handle inband IRQ. */
+	state = irqentry_enter(regs);
+	instrumentation_begin();
+	prevd = handle_irq_pipelined_prepare(regs);
+	handle_riscv_irq_pipelined_on_stack(regs);
+	trace_hardirqs_on();
+	unstall_inband_nocheck();
+	handle_irq_pipelined_finish(prevd, regs);
+	stall_inband_nocheck();
+	trace_hardirqs_off();
+	instrumentation_end();
+	irqentry_exit(regs, state);
+}
+
+#else	/* !CONFIG_IRQ_PIPELINE */
 
 static void noinstr handle_riscv_irq(struct pt_regs *regs)
 {
@@ -443,6 +553,8 @@ asmlinkage void noinstr do_irq(struct pt_regs *regs)
 
 	irqentry_exit(regs, state);
 }
+
+#endif /* !CONFIG_IRQ_PIPELINE */
 
 #ifdef CONFIG_GENERIC_BUG
 int is_valid_bugaddr(unsigned long pc)
