@@ -10,6 +10,7 @@
 #ifndef _EVL_STAT_H
 #define _EVL_STAT_H
 
+#include <evl/assert.h>
 #include <evl/clock.h>
 
 struct evl_rq;
@@ -79,7 +80,7 @@ static inline void evl_reset_account(struct evl_account *account)
  * CAUTION: all changes must be committed before changing the
  * current_account reference in rq.
  */
-#define evl_update_account(__rq)				\
+#define __evl_update_account(__rq)				\
 	do {							\
 		ktime_t __now = evl_get_timestamp();		\
 		(__rq)->current_account->total +=		\
@@ -88,29 +89,15 @@ static inline void evl_reset_account(struct evl_account *account)
 		smp_wmb();					\
 	} while (0)
 
-/* Obtain last account switch date of considered runqueue */
-#define evl_get_last_account_switch(__rq)	((__rq)->last_account_switch)
+#define __evl_set_current_account(__rq, __new_account)			\
+	do {								\
+		(__rq)->current_account = (__new_account);		\
+	} while (0)
 
-/*
- * Update the current account reference, returning the previous one.
- */
 #define evl_set_current_account(__rq, __new_account)			\
-	({								\
-		struct evl_account *__prev;				\
-		__prev = (struct evl_account *)				\
-			xchg(&(__rq)->current_account, (__new_account)); \
-		__prev;							\
-	})
-
-/*
- * Finalize an account (no need to accumulate the exectime, just mark
- * the switch date and set the new account).
- */
-#define evl_close_account(__rq, __new_account)			\
-	do {							\
-		(__rq)->last_account_switch =			\
-			evl_get_timestamp();			\
-		(__rq)->current_account = (__new_account);	\
+	do {								\
+		assert_hard_lock(&(__rq)->lock);			\
+		__evl_set_current_account(__rq, __new_account);		\
 	} while (0)
 
 struct evl_opt_counter {
@@ -129,10 +116,9 @@ struct evl_account {
 #define evl_get_timestamp()				({ 0; })
 #define evl_get_account_total(__account)		({ 0; })
 #define evl_reset_account(__account)			do { } while (0)
-#define evl_update_account(__rq)			do { } while (0)
-#define evl_set_current_account(__rq, __new_account)	({ (void)__rq; NULL; })
-#define evl_close_account(__rq, __new_account)	do { } while (0)
-#define evl_get_last_account_switch(__rq)		({ 0; })
+#define __evl_update_account(__rq)			do { } while (0)
+#define __evl_set_current_account(__rq, __new_account)	do { assert_hard_lock(&(__rq)->lock); } while (0)
+#define evl_set_current_account(__rq, __new_account)	do { assert_hard_lock(&(__rq)->lock); } while (0)
 
 struct evl_opt_counter {
 };
@@ -148,9 +134,10 @@ struct evl_opt_counter {
  * new_account, return the previous one.
  */
 #define evl_switch_account(__rq, __new_account)			\
-	({							\
-		evl_update_account(__rq);			\
-		evl_set_current_account(__rq, __new_account);	\
-	})
+	do {							\
+		assert_hard_lock(&(__rq)->lock);		\
+		__evl_update_account(__rq);			\
+		__evl_set_current_account(__rq, __new_account);	\
+	} while (0)
 
 #endif /* !_EVL_STAT_H */
