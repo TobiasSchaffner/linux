@@ -33,14 +33,15 @@ typedef struct {
  * but do prevent from load/store tearing and other sorts of
  * compiler-originated shenanigans.
  */
-#define evl_counter_read_careful(__c)	READ_ONCE((__c)->value)
+#define evl_counter_set_careful(__c, __v)	WRITE_ONCE((__c)->value, (__v))
+#define evl_counter_read_careful(__c)		READ_ONCE((__c)->value)
 #define evl_counter_add_careful(__c, __n)			\
 	do {							\
 		typeof((__c)->value) ___oldv =			\
 			evl_counter_read_careful(__c);		\
 		WRITE_ONCE((__c)->value, ___oldv + __n);	\
 	} while (0)
-#define evl_counter_inc_careful(__c)	evl_counter_add_careful(__c, 1)
+#define evl_counter_inc_careful(__c)		evl_counter_add_careful(__c, 1)
 
 #ifdef CONFIG_EVL_RUNSTATS
 
@@ -104,9 +105,9 @@ struct evl_opt_counter {
 	unsigned long value;
 };
 
-#define evl_opt_counter_inc(__c)		evl_counter_inc(__c)
-#define evl_opt_counter_read(__c)		evl_counter_read(__c)
-#define evl_opt_counter_set(__c, __value)	evl_counter_set(__c, __value)
+#define evl_opt_counter_set(__c, __value)	evl_counter_set_careful(__c, __value)
+#define evl_opt_counter_inc(__c)		evl_counter_inc_careful(__c)
+#define evl_opt_counter_read(__c)		evl_counter_read_careful(__c)
 
 #else /* !CONFIG_EVL_RUNSTATS */
 
