@@ -2659,8 +2659,9 @@ static ssize_t stats_show(struct device *dev,
 		exectime = ns_to_ktime(ktime_to_ns(exectime) * 1000LL +
 				ktime_to_ns(account) / 2);
 		usage = ktime_divns(exectime, ktime_to_ns(account));
-	} else
+	} else {
 		usage = 0;
+	}
 
 	ret = snprintf(buf, PAGE_SIZE, "%lu %lu %lu %lu %Lu %d\n",
 		evl_opt_counter_read(&thread->stat.isw),
