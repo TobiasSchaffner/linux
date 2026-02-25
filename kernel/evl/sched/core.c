@@ -189,7 +189,7 @@ static void init_rq(struct evl_rq *rq, int cpu)
 	evl_set_timer_name(&rq->wdtimer, "[watchdog]");
 #endif /* CONFIG_EVL_WATCHDOG */
 
-	__evl_set_current_account(rq, &rq->root_thread.stat.account);
+	evl_set_current_account(rq, &rq->root_thread.stat.account);
 
 	/*
 	 * Postpone evl_init_thread() - which sets RQ_SCHED upon
