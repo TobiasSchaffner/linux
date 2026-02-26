@@ -7,9 +7,11 @@
 #ifndef _EVL_NET_OFFLOAD_H
 #define _EVL_NET_OFFLOAD_H
 
-#include <linux/list.h>
 #include <linux/uio.h>
 #include <net/ip.h>
+#include <evl/work.h>
+
+struct evl_socket;
 
 struct evl_net_offload {
 	struct kvec kvec;
@@ -18,7 +20,8 @@ struct evl_net_offload {
 		struct sockaddr_in in;
 	} dest;
 	int destlen;
-	struct list_head next;
+	struct evl_socket *esk;
+	struct evl_work work;
 };
 
 #endif /* !_EVL_NET_OFFLOAD_H */
