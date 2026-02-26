@@ -13,14 +13,14 @@
 
 /*
  * This is a simple synchronization mechanism allowing an in-band
- * caller to pass a point in the code making sure that no out-of-band
- * operations which might traverse the same crossing are in
- * flight. The protection works once, after which the crossing must be
- * reinitialized.
+ * caller to pass a point in the code making sure that no concurrent
+ * operation which might traverse the same crossing is in flight,
+ * whether in-band or out-of-band. Once the crossing is passed, it
+ * _must_ be reinitialized.
  *
- * Out-of-band callers delimit the danger zone by down-ing and up-ing
- * the barrier at the crossing, the in-band code should ask for
- * passing the crossing.
+ * Callers delimit the danger zone by down-ing and up-ing the barrier
+ * at the crossing, the in-band code should ask for passing the
+ * crossing.
  *
  * CAUTION: the caller must guarantee that evl_down_crossing() cannot
  * be invoked _after_ evl_pass_crossing() is entered for a given
@@ -61,8 +61,12 @@ static inline void evl_up_crossing(struct evl_crossing *c)
 {
 	/* CAUTION: See word of caution in the initial comment. */
 
-	if (atomic_dec_return(&c->oob_refs) == 0)
-		irq_work_queue(&c->oob_work);
+	if (atomic_dec_return(&c->oob_refs) == 0) {
+		if (running_inband() && !hard_irqs_disabled())
+			complete(&c->oob_done);
+		else
+			irq_work_queue(&c->oob_work);
+	}
 }
 
 static inline void evl_pass_crossing(struct evl_crossing *c)
