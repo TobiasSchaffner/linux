@@ -19,6 +19,7 @@ struct evl_net_tap_data {
 
 static void feed_tap_in(struct net_device *dev, struct sk_buff *skb)
 {
+	lockdep_assert_in_softirq();
 	/*
 	 * The buffer headers are reset and untagged from VLAN bits if
 	 * any as well (see netif_deliver_oob()).
@@ -41,6 +42,9 @@ INBAND_BATCH_WORK(
 
 static DECLARE_INBAND_BATCH_WORK(evl_net_tap_in, tap_in);
 
+/*
+ * Feed the input stream of a tap. BH must be held.
+ */
 void evl_net_tap_in(struct net_device *dev, struct sk_buff *skb)
 {
 	struct evl_net_tap_data in;
