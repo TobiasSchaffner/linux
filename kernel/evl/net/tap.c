@@ -78,7 +78,9 @@ void evl_net_tap_in(struct net_device *dev, struct sk_buff *skb)
 
 static void feed_tap_out(struct net_device *dev, struct sk_buff *skb)
 {
+	local_bh_disable();
 	dev_queue_xmit_nit(skb, dev);
+	local_bh_enable();
 }
 
 static void deliver_output_nit(struct evl_net_tap_data *data)
