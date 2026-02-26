@@ -9,11 +9,18 @@
 void __evl_do_work(struct work_struct *wq_work)
 {
 	struct evl_work *work;
+	struct evl_element *e;
 
 	work = container_of(wq_work, struct evl_work, wq_work);
+	/*
+	 * Caution: the handler might release the container struct, we
+	 * may not tread on the work struct memory after calling the
+	 * former.
+	 */
+	e = work->element;
 	work->handler_noreturn(work);
-	if (work->element)
-		evl_put_element(work->element);
+	if (e)
+		evl_put_element(e);
 }
 EXPORT_SYMBOL_GPL(__evl_do_work);
 
@@ -29,12 +36,14 @@ EXPORT_SYMBOL_GPL(__evl_do_sync_work);
 
 void __evl_do_irq_work(struct irq_work *irq_work)
 {
+	struct evl_element *e;
 	struct evl_work *work;
 
 	work = container_of(irq_work, struct evl_work, irq_work);
+	e = work->element;	/* See comment in __evl_do_work(). */
 
-	if (!queue_work(work->wq, &work->wq_work) && work->element)
-		evl_put_element(work->element);
+	if (!queue_work(work->wq, &work->wq_work) && e)
+		evl_put_element(e);
 }
 EXPORT_SYMBOL_GPL(__evl_do_irq_work);
 
@@ -77,6 +86,8 @@ EXPORT_SYMBOL_GPL(evl_init_sync_work);
 bool evl_call_inband_from(struct evl_work *work,
 			struct workqueue_struct *wq)
 {
+	struct evl_element *e = work->element;
+
 	work->wq = wq;
 
 	/*
@@ -84,12 +95,12 @@ bool evl_call_inband_from(struct evl_work *work,
 	 * specified so that the handler may access such element
 	 * safely after our caller has unwound.
 	 */
-	if (work->element)
-		evl_get_element(work->element);
+	if (e)
+		evl_get_element(e);
 
 	if (!irq_work_queue(&work->irq_work)) {
-		if (work->element)
-			evl_put_element(work->element);
+		if (e)
+			evl_put_element(e);
 		return false;
 	}
 
