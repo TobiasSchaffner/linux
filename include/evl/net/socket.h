@@ -18,6 +18,7 @@
 #include <evl/crossing.h>
 #include <evl/work.h>
 #include <evl/net/timestamping.h>
+#include <evl/net/offload.h>
 #include <uapi/evl/types-abi.h>
 #include <uapi/evl/fcntl-abi.h>
 #include <uapi/evl/net/socket-abi.h>
@@ -54,7 +55,8 @@ struct evl_net_proto {
 			size_t iovlen);
 	__poll_t (*oob_poll)(struct evl_socket *esk,
 			struct oob_poll_wait *wait);
-	void (*handle_offload)(struct evl_socket *esk);
+	int (*handle_offload)(struct evl_socket *esk,
+			struct evl_net_offload *ofld);
 };
 
 struct evl_socket_domain {
@@ -89,7 +91,6 @@ struct evl_socket {
 	spinlock_t ts_lock;
 	struct evl_net_timestamps __rcu *tx_timestamps;
 	refcount_t refs;	/* release vs destroy */
-	struct evl_work inband_offload;
 	union {
 		/* Packet interface data. */
 		struct {
@@ -100,8 +101,6 @@ struct evl_socket {
 		} packet;
 		/* Used by all IP protocols we support. */
 		struct {
-			/* Offload descriptors. */
-			struct list_head pending_output;
 			/* UDP bindings. */
 			union {
 				struct {
@@ -113,7 +112,6 @@ struct evl_socket {
 			};
 		} ip;
 	} u;
-	hard_spinlock_t oob_lock;
 };
 
 static inline unsigned int evl_socket_f_flags(struct evl_socket *esk)
@@ -152,8 +150,8 @@ void evl_unregister_socket_domain(struct evl_socket_domain *domain);
 
 void evl_net_purge_socket_input(struct evl_socket *esk);
 
-void evl_net_offload_inband(struct evl_socket *esk,
-			struct evl_net_offload *ofld,
-			struct list_head *q);
+ssize_t evl_net_offload_inband(struct evl_socket *esk,
+			struct kvec *kvec, size_t count,
+			struct sockaddr_in *in_dest);
 
 #endif /* !_EVL_NET_SOCKET_H */
