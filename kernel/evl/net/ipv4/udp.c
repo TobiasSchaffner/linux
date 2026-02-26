@@ -189,25 +189,6 @@ static int shutdown_udp_socket(struct evl_socket *esk, int how)
 	return 0;
 }
 
-static ssize_t offload_send_udp(struct evl_socket *esk,
-				struct kvec *kvec, size_t count,
-				struct sockaddr_in *in_dest)
-{
-	struct evl_net_offload *ofld;
-
-	ofld = evl_alloc(sizeof(*ofld));
-	if (!ofld)
-		return -ENOMEM;
-
-	ofld->kvec = *kvec;
-	ofld->count = count;
-	ofld->dest.in = in_dest ? *in_dest : (struct sockaddr_in){};
-	ofld->destlen = in_dest ? sizeof(*in_dest) : 0;
-	evl_net_offload_inband(esk, ofld, &esk->u.ip.pending_output);
-
-	return count;
-}
-
 /*
  * Given an IPv4 address, look into our oob route and ARP front caches
  * to find an egress path. If we cannot find a route to the next hop
@@ -432,7 +413,8 @@ static ssize_t send_udp(struct evl_socket *esk,
 			return ret;
 		}
 
-		ret = offload_send_udp(esk, &kvec, ret, namelen ? &in_addr : NULL);
+		ret = evl_net_offload_inband(esk, &kvec, ret,
+					namelen ? &in_addr : NULL);
 		if (ret < 0)
 			return ret;
 		/*
@@ -665,32 +647,21 @@ static __poll_t poll_udp(struct evl_socket *esk,
 }
 
 /* in-band */
-static void handle_udp_inband(struct evl_socket *esk)
+static int handle_udp_inband(struct evl_socket *esk,
+			struct evl_net_offload *ofld)
 {
-	struct evl_net_offload *ofld, *n;
 	struct sock *sk = esk->sk;
-	unsigned long flags;
-	LIST_HEAD(tmp);
+	struct msghdr msg = { 0 };
 	int ret;
 
-	/* Process pending output. */
+	msg.msg_namelen = ofld->destlen;
+	if (msg.msg_namelen)
+		msg.msg_name = (struct sockaddr *)&ofld->dest.in;
+	ret = kernel_sendmsg(sk->sk_socket, &msg, &ofld->kvec, 1, ofld->count);
+	evl_free(ofld->kvec.iov_base);
+	evl_uncharge_socket_wmem(esk, ofld->count);
 
-	raw_spin_lock_irqsave(&esk->oob_lock, flags);
-	list_splice_init(&esk->u.ip.pending_output, &tmp);
-	raw_spin_unlock_irqrestore(&esk->oob_lock, flags);
-
-	list_for_each_entry_safe(ofld, n, &tmp, next) {
-		struct msghdr msg = { 0 };
-		list_del(&ofld->next);
-		msg.msg_namelen = ofld->destlen;
-		if (msg.msg_namelen)
-			msg.msg_name = (struct sockaddr *)&ofld->dest.in;
-		ret = kernel_sendmsg(sk->sk_socket, &msg,
-				&ofld->kvec, 1, ofld->count);
-		evl_free(ofld->kvec.iov_base);
-		evl_uncharge_socket_wmem(esk, ofld->count);
-		evl_free(ofld);
-	}
+	return ret;
 }
 
 static inline bool __validate_checksum(struct sk_buff *skb, u16 ulen, __sum16 check)

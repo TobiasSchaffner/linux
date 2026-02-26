@@ -237,44 +237,56 @@ static struct evl_net_proto *find_oob_proto(int domain, int type, int protocol)
 
 /*
  * The inband offload handler. Handles packets for which we cannot
- * handle from the oob stage directly (e.g. because we don't have the
- * routing information available in our oob front-cache).
+ * handle from the oob stage directly (e.g. because some routing
+ * information we need is missing from our oob front-cache, like a
+ * MAC address).
  */
 static void inband_offload_handler(struct evl_work *work)
 {
-	struct evl_socket *esk =
-		container_of(work, struct evl_socket, inband_offload);
+	struct evl_net_offload *ofld;
+	struct evl_socket *esk;
+	int ret;
 
-	if (EVL_WARN_ON(NET, !esk->proto->handle_offload))
-		return;
-
-	esk->proto->handle_offload(esk);
-
-	/* Release the ref. obtained by evl_net_offload_inband(). */
+	ofld = container_of(work, struct evl_net_offload, work);
+	esk = ofld->esk;
+	ret = esk->proto->handle_offload(esk, ofld);
+	evl_free(ofld);
+	if (ret < 0)
+		printk_ratelimited(EVL_WARNING "net: %ps() failed (%d)\n", esk->proto->handle_offload, ret);
+	/* Converse of evl_get_fileref() in evl_net_offload_inband(). */
 	evl_put_file(&esk->efile);
 }
 
 /*
  * Offload a protocol-specific operation to the in-band stage.
  */
-void evl_net_offload_inband(struct evl_socket *esk,
-			struct evl_net_offload *ofld,
-			struct list_head *q)
+ssize_t evl_net_offload_inband(struct evl_socket *esk,
+			struct kvec *kvec, size_t count,
+			struct sockaddr_in *in_dest)
 {
-	unsigned long flags;
+	struct evl_net_offload *ofld;
+	bool ret;
 
+	ofld = evl_alloc(sizeof(*ofld));
+	if (!ofld)
+		return -ENOMEM;
+
+	ofld->esk = esk;
+	ofld->kvec = *kvec;
+	ofld->count = count;
+	ofld->dest.in = in_dest ? *in_dest : (struct sockaddr_in){};
+	ofld->destlen = in_dest ? sizeof(*in_dest) : 0;
+	evl_init_work(&ofld->work, inband_offload_handler);
 	/*
 	 * Make sure esk won't vanish until the offload handler has
 	 * run.
 	 */
 	evl_get_fileref(&esk->efile);
 
-	raw_spin_lock_irqsave(&esk->oob_lock, flags);
-	list_add_tail(&ofld->next, q);
-	raw_spin_unlock_irqrestore(&esk->oob_lock, flags);
+	ret = evl_call_inband(&ofld->work);
+	WARN_ON(!ret);
 
-	if (!evl_call_inband(&esk->inband_offload))
-		evl_put_file(&esk->efile);
+	return count;
 }
 
 /*
@@ -347,9 +359,7 @@ int sock_oob_attach(struct socket *sock)
 	evl_init_wait(&esk->input_wait, &evl_mono_clock, 0);
 	evl_init_wait(&esk->wmem_wait, &evl_mono_clock, 0);
 	evl_init_poll_head(&esk->poll_head);
-	raw_spin_lock_init(&esk->oob_lock);
 	spin_lock_init(&esk->ts_lock);
-	evl_init_work(&esk->inband_offload, inband_offload_handler);
 	/* Inherit the {rw}mem limits from the base socket. */
 	esk->rmem_max = sk->sk_rcvbuf;
 	esk->wmem_max = sk->sk_sndbuf;
@@ -385,6 +395,7 @@ void sock_oob_release(struct socket *sock)
 		esk->proto->release(esk);
 
 	evl_release_file(&esk->efile);
+
 	/*
 	 * Wait for the stack to drain in-flight outgoing
 	 * buffers. This guards us against trackers going stale while

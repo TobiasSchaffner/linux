@@ -11,7 +11,6 @@
 
 static inline void evl_net_init_ip_socket(struct evl_socket *esk)
 {
-	INIT_LIST_HEAD(&esk->u.ip.pending_output);
 	INIT_LIST_HEAD(&esk->u.ip.udp.next);
 }
 
