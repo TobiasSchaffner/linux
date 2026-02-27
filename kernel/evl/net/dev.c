@@ -618,7 +618,6 @@ static int get_dev_stat(struct net_device *dev, struct evl_net_devstat *devs)
 {
 	struct net_device *real_dev = evl_net_real_dev(dev);
 	struct evl_netdev_state *est = real_dev->oob_state.estate;
-	u64 alloc_count, release_count;
 
 	devs->__flags = 0;	/* Clear this first. */
 	devs->oob_capable = netdev_is_oob_capable(real_dev);
@@ -630,9 +629,7 @@ static int get_dev_stat(struct net_device *dev, struct evl_net_devstat *devs)
 	devs->tx_nomem = evl_counter_read_careful(&est->stats.tx_nomem);
 	devs->csum_errors = evl_counter_read_careful(&est->stats.csum_errors);
 	devs->skb_size = est->buf_size;
-	alloc_count = evl_counter_read_careful(&est->stats.pool_alloc_count);
-	release_count = evl_counter_read_careful(&est->stats.pool_release_count);
-	devs->skb_free = est->pool_max - _distance(alloc_count, release_count);
+	devs->skb_free = READ_ONCE(est->tx_pages->alloc.count);
 	devs->skb_total = est->pool_max;
 
 	return 0;
