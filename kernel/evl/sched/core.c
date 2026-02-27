@@ -1347,10 +1347,11 @@ int __init evl_init_sched(void)
 
 	/* See comment about hooking TIMER_OOB_IPI. */
 	if (IS_ENABLED(CONFIG_SMP) && num_possible_cpus() > 1) {
-		ret = __request_percpu_irq(RESCHEDULE_OOB_IPI,
+		ret = request_percpu_irq_affinity_flags(RESCHEDULE_OOB_IPI,
 					oob_reschedule_interrupt,
 					IRQF_OOB,
 					"EVL reschedule",
+					&evl_oob_cpus,
 					&evl_machine_cpudata);
 		if (ret)
 			goto cleanup_rq;
