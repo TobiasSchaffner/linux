@@ -424,9 +424,10 @@ static struct latmus_runner *create_sirq_runner(int cpu)
 	for_each_possible_cpu(_cpu)
 		*per_cpu_ptr(sirq_percpu, _cpu) = sirq_runner;
 
-	ret = __request_percpu_irq(sirq, latmus_sirq_handler,
+	ret = request_percpu_irq_affinity_flags(sirq, latmus_sirq_handler,
 				IRQF_NO_THREAD,
 				"latmus sirq",
+				NULL,
 				sirq_percpu);
 	if (ret) {
 		evl_destroy_timer(&sirq_runner->timer);
