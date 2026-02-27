@@ -106,11 +106,8 @@ static struct page *alloc_bufpage(struct net_device *dev,
 		raw_spin_lock_irqsave(&est->tx_wait.wchan.lock, flags);
 
 		page = page_pool_dev_alloc_pages(est->tx_pages);
-		if (likely(page)) {
-			/* Feed statistics under lock. */
-			evl_counter_inc_careful(&est->stats.pool_alloc_count);
+		if (likely(page))
 			break;
-		}
 
 		if (timeout == EVL_NONBLOCK) {
 			page = ERR_PTR(-EWOULDBLOCK);
@@ -252,9 +249,6 @@ static void __free_evl_skb(struct sk_buff *skb, struct net_device *dev)
 	 * device we are releasing the page to.
 	 */
 	raw_spin_lock_irqsave(&est->tx_wait.wchan.lock, flags);
-
-	/* Feed statistics under lock. */
-	evl_counter_inc_careful(&est->stats.pool_release_count);
 
 	if (evl_wait_active(&est->tx_wait))
 		evl_wake_up_head(&est->tx_wait);
