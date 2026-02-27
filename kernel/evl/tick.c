@@ -110,9 +110,10 @@ static int request_timer_ipi(void)
 	 * CPUs.
 	 */
 	if (num_possible_cpus() > 1)
-		ret = __request_percpu_irq(TIMER_OOB_IPI,
+		ret = request_percpu_irq_affinity_flags(TIMER_OOB_IPI,
 					clock_ipi_handler,
 					IRQF_OOB, "EVL timer IPI",
+					&evl_oob_cpus,
 					&evl_machine_cpudata);
 	return ret;
 }
