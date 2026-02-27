@@ -59,8 +59,6 @@ struct evl_netdev_state {
 		evl_counter64 tx_bytes;
 		evl_counter32 rx_nomem;
 		evl_counter32 tx_nomem;
-		evl_counter32 pool_alloc_count;
-		evl_counter32 pool_release_count;
 		evl_counter32 csum_errors;
 	} stats;
 	/* Count of oob ports referring to this device. */
