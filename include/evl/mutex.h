@@ -95,7 +95,7 @@ void evl_drop_current_ownership(void);
 static inline bool
 evl_is_mutex_owner(atomic_t *fastlock, fundle_t ownerh)
 {
-	return evl_get_index(atomic_read(fastlock)) == ownerh;
+	return __evl_fundle_key(atomic_read(fastlock)) == ownerh;
 }
 
 struct evl_kmutex {
