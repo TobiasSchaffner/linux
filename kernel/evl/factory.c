@@ -81,15 +81,22 @@ int evl_init_element(struct evl_element *e,
 		}
 	} while (test_and_set_bit(minor, fac->minor_map));
 
+	/*
+	 * A public element is by definition shareable (although a
+	 * shareable element does not have to be public).
+	 */
+	if (clone_flags & EVL_CLONE_PUBLIC)
+		clone_flags |= EVL_CLONE_SHAREABLE;
+
 	e->factory = fac;
 	e->minor = minor;
-	refcount_set(&e->refs, 1);
 	e->dev = NULL;
 	e->fpriv.filp = NULL;
 	e->fpriv.efd = -1;
-	e->fundle = EVL_NO_HANDLE;
 	e->devname = NULL;
 	e->clone_flags = clone_flags;
+	e->ns = NULL;
+	evl_init_map_node(&e->ns_node);
 
 	return 0;
 }
@@ -463,7 +470,7 @@ static int create_element_device(struct evl_element *e,
 	 * reference then install fd (which is a membar).
 	 */
 	if (!evl_element_is_public(e) && !evl_element_has_coredev(e)) {
-		refcount_inc(&e->refs);
+		__evl_get_element(e);
 		fd_install(e->fpriv.efd, e->fpriv.filp);
 	}
 
@@ -599,7 +606,7 @@ static long ioctl_clone_device(struct file *filp, unsigned int cmd,
 
 	val = e->minor;
 	ret |= put_user(val, &u_req->eids.minor);
-	val = e->fundle;
+	val = evl_element_fundle(e);
 	ret |= put_user(val, &u_req->eids.fundle);
 	ret |= put_user(state_offset, &u_req->eids.state_offset);
 	val = e->fpriv.efd;
@@ -638,94 +645,6 @@ static const struct file_operations clone_fops = {
 	.compat_ioctl	= compat_ptr_ioctl,
 #endif
 };
-
-static int index_element_at(struct evl_index *map,
-			struct evl_element *e, fundle_t fundle)
-{
-	struct rb_node **rbp, *parent;
-	struct evl_element *tmp;
-
-	parent = NULL;
-	rbp = &map->root.rb_node;
-	while (*rbp) {
-		tmp = rb_entry(*rbp, struct evl_element, index_node);
-		parent = *rbp;
-		if (fundle < tmp->fundle)
-			rbp = &(*rbp)->rb_left;
-		else if (fundle > tmp->fundle)
-			rbp = &(*rbp)->rb_right;
-		else
-			return -EEXIST;
-	}
-
-	e->fundle = fundle;
-	rb_link_node(&e->index_node, parent, rbp);
-	rb_insert_color(&e->index_node, &map->root);
-
-	return 0;
-}
-
-void evl_index_element(struct evl_index *map, struct evl_element *e)
-{
-	fundle_t fundle, guard = 0;
-	unsigned long flags;
-	int ret;
-
-	do {
-		if (evl_get_index(++guard) == 0) { /* Paranoid. */
-			e->fundle = EVL_NO_HANDLE;
-			WARN_ON_ONCE("out of fundle index space");
-			return;
-		}
-
-		raw_spin_lock_irqsave(&map->lock, flags);
-
-		fundle = evl_get_index(++map->generator);
-		if (!fundle)		/* Exclude EVL_NO_HANDLE */
-			fundle = map->generator = 1;
-
-		ret = index_element_at(map, e, fundle);
-
-		raw_spin_unlock_irqrestore(&map->lock, flags);
-	} while (ret);
-}
-
-void evl_unindex_element(struct evl_index *map, struct evl_element *e)
-{
-	unsigned long flags;
-
-	raw_spin_lock_irqsave(&map->lock, flags);
-	rb_erase(&e->index_node, &map->root);
-	raw_spin_unlock_irqrestore(&map->lock, flags);
-}
-
-struct evl_element *
-__evl_get_element_by_fundle(struct evl_index *map, fundle_t fundle)
-{
-	struct evl_element *e;
-	unsigned long flags;
-	struct rb_node *rb;
-
-	raw_spin_lock_irqsave(&map->lock, flags);
-
-	rb = map->root.rb_node;
-	while (rb) {
-		e = rb_entry(rb, struct evl_element, index_node);
-		if (fundle < e->fundle) {
-			rb = rb->rb_left;
-		} else if (fundle > e->fundle) {
-			rb = rb->rb_right;
-		} else {
-			if (unlikely(!refcount_inc_not_zero(&e->refs)))
-				e = NULL;
-			break;
-		}
-	}
-
-	raw_spin_unlock_irqrestore(&map->lock, flags);
-
-	return rb ? e : NULL;
-}
 
 static char *factory_type_devnode(const struct device *dev, umode_t *mode,
 			kuid_t *uid, kgid_t *gid)
@@ -821,9 +740,6 @@ static int create_factory(struct evl_factory *fac, dev_t rdev)
 	}
 
 	fac->dev = dev;
-	raw_spin_lock_init(&fac->index.lock);
-	fac->index.root = RB_ROOT;
-	fac->index.generator = EVL_NO_HANDLE;
 	hash_init(fac->name_hash);
 	mutex_init(&fac->hash_lock);
 

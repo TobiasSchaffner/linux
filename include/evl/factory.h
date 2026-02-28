@@ -12,8 +12,6 @@
 #include <linux/fs.h>
 #include <linux/bits.h>
 #include <linux/list.h>
-#include <linux/spinlock.h>
-#include <linux/rbtree.h>
 #include <linux/rcupdate.h>
 #include <linux/irq_work.h>
 #include <linux/mutex.h>
@@ -21,7 +19,7 @@
 #include <linux/refcount.h>
 #include <evl/assert.h>
 #include <evl/file.h>
-#include <uapi/evl/types-abi.h>
+#include <evl/namespace.h>
 #include <uapi/evl/factory-abi.h>
 
 #define element_of(__filp, __type)					\
@@ -30,7 +28,7 @@
 		container_of(__fbind->element, __type, element);	\
 	})
 
-#define fundle_of(__obj)	((__obj)->element.fundle)
+#define fundle_of(__obj)	((__obj)->element.ns_node.fundle)
 
 struct evl_element;
 
@@ -38,12 +36,6 @@ struct evl_element;
 #define EVL_FACTORY_SINGLE	BIT(1)
 
 #define EVL_DEVHASH_BITS	8
-
-struct evl_index {
-	struct rb_root root;
-	hard_spinlock_t lock;
-	fundle_t generator;
-};
 
 struct evl_factory {
 	const char *name;
@@ -66,7 +58,6 @@ struct evl_factory {
 		kuid_t kuid;
 		kgid_t kgid;
 		unsigned long *minor_map;
-		struct evl_index index;
 		DECLARE_HASHTABLE(name_hash, EVL_DEVHASH_BITS);
 		struct mutex hash_lock;
 	}; /* Internal. */
@@ -79,10 +70,7 @@ struct evl_element {
 	struct device *dev;
 	struct filename *devname;
 	unsigned int minor;
-	refcount_t refs;
-	fundle_t fundle;
 	int clone_flags;
-	struct rb_node index_node;
 	struct irq_work irq_work;
 	struct list_head flush;
 	struct hlist_node hash;
@@ -90,6 +78,8 @@ struct evl_element {
 		struct file *filp;
 		int efd;
 	} fpriv;
+	struct evl_namespace *ns;
+	struct evl_map_node ns_node;
 };
 
 static inline const char *
@@ -99,6 +89,17 @@ evl_element_name(struct evl_element *e)
 		return e->devname->name;
 
 	return NULL;
+}
+
+static inline struct evl_namespace *
+evl_element_ns(struct evl_element *e)
+{
+	return e->ns;
+}
+
+static inline fundle_t evl_element_fundle(struct evl_element *e)
+{
+	return e->ns_node.fundle;
 }
 
 int evl_init_element(struct evl_element *e,
@@ -114,31 +115,14 @@ void evl_destroy_element(struct evl_element *e);
 
 static inline bool __evl_get_element(struct evl_element *e)
 {
-	return refcount_inc_not_zero(&e->refs);
+	return evl_ref_map_node(&e->ns_node);
 }
 
 static inline void evl_get_element(struct evl_element *e)
 {
-	bool ret = !__evl_get_element(e);
+	int ret = !__evl_get_element(e);
 	EVL_WARN_ON(CORE, ret);
 }
-
-struct evl_element *
-__evl_get_element_by_fundle(struct evl_index *map,
-			fundle_t fundle);
-
-#define evl_get_element_by_fundle(__map, __fundle, __type)		\
-	({								\
-		struct evl_element *__e;				\
-		__e = __evl_get_element_by_fundle(__map, __fundle);	\
-		__e ? container_of(__e, __type, element) : NULL;	\
-	})
-
-#define evl_get_factory_element_by_fundle(__fac, __fundle, __type)	\
-	({								\
-		struct evl_index *__map = &(__fac)->index;		\
-		evl_get_element_by_fundle(__map, __fundle, __type);	\
-	})
 
 /*
  * An element can be disposed of only after the device backing it is
@@ -178,7 +162,7 @@ void __evl_put_element(struct evl_element *e);
 
 static inline void evl_put_element(struct evl_element *e) /* in-band or OOB */
 {
-	if (refcount_dec_and_test(&e->refs))
+	if (evl_put_map_node(&e->ns_node))
 		__evl_put_element(e);
 }
 
@@ -193,22 +177,6 @@ int evl_create_element_device(struct evl_element *e,
 			const char *name);
 
 void evl_remove_element_device(struct evl_element *e);
-
-void evl_index_element(struct evl_index *map,
-		struct evl_element *e);
-
-static inline void evl_index_factory_element(struct evl_element *e)
-{
-	evl_index_element(&e->factory->index, e);
-}
-
-void evl_unindex_element(struct evl_index *map,
-			struct evl_element *e);
-
-static inline void evl_unindex_factory_element(struct evl_element *e)
-{
-	evl_unindex_element(&e->factory->index, e);
-}
 
 int evl_create_factory(struct evl_factory *fac);
 

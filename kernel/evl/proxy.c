@@ -756,8 +756,6 @@ proxy_factory_build(struct evl_factory *fac, const char __user *u_name,
 			goto fail_input_init;
 	}
 
-	evl_index_factory_element(&proxy->element);
-
 	return &proxy->element;
 
 fail_input_init:
@@ -787,7 +785,6 @@ static void proxy_factory_dispose(struct evl_element *e)
 
 	fput(proxy->filp);
 
-	evl_unindex_factory_element(&proxy->element);
 	evl_destroy_element(&proxy->element);
 
 	kfree_rcu(proxy, element.rcu);
