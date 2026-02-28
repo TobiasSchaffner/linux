@@ -38,8 +38,9 @@
 #include <uapi/linux/sched/types.h>
 #include <trace/events/evl.h>
 
-#define EVL_THREAD_CLONE_FLAGS	\
-	(EVL_CLONE_PUBLIC|EVL_CLONE_OBSERVABLE|EVL_CLONE_UNICAST)
+/* Valid clone flags for a thread element. */
+#define EVL_THREAD_CLONE_FLAGS	(EVL_CLONE_PUBLIC|EVL_CLONE_SHAREABLE|	\
+				 EVL_CLONE_OBSERVABLE|EVL_CLONE_UNICAST)
 
 int evl_nrthreads;
 
@@ -329,8 +330,6 @@ static void do_cleanup_current(struct evl_thread *curr)
 	 */
 	evl_drop_current_ownership();
 
-	evl_unindex_factory_element(&curr->element);
-
 	if (curr->state & EVL_T_USER) {
 		evl_free_chunk(&evl_shared_heap, curr->u_window);
 		curr->u_window = NULL;
@@ -345,6 +344,8 @@ static void do_cleanup_current(struct evl_thread *curr)
 	}
 
 	dequeue_old_thread(curr);
+
+	evl_remove_ns(&curr->element, thread);
 
 	rq = evl_get_thread_rq(curr, flags);
 
@@ -490,7 +491,7 @@ int __evl_run_kthread(struct evl_kthread *kthread, int clone_flags)
 		goto fail_spawn;
 	}
 
-	evl_index_factory_element(&thread->element);
+	evl_add_ns(&thread->element, thread);
 	wait_for_completion(&kthread->done);
 	if (kthread->status)
 		return kthread->status;
@@ -1499,6 +1500,7 @@ int activate_oob_mm_state(struct oob_mm_state *p)
 	p->ptrace_seq = 0;
 	INIT_LIST_HEAD(&p->threads);
 	raw_spin_lock_init(&p->lock);
+
 	smp_mb__before_atomic();
 	set_bit(EVL_MM_ACTIVE_BIT, &p->flags);
 
@@ -2445,10 +2447,15 @@ thread_factory_build(struct evl_factory *fac, const char __user *u_name,
 		/*
 		 * Accessing the observable is done via the thread
 		 * element (if public), so clear the public flag for
-		 * the observable itself.
+		 * the observable itself. However, we still want the
+		 * observable and the owning thread to belong to the
+		 * same namespace, so make sure to raise
+		 * EVL_CLONE_SHAREABLE if EVL_CLONE_PUBLIC was set.
 		 */
-		observable = evl_alloc_observable(
-			u_name, clone_flags & ~EVL_CLONE_PUBLIC);
+		int obs_flags = clone_flags & ~EVL_CLONE_PUBLIC;
+		if (obs_flags != clone_flags)
+			obs_flags |= EVL_CLONE_SHAREABLE;
+		observable = evl_alloc_observable(u_name, obs_flags);
 		if (IS_ERR(observable)) {
 			ret = PTR_ERR(observable);
 			goto fail_observable;
@@ -2483,7 +2490,7 @@ thread_factory_build(struct evl_factory *fac, const char __user *u_name,
 		goto fail_map;
 
 	*state_offp = evl_shared_offset(curr->u_window);
-	evl_index_factory_element(&curr->element);
+	evl_add_ns(&curr->element, thread);
 
 	/*
 	 * Unlike most elements, a thread may exist in absence of any

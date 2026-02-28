@@ -92,6 +92,8 @@ static __init int init_core(void)
 	if (ret)
 		goto cleanup_stage;
 
+	evl_init_core_ns(&evl_core_ns);
+
 	ret = evl_early_init_factories();
 	if (ret)
 		goto cleanup_memory;
@@ -181,8 +183,9 @@ static int __init evl_init(void)
 			printk(EVL_WARNING "invalid set of OOB cpus\n");
 			cpumask_copy(&evl_oob_cpus, cpu_online_mask);
 		}
-	} else
+	} else {
 		cpumask_copy(&evl_oob_cpus, cpu_online_mask);
+	}
 
 	/* Threads may run on any out-of-band CPU by default. */
 	evl_cpu_affinity = evl_oob_cpus;

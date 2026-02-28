@@ -298,7 +298,13 @@ static int control_open(struct inode *inode, struct file *filp)
 	if (!oob_mm)	/* Userland only. */
 		return -EPERM;
 
-	/* The control device might be opened multiple times. */
+	/*
+	 * The control device might be opened multiple times, even
+	 * concurrently. This is why we have separate init and active
+	 * bits, so that the active bit is set only when the mm
+	 * context is fully initialized, while the init bit prevents
+	 * concurrent inits to happen.
+	 */
 	if (!test_and_set_bit(EVL_MM_INIT_BIT, &oob_mm->flags))
 		ret = activate_oob_mm_state(oob_mm);
 
