@@ -12,20 +12,35 @@
 
 typedef __u32 fundle_t;
 
-#define EVL_NO_HANDLE		((fundle_t)0x00000000)
+#define EVL_NO_HANDLE	0
 
-/* Reserved status bits */
-#define EVL_MUTEX_FLCLAIM	((fundle_t)0x80000000) /* Contended. */
-#define EVL_MUTEX_FLCEIL	((fundle_t)0x40000000) /* Ceiling active. */
-#define EVL_HANDLE_INDEX_MASK	(EVL_MUTEX_FLCLAIM|EVL_MUTEX_FLCEIL)
+/* Reserved (high) bits in fundle (31-28). */
+#define __FUNDLE_CLAIMED_BITS	1
+#define __FUNDLE_CLAIMED_SHIFT	31
+#define __FUNDLE_CEILING_BITS	1
+#define __FUNDLE_CEILING_SHIFT	30
+#define __FUNDLE_TYPE_BITS	2
+#define __FUNDLE_TYPE_SHIFT	28
+#define __FUNDLE_MASK(x)	((1U << (x)) - 1)
+
+#define __FUNDLE_CLAIMED_MASK	(__FUNDLE_MASK(__FUNDLE_CLAIMED_BITS) << __FUNDLE_CLAIMED_SHIFT)
+#define __FUNDLE_CEILING_MASK	(__FUNDLE_MASK(__FUNDLE_CEILING_BITS) << __FUNDLE_CEILING_SHIFT)
+#define __FUNDLE_TYPE_MASK	(__FUNDLE_MASK(__FUNDLE_TYPE_BITS) << __FUNDLE_TYPE_SHIFT)
+#define __FUNDLE_KEY_MASK	(~(__FUNDLE_CLAIMED_MASK|__FUNDLE_CEILING_MASK|__FUNDLE_TYPE_MASK))
 
 /*
- * Strip all reserved bits from the handle, only retaining the fast
- * index value.
+ * Strip all reserved bits from the fundle, only retaining its key
+ * value in the map.
  */
-static inline fundle_t evl_get_index(fundle_t handle)
+static inline fundle_t __evl_fundle_key(fundle_t handle)
 {
-	return handle & ~EVL_HANDLE_INDEX_MASK;
+	return handle & __FUNDLE_KEY_MASK;
+}
+
+/* Extract the type of the element from the fundle. */
+static inline int __evl_fundle_type(fundle_t handle)
+{
+	return (int)((handle & __FUNDLE_TYPE_MASK) >> __FUNDLE_TYPE_SHIFT);
 }
 
 /*

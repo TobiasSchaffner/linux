@@ -20,6 +20,9 @@
 #include <evl/uaccess.h>
 #include <trace/events/evl.h>
 
+/* Valid clone flags for a monitor element. */
+#define EVL_MONITOR_CLONE_FLAGS	(EVL_CLONE_PUBLIC|EVL_CLONE_SHAREABLE)
+
 static __always_inline  atomic_t *__ATOMIC32(__u32 *ptr)
 {
 	return (atomic_t *)ptr;
@@ -123,10 +126,8 @@ void __evl_commit_monitor_ceiling(void)
 	 * curr->u_window has to be valid since curr bears EVL_T_USER.  If
 	 * pp_pending is a bad handle, just skip ceiling.
 	 */
-	gate = evl_get_factory_element_by_fundle(&evl_monitor_factory,
-						curr->u_window->pp_pending,
-						struct evl_monitor);
-	if (gate == NULL)
+	gate = evl_lookup_ns(curr->u_window->pp_pending, monitor);
+	if (IS_ERR_OR_NULL(gate))
 		goto out;
 
 	if (gate->protocol == EVL_GATE_PP)
@@ -1149,7 +1150,7 @@ monitor_factory_build(struct evl_factory *fac, const char __user *u_name,
 	struct evl_clock *clock;
 	int ret;
 
-	if (clone_flags & ~EVL_CLONE_PUBLIC)
+	if (clone_flags & ~EVL_MONITOR_CLONE_FLAGS)
 		return ERR_PTR(-EINVAL);
 
 	ret = copy_from_user(&attrs, u_attrs, sizeof(attrs));
@@ -1244,7 +1245,7 @@ monitor_factory_build(struct evl_factory *fac, const char __user *u_name,
 	mon->protocol = attrs.protocol;
 	mon->state = state;
 	*state_offp = evl_shared_offset(state);
-	evl_index_factory_element(&mon->element);
+	evl_add_ns(&mon->element, monitor);
 
 	return &mon->element;
 
@@ -1265,7 +1266,7 @@ static void monitor_factory_dispose(struct evl_element *e)
 
 	mon = container_of(e, struct evl_monitor, element);
 
-	evl_unindex_factory_element(&mon->element);
+	evl_remove_ns(e, monitor);
 
 	if (mon->type == EVL_MONITOR_EVENT) {
 		evl_put_clock(mon->wait_queue.clock);
@@ -1319,9 +1320,7 @@ static ssize_t state_show(struct device *dev,
 	} else {
 		fun = atomic_read(__ATOMIC32(&state->u.gate.owner));
 		if (fun != EVL_NO_HANDLE) {
-			owner = evl_get_factory_element_by_fundle(&evl_thread_factory,
-						evl_get_index(fun),
-						struct evl_thread);
+			owner = __evl_lookup_ns(__evl_fundle_key(fun), thread);
 			if (!owner)
 				goto no_owner;
 			ret = snprintf(buf, PAGE_SIZE, "%s(%d) %u %u\n",

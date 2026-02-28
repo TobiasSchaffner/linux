@@ -70,19 +70,19 @@ void enable_inband_switch(struct evl_thread *curr, struct evl_mutex *mutex)
 	}
 }
 
-static inline int fast_mutex_is_claimed(fundle_t handle)
+static inline bool fast_mutex_is_claimed(fundle_t handle)
 {
-	return (handle & EVL_MUTEX_FLCLAIM) != 0;
+	return !!(handle & __FUNDLE_CLAIMED_MASK);
 }
 
 static inline fundle_t mutex_fast_claim(fundle_t handle)
 {
-	return handle | EVL_MUTEX_FLCLAIM;
+	return handle | __FUNDLE_CLAIMED_MASK;
 }
 
 static inline fundle_t mutex_fast_ceil(fundle_t handle)
 {
-	return handle | EVL_MUTEX_FLCEIL;
+	return handle | __FUNDLE_CEILING_MASK;
 }
 
 /* mutex->wchan.lock + owner->lock held, irqs off. */
@@ -203,7 +203,7 @@ static int fast_grab_mutex(struct evl_mutex *mutex, fundle_t *oldh)
 	newh = mutex_fast_claim(get_owner_handle(currh, mutex));
 	*oldh = atomic_cmpxchg(mutex->fastlock, EVL_NO_HANDLE, newh);
 	if (*oldh != EVL_NO_HANDLE)
-		return evl_get_index(*oldh) == currh ? -EDEADLK : -EBUSY;
+		return __evl_fundle_key(*oldh) == currh ? -EDEADLK : -EBUSY;
 
 	/* Success, we have ownership now. */
 	raw_spin_lock_irqsave(&mutex->wchan.lock, flags);
@@ -456,16 +456,25 @@ retry:
 	} while (!fast_mutex_is_claimed(h));
 
 	/* Fetch the owner as userland sees it. */
-	owner = evl_get_factory_element_by_fundle(&evl_thread_factory,
-					evl_get_index(h),
-					struct evl_thread);
+	owner = evl_lookup_ns(__evl_fundle_key(h), thread);
+
 	/*
-	 * The tracked owner disappeared, clear the stale tracking
+	 * We might have a scope issue, although this should never
+	 * happen in this context unless the user code is treading on
+	 * crippled memory or forged a fundle.
+	 */
+	if (unlikely(IS_ERR(owner))) {
+		raw_spin_unlock_irqrestore(&mutex->wchan.lock, flags);
+		return PTR_ERR(owner);
+	}
+
+	/*
+	 * If the tracked owner disappeared, clear the stale tracking
 	 * data, then fail with -EOWNERDEAD. There is no point in
 	 * trying to clean up that mess any further for userland, the
 	 * logic protected by that lock is dead in the water anyway.
 	 */
-	if (owner == NULL) {
+	if (unlikely(!owner)) {
 		untrack_mutex_owner(mutex);
 		raw_spin_unlock_irqrestore(&mutex->wchan.lock, flags);
 		return -EOWNERDEAD;
@@ -478,10 +487,10 @@ retry:
 	 * operation from userland without involving the kernel,
 	 * therefore we need to reconcile the in-kernel descriptor
 	 * with the shared handle which has the accurate value. If
-	 * both match though, evl_get_factory_element_by_fundle() got
-	 * us another reference on @owner like set_mutex_owner()
-	 * already obtained earlier for that thread, so we need to
-	 * drop it to rebalance the refcount.
+	 * both match though, evl_lookup_ns() got us another reference
+	 * on @owner like set_mutex_owner() already obtained earlier
+	 * for that thread, so we need to drop it to rebalance the
+	 * refcount.
 	 *
 	 * The consistency of this information is guaranteed, because
 	 * we just raised the claim bit atomically for this contended
@@ -673,7 +682,7 @@ void evl_unlock_mutex(struct evl_mutex *mutex)
 
 	oob_context_only();
 
-	h = evl_get_index(atomic_read(mutex->fastlock));
+	h = __evl_fundle_key(atomic_read(mutex->fastlock));
 	if (h != currh) {
 		if (curr->state & EVL_T_USER) {
 			if (curr->state & EVL_T_WOLI)
