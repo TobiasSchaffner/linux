@@ -200,21 +200,25 @@ static void wakeup_waiters(struct evl_monitor *event, struct evl_monitor *gate)
 }
 
 static int __enter_monitor(struct evl_monitor *gate,
-			   struct timespec64 *ts64)
+			struct __evl_timespec __user *u_timeout)
 {
-	ktime_t timeout = EVL_INFINITE;
-	enum evl_tmode tmode;
-
-	if (ts64)
-		timeout = timespec64_to_ktime(*ts64);
-
-	tmode = timeout ? EVL_ABS : EVL_REL;
-
-	return evl_lock_mutex_timeout(&gate->mutex, timeout, tmode);
+	if (u_timeout)
+		return __evl_lock_mutex_timeout(&gate->mutex,
+				(struct evl_timespec_union){
+				  .u_timespec = u_timeout,
+				  .abstime = EVL_ABS,
+				  .user = 1
+				});
+	/* Infinite wait. */
+	return __evl_lock_mutex_timeout(&gate->mutex,
+			(struct evl_timespec_union){
+			  .kt = EVL_INFINITE,
+			  .abstime = EVL_REL,
+			});
 }
 
 static int enter_monitor(struct evl_monitor *gate,
-			 struct timespec64 *ts64)
+			struct __evl_timespec __user *u_timeout)
 {
 	struct evl_thread *curr = evl_current();
 
@@ -226,7 +230,7 @@ static int enter_monitor(struct evl_monitor *gate,
 
 	evl_commit_monitor_ceiling();
 
-	return __enter_monitor(gate, ts64);
+	return __enter_monitor(gate, u_timeout);
 }
 
 static int tryenter_monitor(struct evl_monitor *gate)
@@ -320,17 +324,21 @@ static int trywait_count(struct evl_monitor *event)
 }
 
 static int wait_count(struct file *filp,
-		ktime_t timeout,
-		enum evl_tmode tmode)
+		struct __evl_timespec __user *u_timeout)
 {
 	struct evl_monitor *event = element_of(filp, struct evl_monitor);
 	struct evl_monitor_state *state = event->state;
+	enum evl_tmode tmode;
 	unsigned long flags;
-	int ret = 0;
+	ktime_t timeout;
+	int ret;
 
 	if (filp->f_flags & O_NONBLOCK) {
 		ret = trywait_count(event);
 	} else {
+		ret = evl_fetch_utimespec(u_timeout, &timeout, &tmode);
+		if (ret)
+			return ret;
 		/*
 		 * CAUTION: we must fully serialize with
 		 * post_count(). Since user-space is expected to
@@ -339,8 +347,7 @@ static int wait_count(struct file *filp,
 		 */
 		raw_spin_lock_irqsave(&event->wait_queue.wchan.lock, flags);
 		if (atomic_dec_return(__ATOMIC32(&state->u.event.value)) < 0) {
-			evl_add_wait_queue(&event->wait_queue,
-					timeout, tmode);
+			evl_add_wait_queue(&event->wait_queue, timeout, tmode);
 			raw_spin_unlock_irqrestore(&event->wait_queue.wchan.lock,
 						flags);
 			ret = evl_wait_schedule(&event->wait_queue);
@@ -490,21 +497,22 @@ struct evl_mask_wait {
 };
 
 static int wait_mask_oob(struct file *filp,
-		ktime_t timeout,
-		enum evl_tmode tmode,
-		s32 match_value,
-		bool exact_match,
-		s32 *r_value)
+			struct __evl_timespec __user *u_timeout,
+			s32 match_value,
+			bool exact_match,
+			s32 *r_value)
 {
 	struct evl_monitor *event = element_of(filp, struct evl_monitor);
 	struct evl_thread *curr = evl_current();
+	ktime_t timeout = EVL_INFINITE;
+	enum evl_tmode tmode = EVL_REL;
 	struct evl_mask_wait w;
 	unsigned long flags;
 	int ret;
 
 	if (match_value == 0)	/* See trywait_mask(). */
 		match_value = -1;
-
+again:
 	raw_spin_lock_irqsave(&event->wait_queue.wchan.lock, flags);
 
 	if (__trywait_mask(event, match_value, exact_match, r_value, flags))
@@ -513,6 +521,19 @@ static int wait_mask_oob(struct file *filp,
 	if (filp->f_flags & O_NONBLOCK) {
 		raw_spin_unlock_irqrestore(&event->wait_queue.wchan.lock, flags);
 		return -EAGAIN;
+	}
+
+	/*
+	 * Fetch the timeout specs since we need it eventually, then
+	 * retry once more.
+	 */
+	if (u_timeout) {
+		raw_spin_unlock_irqrestore(&event->wait_queue.wchan.lock, flags);
+		ret = evl_fetch_utimespec(u_timeout, &timeout, &tmode);
+		if (ret)
+			return ret;
+		u_timeout = NULL;
+		goto again;
 	}
 
 	w.exact_match = exact_match;
@@ -595,14 +616,15 @@ static int post_mask(struct evl_monitor *event, int bits, bool bcast)
 
 static int wait_gated_event(struct evl_monitor *event,
 			struct evl_monitor_waitreq *req,
-			ktime_t timeout,
-			enum evl_tmode tmode)
+			struct __evl_timespec __user *u_timeout)
 {
 	struct evl_thread *curr = evl_current();
 	struct evl_monitor *gate;
 	struct evl_file *efilp;
+	enum evl_tmode tmode;
 	unsigned long flags;
 	struct evl_rq *rq;
+	ktime_t timeout;
 	int ret = 0;
 
 	if (event->protocol != EVL_EVENT_GATED)
@@ -623,6 +645,10 @@ static int wait_gated_event(struct evl_monitor *event,
 		ret = -EPERM;
 		goto put;
 	}
+
+	ret = evl_fetch_utimespec(u_timeout, &timeout, &tmode);
+	if (ret)
+		return ret;
 
 	raw_spin_lock_irqsave(&gate->lock, flags);
 
@@ -689,28 +715,23 @@ put:
 
 static int wait_monitor(struct file *filp,
 			struct evl_monitor_waitreq *req,
-			struct timespec64 *ts64,
+			struct __evl_timespec __user *u_timeout,
 			s32 *r_value,
 			bool exact_match)
 {
 	struct evl_monitor *event = element_of(filp, struct evl_monitor);
-	enum evl_tmode tmode;
-	ktime_t timeout;
 	int ret;
 
 	if (event->type != EVL_MONITOR_EVENT)
 		return -EINVAL;
 
-	timeout = timespec64_to_ktime(*ts64);
-	tmode = timeout ? EVL_ABS : EVL_REL;
-
 	if (req->gatefd < 0) {
 		switch (event->protocol) {
 		case EVL_EVENT_COUNT:
-			ret = wait_count(filp, timeout, tmode);
+			ret = wait_count(filp, u_timeout);
 			break;
 		case EVL_EVENT_MASK:
-			ret = wait_mask_oob(filp, timeout, tmode, req->value,
+			ret = wait_mask_oob(filp, u_timeout, req->value,
 					exact_match, r_value);
 			break;
 		default:
@@ -719,7 +740,7 @@ static int wait_monitor(struct file *filp,
 		return ret;
 	}
 
-	return wait_gated_event(event, req, timeout, tmode);
+	return wait_gated_event(event, req, u_timeout);
 }
 
 static int unwait_monitor(struct evl_monitor *event,
@@ -828,12 +849,7 @@ static long monitor_oob_ioctl(struct file *filp, unsigned int cmd,
 	struct evl_monitor_unwaitreq uwreq, __user *u_uwreq;
 	struct evl_monitor_waitreq wreq, __user *u_wreq;
 	struct __evl_timespec __user *u_uts;
-	struct __evl_timespec uts = {
-		.tv_sec = 0,
-		.tv_nsec = 0,
-	};
 	bool exact_match = false;
-	struct timespec64 ts64;
 	s32 value = 0;
 	long ret;
 
@@ -847,13 +863,7 @@ static long monitor_oob_ioctl(struct file *filp, unsigned int cmd,
 		if (ret)
 			return -EFAULT;
 		u_uts = evl_valptr64(wreq.timeout_ptr, struct __evl_timespec);
-		ret = raw_copy_from_user(&uts, u_uts, sizeof(uts));
-		if (ret)
-			return -EFAULT;
-		if ((unsigned long)uts.tv_nsec >= ONE_BILLION)
-			return -EINVAL;
-		ts64 = u_timespec_to_timespec64(uts);
-		ret = wait_monitor(filp, &wreq, &ts64, &value, exact_match);
+		ret = wait_monitor(filp, &wreq, u_uts, &value, exact_match);
 		if (!ret)
 			raw_put_user(value, &u_wreq->value);
 		break;
@@ -866,13 +876,7 @@ static long monitor_oob_ioctl(struct file *filp, unsigned int cmd,
 		break;
 	case EVL_MONIOC_ENTER:
 		u_uts = (typeof(u_uts))arg;
-		ret = raw_copy_from_user(&uts, u_uts, sizeof(uts));
-		if (ret)
-			return -EFAULT;
-		if ((unsigned long)uts.tv_nsec >= ONE_BILLION)
-			return -EINVAL;
-		ts64 = u_timespec_to_timespec64(uts);
-		ret = enter_monitor(mon, &ts64);
+		ret = enter_monitor(mon, u_uts);
 		break;
 	case EVL_MONIOC_TRYENTER:
 		ret = tryenter_monitor(mon);
@@ -1074,7 +1078,7 @@ static ssize_t monitor_oob_read(struct file *filp,
 		return -EINVAL;
 
 	/* Disjunctive operation. */
-	ret = wait_mask_oob(filp, EVL_INFINITE, EVL_REL, -1, false, &val);
+	ret = wait_mask_oob(filp, NULL, -1, false, &val);
 	if (ret)
 		return ret;
 

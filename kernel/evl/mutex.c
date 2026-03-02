@@ -11,6 +11,7 @@
 #include <evl/thread.h>
 #include <evl/mutex.h>
 #include <evl/lock.h>
+#include <evl/uaccess.h>
 #include <uapi/evl/signal-abi.h>
 #include <trace/events/evl.h>
 
@@ -396,20 +397,27 @@ static void enqueue_booster(struct evl_mutex *mutex, struct evl_thread *waiter)
 	list_add_priff(mutex, &owner->boosters, boost.wprio, next_booster);
 }
 
-int evl_lock_mutex_timeout(struct evl_mutex *mutex, ktime_t timeout,
-			enum evl_tmode timeout_mode)
+int __evl_lock_mutex_timeout(struct evl_mutex *mutex,
+			     struct evl_timespec_union timeout_union)
 {
 	struct evl_thread *curr = evl_current(), *owner;
 	atomic_t *lockp = mutex->fastlock;
 	fundle_t currh, h, oldh;
+	enum evl_tmode tmode;
 	unsigned long flags;
 	bool check_dep_only;
+	ktime_t timeout;
 	int ret;
 
 	oob_context_only();
 
 	currh = fundle_of(curr);
 	trace_evl_mutex_lock(mutex);
+
+	if (!timeout_union.user) {
+		timeout = timeout_union.kt;
+		tmode = (enum evl_tmode)timeout_union.abstime;
+	}
 retry:
 	ret = fast_grab_mutex(mutex, &h); /* This detects recursion. */
 	if (likely(ret != -EBUSY))
@@ -552,8 +560,22 @@ retry:
 	}
 
 	raw_spin_unlock(&curr->lock);
+
+	/*
+	 * Fetch the timeout specs since we need it eventually, then
+	 * retry once more.
+	 */
+	if (timeout_union.user) {
+		raw_spin_unlock_irqrestore(&mutex->wchan.lock, flags);
+		ret = evl_fetch_utimespec(timeout_union.u_timespec, &timeout, &tmode);
+		if (ret)
+			goto fail;
+		timeout_union.user = 0;
+		goto retry;
+	}
+
 	list_add_priff(curr, &mutex->wchan.wait_list, wprio, wait_next);
-	evl_sleep_on(timeout, timeout_mode, mutex->clock, &mutex->wchan);
+	evl_sleep_on(timeout, tmode, mutex->clock, &mutex->wchan);
 	raw_spin_unlock_irqrestore(&mutex->wchan.lock, flags);
 	ret = __evl_wait_schedule(&mutex->wchan);
 	/* If something went wrong while sleeping, bail out. */
@@ -583,7 +605,7 @@ fail:
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(evl_lock_mutex_timeout);
+EXPORT_SYMBOL_GPL(__evl_lock_mutex_timeout);
 
 /* wchan->lock held, irqs off. */
 static void wakeup_and_release(struct evl_mutex *mutex)

@@ -33,16 +33,19 @@ static inline bool timeout_nonblock(ktime_t kt)
 
 /* Timer modes */
 enum evl_tmode {
-	EVL_REL,
-	EVL_ABS,
+	EVL_REL =0,
+	EVL_ABS =1,
 };
 
+struct __evl_timespec;
+
 /*
- * So that readers do not need to pull evl/clock.h for defining timed
- * object initializers which only refer to the built-in clock
- * addresses in the common case.
+ * We declare those globals here so that readers won't need to pull
+ * evl/clock.h for defining timed object initializers which only refer
+ * to the built-in clock addresses in the most common cases.
  */
-extern struct evl_clock evl_mono_clock,
-	evl_realtime_clock;
+extern struct evl_clock evl_mono_clock;
+
+extern struct evl_clock evl_realtime_clock;
 
 #endif /* !_EVL_TIMEOUT_H */
