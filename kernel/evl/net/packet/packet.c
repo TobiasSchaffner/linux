@@ -336,17 +336,21 @@ static ssize_t send_packet(struct evl_socket *esk,
 		if (evl_socket_f_flags(esk) & O_NONBLOCK)
 			msg_flags |= MSG_DONTWAIT;
 
-		/* Fetch the timeout on obtaining a buffer from the TX pool. */
-		ret = raw_copy_from_user(&timeout_ptr,
+		if (msg_flags & MSG_DONTWAIT) {
+			timeout = EVL_NONBLOCK;
+		} else {
+			/* Fetch the timeout on obtaining a buffer from the TX pool. */
+			ret = raw_copy_from_user(&timeout_ptr,
 					&u_msghdr->timeout_ptr, sizeof(timeout_ptr));
-		if (ret)
-			return -EFAULT;
-
-		u_timeout = evl_valptr64(timeout_ptr, struct __evl_timespec);
-		if (u_timeout) {
-			ret = evl_fetch_utimespec(u_timeout, &timeout, &tmode);
 			if (ret)
-				return ret;
+				return -EFAULT;
+
+			u_timeout = evl_valptr64(timeout_ptr, struct __evl_timespec);
+			if (u_timeout) {
+				ret = evl_fetch_utimespec(u_timeout, &timeout, &tmode);
+				if (ret)
+					return ret;
+			}
 		}
 	}
 
