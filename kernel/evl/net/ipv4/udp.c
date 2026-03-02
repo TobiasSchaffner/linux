@@ -303,21 +303,22 @@ static ssize_t send_udp(struct evl_socket *esk,
 			size_t iovlen)
 {
 	struct evl_net_arp_entry *earp, pseudo_earp = { 0 };
+	struct __evl_timespec __user *u_timeout;
 	struct sockaddr_in in_addr, *u_in_addr;
+	enum evl_tmode tmode = EVL_REL;
+	ktime_t timeout = EVL_INFINITE;
 	struct sock *sk = esk->sk;
 	struct inet_sock *inet = inet_sk(sk);
 	struct evl_net_ipv4_cookie ipc;
 	struct evl_net_route *ert;
 	struct msghdr msg = { 0 };
-	struct __evl_timespec uts;
 	ssize_t datalen, ret;
-	enum evl_tmode tmode;
 	__u32 msg_flags = 0;
 	struct sk_buff *skb;
 	__be32 daddr, saddr;
+	__u64 timeout_ptr;
 	__u32 namelen = 0;
 	struct kvec kvec;
-	ktime_t timeout;
 	__u64 name_ptr;
 	__be16 dport;
 
@@ -343,13 +344,21 @@ static ssize_t send_udp(struct evl_socket *esk,
 	if (evl_socket_f_flags(esk) & O_NONBLOCK)
 		msg_flags |= MSG_DONTWAIT;
 
-	ret = raw_copy_from_user(&uts, &u_msghdr->timeout, sizeof(uts));
-	if (ret)
-		return -EFAULT;
+	if (msg_flags & MSG_DONTWAIT) {
+		timeout = EVL_NONBLOCK;
+	} else {
+		ret = raw_copy_from_user(&timeout_ptr,
+				&u_msghdr->timeout_ptr, sizeof(timeout_ptr));
+		if (ret)
+			return -EFAULT;
 
-	timeout = msg_flags & MSG_DONTWAIT ? EVL_NONBLOCK :
-		u_timespec_to_ktime(uts);
-	tmode = timeout ? EVL_ABS : EVL_REL;
+		u_timeout = evl_valptr64(timeout_ptr, struct __evl_timespec);
+		if (u_timeout) {
+			ret = evl_fetch_utimespec(u_timeout, &timeout, &tmode);
+			if (ret)
+				return ret;
+		}
+	}
 
 	ret = raw_get_user(name_ptr, &u_msghdr->name_ptr);
 	if (ret)
@@ -529,12 +538,13 @@ static ssize_t receive_udp(struct evl_socket *esk,
 			struct iovec *iov,
 			size_t iovlen)
 {
+	struct __evl_timespec __user *u_timeout;
 	__u32 msg_flags = 0, msg_uflags = 0;
 	ktime_t timeout = EVL_INFINITE;
 	enum evl_tmode tmode = EVL_REL;
-	struct __evl_timespec uts;
 	struct sk_buff *skb;
 	unsigned long flags;
+	__u64 timeout_ptr;
 	ssize_t ret;
 
 	if (READ_ONCE(esk->sk->sk_shutdown) & RCV_SHUTDOWN)
@@ -553,17 +563,20 @@ static ssize_t receive_udp(struct evl_socket *esk,
 		if (msg_flags & ~(MSG_DONTWAIT|MSG_TIMESTAMP))
 			return -EINVAL;
 
-		ret = raw_copy_from_user(&uts, &u_msghdr->timeout,
-					sizeof(uts));
-		if (ret)
-			return -EFAULT;
-
 		if (msg_flags & MSG_DONTWAIT) {
 			timeout = EVL_NONBLOCK;
 		} else {
-			timeout = u_timespec_to_ktime(uts);
-			if (timeout)
-				tmode = EVL_ABS;
+			ret = raw_copy_from_user(&timeout_ptr,
+					&u_msghdr->timeout_ptr, sizeof(timeout_ptr));
+			if (ret)
+				return -EFAULT;
+
+			u_timeout = evl_valptr64(timeout_ptr, struct __evl_timespec);
+			if (u_timeout) {
+				ret = evl_fetch_utimespec(u_timeout, &timeout, &tmode);
+				if (ret)
+					return ret;
+			}
 		}
 
 		if (msg_flags & MSG_TIMESTAMP)
