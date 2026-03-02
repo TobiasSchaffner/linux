@@ -562,7 +562,7 @@ static inline
 int wait_events(struct file *filp,
 		struct poll_group *group,
 		struct evl_poll_waitreq *wreq,
-		struct timespec64 *ts64)
+		struct __evl_timespec __user *u_timeout)
 {
 	struct evl_poll_event __user *u_set;
 	struct poll_waiter waiter;
@@ -591,8 +591,11 @@ int wait_events(struct file *filp,
 		goto unwait;
 	}
 
-	timeout = timespec64_to_ktime(*ts64);
-	tmode = timeout ? EVL_ABS : EVL_REL;
+	ret = evl_fetch_utimespec(u_timeout, &timeout, &tmode);
+	if (ret) {
+		count = ret;
+		goto unwait;
+	}
 
 	raw_spin_lock_irqsave(&group->wait_lock, flags);
 	list_add(&waiter.next, &group->waiter_list);
@@ -603,7 +606,7 @@ int wait_events(struct file *filp,
 	raw_spin_unlock_irqrestore(&group->wait_lock, flags);
 
 	count = ret;
-	if (count == 0)	/* Re-collect events after successful wait. */
+	if (count == 0)	/* Collect events again after a successful wait. */
 		count = collect_events(group, u_set, wreq->nrset, NULL);
 unwait:
 	clear_wait();
@@ -675,11 +678,6 @@ static long poll_oob_ioctl(struct file *filp, unsigned int cmd,
 	struct evl_poll_waitreq wreq, __user *u_wreq;
 	struct evl_poll_ctlreq creq, __user *u_creq;
 	struct __evl_timespec __user *u_uts;
-	struct __evl_timespec uts = {
-		.tv_sec = 0,
-		.tv_nsec = 0,
-	};
-	struct timespec64 ts64;
 	int ret;
 
 	switch (cmd) {
@@ -696,13 +694,7 @@ static long poll_oob_ioctl(struct file *filp, unsigned int cmd,
 		if (ret)
 			return -EFAULT;
 		u_uts = evl_valptr64(wreq.timeout_ptr, struct __evl_timespec);
-		ret = raw_copy_from_user(&uts, u_uts, sizeof(uts));
-		if (ret)
-			return -EFAULT;
-		if ((unsigned long)uts.tv_nsec >= ONE_BILLION)
-			return -EINVAL;
-		ts64 = u_timespec_to_timespec64(uts);
-		ret = wait_events(filp, group, &wreq, &ts64);
+		ret = wait_events(filp, group, &wreq, u_uts);
 		if (ret < 0)
 			return ret;
 		if (raw_put_user(ret, &u_wreq->nrset))
