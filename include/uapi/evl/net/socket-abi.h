@@ -43,7 +43,7 @@ struct user_oob_msghdr {
 	__u32 ctllen;
 	__s32 count;		/* Receive only (actual byte count). */
 	__u32 flags;
-	struct __evl_timespec timeout;
+	__u64 timeout_ptr;	/* (struct __evl_timespec __user *timeout) */
 };
 
 #define EVL_NEIGH_PERMANENT	0x1 /* Make ARP entry permanent */

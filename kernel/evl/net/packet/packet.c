@@ -315,13 +315,14 @@ static ssize_t send_packet(struct evl_socket *esk,
 			struct iovec *iov,
 			size_t iovlen)
 {
+	struct __evl_timespec __user *u_timeout;
 	struct net_device *dev, *real_dev;
 	ktime_t timeout = EVL_INFINITE;
 	enum evl_tmode tmode = EVL_REL;
-	struct __evl_timespec uts;
 	struct sk_buff *skb;
 	__u32 msg_flags = 0;
 	ssize_t ret, count;
+	__u64 timeout_ptr;
 	size_t rem;
 
 	if (u_msghdr) {
@@ -336,14 +337,17 @@ static ssize_t send_packet(struct evl_socket *esk,
 			msg_flags |= MSG_DONTWAIT;
 
 		/* Fetch the timeout on obtaining a buffer from the TX pool. */
-		ret = raw_copy_from_user(&uts, &u_msghdr->timeout, sizeof(uts));
+		ret = raw_copy_from_user(&timeout_ptr,
+					&u_msghdr->timeout_ptr, sizeof(timeout_ptr));
 		if (ret)
 			return -EFAULT;
 
-		timeout = msg_flags & MSG_DONTWAIT ? EVL_NONBLOCK :
-			u_timespec_to_ktime(uts);
-		if (timeout)
-			tmode = EVL_ABS;
+		u_timeout = evl_valptr64(timeout_ptr, struct __evl_timespec);
+		if (u_timeout) {
+			ret = evl_fetch_utimespec(u_timeout, &timeout, &tmode);
+			if (ret)
+				return ret;
+		}
 	}
 
 	/* Determine the xmit interface. */
@@ -474,12 +478,13 @@ static ssize_t receive_packet(struct evl_socket *esk,
 			struct iovec *iov,
 			size_t iovlen)
 {
+	struct __evl_timespec __user *u_timeout;
 	__u32 msg_flags = 0, msg_uflags = 0;
 	ktime_t timeout = EVL_INFINITE;
 	enum evl_tmode tmode = EVL_REL;
-	struct __evl_timespec uts;
 	struct sk_buff *skb;
 	unsigned long flags;
+	__u64 timeout_ptr;
 	ssize_t ret;
 
 	if (evl_socket_f_flags(esk) & O_NONBLOCK)
@@ -496,17 +501,20 @@ static ssize_t receive_packet(struct evl_socket *esk,
 		if (msg_flags & ~(MSG_DONTWAIT|MSG_TIMESTAMP))
 			return -EINVAL;
 
-		ret = raw_copy_from_user(&uts, &u_msghdr->timeout,
-					sizeof(uts));
-		if (ret)
-			return -EFAULT;
-
 		if (msg_flags & MSG_DONTWAIT) {
 			timeout = EVL_NONBLOCK;
 		} else {
-			timeout = u_timespec_to_ktime(uts);
-			if (timeout)
-				tmode = EVL_ABS;
+			ret = raw_copy_from_user(&timeout_ptr,
+					&u_msghdr->timeout_ptr, sizeof(timeout_ptr));
+			if (ret)
+				return -EFAULT;
+
+			u_timeout = evl_valptr64(timeout_ptr, struct __evl_timespec);
+			if (u_timeout) {
+				ret = evl_fetch_utimespec(u_timeout, &timeout, &tmode);
+				if (ret)
+					return ret;
+			}
 		}
 
 		if (msg_flags & MSG_TIMESTAMP)
