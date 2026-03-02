@@ -94,7 +94,7 @@ static inline void evl_reset_account(struct evl_account *account)
 	} while (0)
 
 struct evl_opt_counter {
-	unsigned long value;
+	u64 value;
 };
 
 #define evl_opt_counter_set(__c, __value)	evl_counter_set_careful(__c, __value)

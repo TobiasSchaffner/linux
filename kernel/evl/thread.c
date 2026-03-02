@@ -2671,7 +2671,7 @@ static ssize_t stats_show(struct device *dev,
 		usage = 0;
 	}
 
-	ret = snprintf(buf, PAGE_SIZE, "%lu %lu %lu %lu %Lu %d\n",
+	ret = snprintf(buf, PAGE_SIZE, "%Lu %Lu %Lu %Lu %Lu %d\n",
 		evl_opt_counter_read(&thread->stat.isw),
 		evl_opt_counter_read(&thread->stat.csw),
 		evl_opt_counter_read(&thread->stat.sc),
