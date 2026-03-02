@@ -15,6 +15,7 @@
 #include <evl/timer.h>
 #include <evl/wait.h>
 #include <evl/sched.h>
+#include <evl/uaccess.h>
 
 struct evl_clock;
 struct evl_thread;
@@ -68,10 +69,23 @@ void evl_destroy_mutex(struct evl_mutex *mutex);
 
 int evl_trylock_mutex(struct evl_mutex *mutex);
 
-int evl_lock_mutex_timeout(struct evl_mutex *mutex, ktime_t timeout,
-			enum evl_tmode timeout_mode);
+int __evl_lock_mutex_timeout(struct evl_mutex *mutex,
+			struct evl_timespec_union timeout_union);
 
-static inline int evl_lock_mutex(struct evl_mutex *mutex)
+static inline int
+evl_lock_mutex_timeout(struct evl_mutex *mutex, ktime_t timeout,
+		enum evl_tmode tmode)
+{
+	return __evl_lock_mutex_timeout(mutex,
+				(struct evl_timespec_union){
+					.kt = timeout,
+					.abstime = tmode,
+					.user = 0
+				});
+}
+
+static inline int
+evl_lock_mutex(struct evl_mutex *mutex)
 {
 	return evl_lock_mutex_timeout(mutex, EVL_INFINITE, EVL_REL);
 }
