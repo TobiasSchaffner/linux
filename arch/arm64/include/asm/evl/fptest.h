@@ -3,19 +3,19 @@
 #define _EVL_ARM64_ASM_FPTEST_H
 
 #include <linux/cpufeature.h>
-#include <asm/neon.h>
+#include <asm/fpu.h>
 #include <uapi/asm/evl/fptest.h>
 
 static inline bool evl_begin_fpu(void)
 {
-	kernel_neon_begin();
+	kernel_fpu_begin();
 
 	return true;
 }
 
 static inline void evl_end_fpu(void)
 {
-	kernel_neon_end();
+	kernel_fpu_end();
 }
 
 static inline u32 evl_detect_fpu(void)
