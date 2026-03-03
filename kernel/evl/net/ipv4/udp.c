@@ -165,7 +165,7 @@ static void destroy_udp_socket(struct evl_socket *esk) /* inband */
  * shutdown() and destroy() handlers.
  */
 static int bind_udp_socket(struct evl_socket *esk,
-			struct sockaddr *addr,
+			struct sockaddr_unsized *addr,
 			int len)
 {
 	return add_receive_slot(esk);
