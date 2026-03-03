@@ -574,7 +574,15 @@ static int proxy_mmap(struct file *filp, struct vm_area_struct *vma)
 	struct file *mapfilp = proxy->filp;
 	int ret;
 
-	if (mapfilp->f_op->mmap == NULL)
+	/*
+	 * Since the proxied file may not support the mmap_prepare()
+	 * handler yet, we accept proxying mmap requests to files
+	 * implementing either mmap() or mmap_prepare() until the
+	 * treewide conversion to the latter is complete. vfs_mmap()
+	 * may wrap the call to mmap_prepare() under the hood if the
+	 * target file already supports it.
+	 */
+	if (!mapfilp->f_op->mmap_prepare && !mapfilp->f_op->mmap)
 		return -ENODEV;
 
 	vma->vm_file = get_file(mapfilp);
@@ -586,6 +594,12 @@ static int proxy_mmap(struct file *filp, struct vm_area_struct *vma)
 	 * entry; if it succeeds, then we have to drop the reference
 	 * on the mapper file do_mmap_pgoff() acquired before calling
 	 * us.
+	 *
+	 * CAUTION: finalizing the transition from mmap() to
+	 * mmap_prepare() will remove the requirement for swapping
+	 * references. However we will still have to hold a reference
+	 * to mapfilp before assigning it to desc->vm_file. IOW,
+	 * fput(filp) on success will go away.
 	 */
 	ret = vfs_mmap(mapfilp, vma);
 	if (ret)
