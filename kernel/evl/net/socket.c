@@ -445,7 +445,7 @@ void sock_oob_destroy(struct sock *sk)
  * binding of the network socket to the given address by the in-band
  * stack.
  */
-int sock_oob_bind(struct sock *sk, struct sockaddr *addr, int len)
+int sock_oob_bind(struct sock *sk, struct sockaddr_unsized *addr, int len)
 {
 	struct evl_socket *esk = evl_sk(sk);
 
@@ -488,7 +488,7 @@ int sock_oob_shutdown(struct sock *sk, int how)
  * socket to the given address by the in-band stack.
  */
 int sock_oob_connect(struct sock *sk,
-		struct sockaddr *addr, int len, int flags)
+		struct sockaddr_unsized *addr, int len, int flags)
 {
 	struct evl_socket *esk = evl_sk(sk);
 
@@ -948,7 +948,7 @@ static int evl_sock_ioctl(struct socket *sock, unsigned int cmd,
 	return sock_inband_ioctl(sock->sk, cmd, arg);
 }
 
-static int evl_sock_bind(struct socket *sock, struct sockaddr *u_addr, int len)
+static int evl_sock_bind(struct socket *sock, struct sockaddr_unsized *u_addr, int len)
 {
 	struct evl_socket *esk = evl_sk(sock->sk);
 
@@ -956,7 +956,7 @@ static int evl_sock_bind(struct socket *sock, struct sockaddr *u_addr, int len)
 }
 
 static int evl_sock_connect(struct socket *sock,
-			struct sockaddr *u_addr, int len, int flags)
+			struct sockaddr_unsized *u_addr, int len, int flags)
 {
 	struct evl_socket *esk = evl_sk(sock->sk);
 

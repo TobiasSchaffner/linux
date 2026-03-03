@@ -203,7 +203,7 @@ static void destroy_packet_socket(struct evl_socket *esk)
 
 /* in-band */
 static int bind_packet_socket(struct evl_socket *esk,
-			struct sockaddr *addr,
+			struct sockaddr_unsized *addr,
 			int len)
 {
 	int ret = 0, new_ifindex, real_ifindex, old_ifindex;
