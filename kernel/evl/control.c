@@ -335,23 +335,24 @@ static long control_ioctl(struct file *filp, unsigned int cmd,
 	return ret;
 }
 
-static int control_mmap(struct file *filp, struct vm_area_struct *vma)
+static int control_mmap_prepare(struct vm_area_desc *desc)
 {
 	void *p = evl_get_heap_base(&evl_shared_heap);
 	unsigned long pfn = __pa(p) >> PAGE_SHIFT;
-	size_t len = vma->vm_end - vma->vm_start;
 
-	if (len != evl_shm_size)
+	if (vma_desc_size(desc) != evl_shm_size)
 		return -EINVAL;
 
-	return remap_pfn_range(vma, vma->vm_start, pfn, len, PAGE_SHARED);
+	mmap_action_remap_full(desc, pfn);
+
+	return 0;
 }
 
 static const struct file_operations control_fops = {
 	.open		=	control_open,
 	.oob_ioctl	=	control_oob_ioctl,
 	.unlocked_ioctl	=	control_ioctl,
-	.mmap		=	control_mmap,
+	.mmap_prepare	=	control_mmap_prepare,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= compat_ptr_ioctl,
 	.compat_oob_ioctl  = compat_ptr_oob_ioctl,
