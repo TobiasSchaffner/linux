@@ -153,7 +153,7 @@ struct evl_thread {
 		struct evl_account account;	/* exec time accounting */
 		struct evl_account lastperiod;
 	} stat;
-	struct evl_user_window *u_window;
+	struct __evl_thread_sstate *sstate;
 
 	/* Misc stuff. */
 
@@ -168,29 +168,29 @@ struct evl_thread {
 	char *name;
 };
 
-static inline void evl_sync_uwindow(struct evl_thread *curr)
+static inline void evl_sync_sstate(struct evl_thread *curr)
 {
-	if (curr->u_window) {
-		curr->u_window->state = curr->state;
-		curr->u_window->info = curr->info;
+	if (curr->sstate) {
+		curr->sstate->state = curr->state;
+		curr->sstate->info = curr->info;
 	}
 }
 
 static inline
-void evl_clear_sync_uwindow(struct evl_thread *curr, int state_bits)
+void evl_clear_sync_sstate(struct evl_thread *curr, int state_bits)
 {
-	if (curr->u_window) {
-		curr->u_window->state = curr->state & ~state_bits;
-		curr->u_window->info = curr->info;
+	if (curr->sstate) {
+		curr->sstate->state = curr->state & ~state_bits;
+		curr->sstate->info = curr->info;
 	}
 }
 
 static inline
-void evl_set_sync_uwindow(struct evl_thread *curr, int state_bits)
+void evl_set_sync_sstate(struct evl_thread *curr, int state_bits)
 {
-	if (curr->u_window) {
-		curr->u_window->state = curr->state | state_bits;
-		curr->u_window->info = curr->info;
+	if (curr->sstate) {
+		curr->sstate->state = curr->state | state_bits;
+		curr->sstate->info = curr->info;
 	}
 }
 

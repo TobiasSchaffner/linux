@@ -626,7 +626,7 @@ EXPORT_SYMBOL_GPL(evl_write_xbuf);
 
 static struct evl_element *
 xbuf_factory_build(struct evl_factory *fac, const char __user *u_name,
-		void __user *u_attrs, int clone_flags, u32 *state_offp)
+		void __user *u_attrs, int clone_flags, u32 *sstate_offp)
 {
 	void *i_bufmem = NULL, *o_bufmem = NULL;
 	struct evl_xbuf_attrs attrs;

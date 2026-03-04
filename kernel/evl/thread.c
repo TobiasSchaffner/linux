@@ -226,7 +226,7 @@ int evl_init_thread(struct evl_thread *thread,
 	thread->rrperiod = EVL_INFINITE;
 	thread->wchan = NULL;
 	thread->wait_data = NULL;
-	thread->u_window = NULL;
+	thread->sstate = NULL;
 	thread->observable = iattr->observable;
 	atomic_set(&thread->held_mutex_count, 0);
 	memset(&thread->poll_context, 0, sizeof(thread->poll_context));
@@ -331,8 +331,8 @@ static void do_cleanup_current(struct evl_thread *curr)
 	evl_drop_current_ownership();
 
 	if (curr->state & EVL_T_USER) {
-		evl_free_chunk(&evl_shared_heap, curr->u_window);
-		curr->u_window = NULL;
+		evl_free_chunk(&evl_shared_heap, curr->sstate);
+		curr->sstate = NULL;
 		evl_drop_poll_table(curr);
 		newcap = prepare_creds();
 		if (newcap) {
@@ -2338,15 +2338,15 @@ static const struct file_operations thread_fops = {
 static int map_uthread_self(struct evl_thread *thread)
 {
 	struct mm_struct *mm = current->mm;
-	struct evl_user_window *u_window;
+	struct __evl_thread_sstate *sstate;
 	struct cred *newcap;
 
 	/* mlockall(MCL_FUTURE) required. */
 	if (!(mm->def_flags & VM_LOCKED))
 		return -EINVAL;
 
-	u_window = evl_zalloc_chunk(&evl_shared_heap, sizeof(*u_window));
-	if (u_window == NULL)
+	sstate = evl_zalloc_chunk(&evl_shared_heap, sizeof(*sstate));
+	if (sstate == NULL)
 		return -ENOMEM;
 
 	/*
@@ -2369,7 +2369,7 @@ static int map_uthread_self(struct evl_thread *thread)
 	 * therefore there is no added capability to drop in
 	 * discard_unmapped_uthread().
 	 */
-	thread->u_window = u_window;
+	thread->sstate = sstate;
 	pin_to_initial_cpu(thread);
 	trace_evl_thread_map(thread);
 
@@ -2391,7 +2391,7 @@ static int map_uthread_self(struct evl_thread *thread)
 	 */
 	enqueue_new_thread(thread);
 	evl_release_thread(thread, EVL_T_DORMANT, 0);
-	evl_sync_uwindow(thread);
+	evl_sync_sstate(thread);
 
 	return 0;
 }
@@ -2403,22 +2403,25 @@ static int map_uthread_self(struct evl_thread *thread)
  */
 static void discard_unmapped_uthread(struct evl_thread *thread)
 {
+	struct __evl_thread_sstate *sstate = thread->sstate;
+
 	evl_destroy_timer(&thread->rtimer);
 	evl_destroy_timer(&thread->ptimer);
 	dequeue_old_thread(thread);
 
-	if (thread->u_window)
-		evl_free_chunk(&evl_shared_heap, thread->u_window);
+	if (sstate)
+		evl_free_chunk(&evl_shared_heap, sstate);
 }
 
 static struct evl_element *
 thread_factory_build(struct evl_factory *fac, const char __user *u_name,
-		void __user *u_attrs, int clone_flags, u32 *state_offp)
+		void __user *u_attrs, int clone_flags, u32 *sstate_offp)
 {
 	struct evl_observable *observable = NULL;
 	struct task_struct *tsk = current;
 	struct evl_init_thread_attr iattr;
 	unsigned char comm[sizeof(tsk->comm)];
+	struct __evl_thread_sstate *sstate;
 	struct evl_thread *curr;
 	int ret;
 
@@ -2489,8 +2492,9 @@ thread_factory_build(struct evl_factory *fac, const char __user *u_name,
 	if (ret)
 		goto fail_map;
 
-	*state_offp = evl_shared_offset(curr->u_window);
-	evl_add_ns(&curr->element, thread);
+	sstate = curr->sstate;
+	*sstate_offp = evl_shared_offset(sstate);
+	sstate->shdr.fundle = evl_add_ns(&curr->element, thread);
 
 	/*
 	 * Unlike most elements, a thread may exist in absence of any

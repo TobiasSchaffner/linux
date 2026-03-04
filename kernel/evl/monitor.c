@@ -30,7 +30,7 @@ static __always_inline  atomic_t *__ATOMIC32(__u32 *ptr)
 
 struct evl_monitor {
 	struct evl_element element;
-	struct evl_monitor_state *state;
+	struct __evl_monitor_sstate *sstate;
 	int type : 2,
 	    protocol : 4;
 	union {
@@ -93,14 +93,14 @@ int evl_signal_monitor_targeted(struct evl_thread *target, int monfd)
 
 	/*
 	 * Current must hold the gate lock before calling us; if not,
-	 * we might race updating state->flags, possibly loosing
+	 * we might race updating sstate->flags, possibly loosing
 	 * events. Too bad.
 	 */
 	raw_spin_lock_irqsave(&target->lock, flags);
 
 	wchan = evl_get_thread_wchan(target);
 	if (wchan == &event->wait_queue.wchan) {
-		event->state->flags |= (EVL_MONITOR_TARGETED|
+		event->sstate->flags |= (EVL_MONITOR_TARGETED|
 					EVL_MONITOR_SIGNALED);
 		raw_spin_lock(&target->rq->lock);
 		target->info |= EVL_T_SIGNAL;
@@ -123,10 +123,10 @@ void __evl_commit_monitor_ceiling(void)
 	struct evl_monitor *gate;
 
 	/*
-	 * curr->u_window has to be valid since curr bears EVL_T_USER.  If
+	 * curr->sstate has to be valid since curr bears EVL_T_USER.  If
 	 * pp_pending is a bad handle, just skip ceiling.
 	 */
-	gate = evl_lookup_ns(curr->u_window->pp_pending, monitor);
+	gate = evl_lookup_ns(curr->sstate->pp_pending, monitor);
 	if (IS_ERR_OR_NULL(gate))
 		goto out;
 
@@ -135,7 +135,7 @@ void __evl_commit_monitor_ceiling(void)
 
 	evl_put_element(&gate->element);
 out:
-	curr->u_window->pp_pending = EVL_NO_HANDLE;
+	curr->sstate->pp_pending = EVL_NO_HANDLE;
 }
 
 /* gate->lock + event->wait_queue.wchan.lock held, irqs off */
@@ -151,18 +151,18 @@ static void untrack_event(struct evl_monitor *event, struct evl_monitor *gate)
 	if (event->gate == gate && !evl_wait_active(&event->wait_queue)) {
 		list_del(&event->next);
 		event->gate = NULL;
-		event->state->u.event.gate_offset = EVL_MONITOR_NOGATE;
+		event->sstate->u.event.gate_offset = EVL_MONITOR_NOGATE;
 	}
 }
 
 /* gate->lock + event->wait_queue.wchan.lock held, irqs off */
 static void wakeup_waiters(struct evl_monitor *event, struct evl_monitor *gate)
 {
-	struct evl_monitor_state *state = event->state;
+	struct __evl_monitor_sstate *sstate = event->sstate;
 	struct evl_thread *waiter, *n;
 	bool bcast;
 
-	bcast = !!(state->flags & EVL_MONITOR_BROADCAST);
+	bcast = !!(sstate->flags & EVL_MONITOR_BROADCAST);
 
 	/*
 	 * We are called upon exiting a gate which serializes access
@@ -181,7 +181,7 @@ static void wakeup_waiters(struct evl_monitor *event, struct evl_monitor *gate)
 	if (evl_wait_active(&event->wait_queue)) {
 		if (bcast) {
 			evl_flush_wait_locked(&event->wait_queue, 0);
-		} else if (state->flags & EVL_MONITOR_TARGETED) {
+		} else if (sstate->flags & EVL_MONITOR_TARGETED) {
 			evl_for_each_waiter_safe(waiter, n,
 						&event->wait_queue) {
 				if (waiter->info & EVL_T_SIGNAL)
@@ -194,7 +194,7 @@ static void wakeup_waiters(struct evl_monitor *event, struct evl_monitor *gate)
 		untrack_event(event, gate);
 	} /* Otherwise, spurious wakeup (fine, might happen). */
 
-	state->flags &= ~(EVL_MONITOR_SIGNALED|
+	sstate->flags &= ~(EVL_MONITOR_SIGNALED|
 			EVL_MONITOR_BROADCAST|
 			EVL_MONITOR_TARGETED);
 }
@@ -252,18 +252,18 @@ static int tryenter_monitor(struct evl_monitor *gate)
  */
 static void __exit_monitor(struct evl_monitor *gate, struct evl_thread *curr) /* irqs off */
 {
-	struct evl_monitor_state *state = gate->state;
+	struct __evl_monitor_sstate *sstate = gate->sstate;
 	struct evl_monitor *event, *n;
 
 	/*
-	 * Since gate->mutex is held, we can manipulate the state
-	 * flags racelessly.
+	 * Since gate->mutex is held, we can manipulate the shared
+	 * state flags racelessly.
 	 */
-	if (state->flags & EVL_MONITOR_SIGNALED) {
-		state->flags &= ~EVL_MONITOR_SIGNALED;
+	if (sstate->flags & EVL_MONITOR_SIGNALED) {
+		sstate->flags &= ~EVL_MONITOR_SIGNALED;
 		list_for_each_entry_safe(event, n, &gate->events, next) {
 			raw_spin_lock(&event->wait_queue.wchan.lock);
-			if (event->state->flags & EVL_MONITOR_SIGNALED)
+			if (event->sstate->flags & EVL_MONITOR_SIGNALED)
 				wakeup_waiters(event, gate);
 			raw_spin_unlock(&event->wait_queue.wchan.lock);
 		}
@@ -274,8 +274,8 @@ static void __exit_monitor(struct evl_monitor *gate, struct evl_thread *curr) /*
 	 * PP (i.e. we never got scheduled out while holding it),
 	 * clear the lazy handle.
 	 */
-	if (fundle_of(gate) == curr->u_window->pp_pending)
-		curr->u_window->pp_pending = EVL_NO_HANDLE;
+	if (fundle_of(gate) == curr->sstate->pp_pending)
+		curr->sstate->pp_pending = EVL_NO_HANDLE;
 
 	__evl_unlock_mutex(&gate->mutex);
 }
@@ -308,17 +308,17 @@ static int exit_monitor(struct evl_monitor *gate)
 
 static int trywait_count(struct evl_monitor *event)
 {
-	struct evl_monitor_state *state = event->state;
+	struct __evl_monitor_sstate *sstate = event->sstate;
 	int ret = 0, val;
 
 	/* atomic_dec_unless_zero_or_negative */
-	val = atomic_read(__ATOMIC32(&state->u.event.value));
+	val = atomic_read(__ATOMIC32(&sstate->u.event.value));
 	do {
 		if (unlikely(val <= 0)) {
 			ret = -EAGAIN;
 			break;
 		}
-	} while (!atomic_try_cmpxchg(__ATOMIC32(&state->u.event.value), &val, val - 1));
+	} while (!atomic_try_cmpxchg(__ATOMIC32(&sstate->u.event.value), &val, val - 1));
 
 	return ret;
 }
@@ -327,7 +327,7 @@ static int wait_count(struct file *filp,
 		struct __evl_timespec __user *u_timeout)
 {
 	struct evl_monitor *event = element_of(filp, struct evl_monitor);
-	struct evl_monitor_state *state = event->state;
+	struct __evl_monitor_sstate *sstate = event->sstate;
 	enum evl_tmode tmode;
 	unsigned long flags;
 	ktime_t timeout;
@@ -346,13 +346,13 @@ static int wait_count(struct file *filp,
 		 * likely going to wait anyway.
 		 */
 		raw_spin_lock_irqsave(&event->wait_queue.wchan.lock, flags);
-		if (atomic_dec_return(__ATOMIC32(&state->u.event.value)) < 0) {
+		if (atomic_dec_return(__ATOMIC32(&sstate->u.event.value)) < 0) {
 			evl_add_wait_queue(&event->wait_queue, timeout, tmode);
 			raw_spin_unlock_irqrestore(&event->wait_queue.wchan.lock,
 						flags);
 			ret = evl_wait_schedule(&event->wait_queue);
 			if (ret) { /* Rollback decrement if failed. */
-				atomic_inc(__ATOMIC32(&state->u.event.value));
+				atomic_inc(__ATOMIC32(&sstate->u.event.value));
 			} else {
 				/*
 				 * If waking up on a broadcast, we did
@@ -375,7 +375,7 @@ static int wait_count(struct file *filp,
 static int post_count(struct evl_monitor *event, s32 sigval,
 		bool bcast)
 {
-	struct evl_monitor_state *state = event->state;
+	struct __evl_monitor_sstate *sstate = event->sstate;
 	bool pollable = true;
 	unsigned long flags;
 	int ret = 0, val;
@@ -401,11 +401,11 @@ static int post_count(struct evl_monitor *event, s32 sigval,
 			 * added back to the count.
 			 */
 			if (val > 0)
-				atomic_add(val, __ATOMIC32(&state->u.event.value));
+				atomic_add(val, __ATOMIC32(&sstate->u.event.value));
 			/* Userland might have slipped in, re-check. */
-			pollable = atomic_read(__ATOMIC32(&state->u.event.value)) > 0;
+			pollable = atomic_read(__ATOMIC32(&sstate->u.event.value)) > 0;
 		} else {
-			if (atomic_inc_return(__ATOMIC32(&state->u.event.value)) <= 0) {
+			if (atomic_inc_return(__ATOMIC32(&sstate->u.event.value)) <= 0) {
 				evl_wake_up_head(&event->wait_queue);
 				pollable = false;
 			}
@@ -447,14 +447,14 @@ static bool __trywait_mask(struct evl_monitor *event,
 			s32 *r_value,
 			unsigned long flags)
 {
-	struct evl_monitor_state *state = event->state;
+	struct __evl_monitor_sstate *sstate = event->sstate;
 	int testval;
 
-	*r_value = atomic_read(__ATOMIC32(&state->u.event.value)) & match_value;
+	*r_value = atomic_read(__ATOMIC32(&sstate->u.event.value)) & match_value;
 	testval = exact_match ? match_value : *r_value;
 	if (*r_value && *r_value == testval) {
-		atomic_andnot(*r_value, __ATOMIC32(&state->u.event.value));
-		testval = atomic_read(__ATOMIC32(&state->u.event.value));
+		atomic_andnot(*r_value, __ATOMIC32(&sstate->u.event.value));
+		testval = atomic_read(__ATOMIC32(&sstate->u.event.value));
 		raw_spin_unlock_irqrestore(&event->wait_queue.wchan.lock, flags);
 		if (!testval) {
 			evl_signal_poll_events(&event->poll_head, POLLOUT|POLLWRNORM);
@@ -552,7 +552,7 @@ again:
 
 static int post_mask(struct evl_monitor *event, int bits, bool bcast)
 {
-	struct evl_monitor_state *state = event->state;
+	struct __evl_monitor_sstate *sstate = event->sstate;
 	int waitval, testval, consumed = 0, val;
 	struct evl_thread *waiter, *tmp;
 	struct evl_mask_wait *w;
@@ -561,7 +561,7 @@ static int post_mask(struct evl_monitor *event, int bits, bool bcast)
 	raw_spin_lock_irqsave(&event->wait_queue.wchan.lock, flags);
 
 	/*
-	 * NOTE: the only reasons we still have state->u.event.value
+	 * NOTE: the only reasons we still have sstate->u.event.value
 	 * as an atomic value ATM is strictly for ABI preservation,
 	 * and allow for peeking at the mask value directly from
 	 * userland (which is hardly a common operation and could be
@@ -569,11 +569,11 @@ static int post_mask(struct evl_monitor *event, int bits, bool bcast)
 	 * word when an ABI jump is required from applications for
 	 * some compelling reason.
 	 */
-	atomic_or(bits, __ATOMIC32(&state->u.event.value));
+	atomic_or(bits, __ATOMIC32(&sstate->u.event.value));
 
 	evl_for_each_waiter_safe(waiter, tmp, &event->wait_queue) {
 		w = waiter->wait_data;
-		waitval = w->value & atomic_read(__ATOMIC32(&state->u.event.value));
+		waitval = w->value & atomic_read(__ATOMIC32(&sstate->u.event.value));
 		testval = w->exact_match ? w->value : waitval;
 		if (waitval && waitval == testval) {
 			w->value = waitval;
@@ -585,9 +585,9 @@ static int post_mask(struct evl_monitor *event, int bits, bool bcast)
 	}
 
 	if (consumed)
-		atomic_andnot(consumed, __ATOMIC32(&state->u.event.value));
+		atomic_andnot(consumed, __ATOMIC32(&sstate->u.event.value));
 
-	val = atomic_read(__ATOMIC32(&state->u.event.value));
+	val = atomic_read(__ATOMIC32(&sstate->u.event.value));
 
 	raw_spin_unlock_irqrestore(&event->wait_queue.wchan.lock, flags);
 
@@ -662,7 +662,7 @@ static int wait_gated_event(struct evl_monitor *event,
 	if (event->gate == NULL) {
 		list_add_tail(&event->next, &gate->events);
 		event->gate = gate;
-		event->state->u.event.gate_offset = evl_shared_offset(gate->state);
+		event->sstate->u.event.gate_offset = evl_shared_offset(gate->sstate);
 	} else if (event->gate != gate) {
 		raw_spin_unlock_irqrestore(&gate->lock, flags);
 		ret = -EBADFD;
@@ -835,7 +835,7 @@ static long monitor_ioctl(struct file *filp, unsigned int cmd,
 	bind.type = mon->type;
 	bind.protocol = mon->protocol;
 	bind.eids.minor = mon->element.minor;
-	bind.eids.state_offset = evl_shared_offset(mon->state);
+	bind.eids.sstate_offset = evl_shared_offset(mon->sstate);
 	bind.eids.fundle = fundle_of(mon);
 	u_bind = (typeof(u_bind))arg;
 
@@ -896,14 +896,14 @@ static void monitor_unwatch(struct evl_poll_head *head)
 	struct evl_monitor *mon;
 
 	mon = container_of(head, struct evl_monitor, poll_head);
-	atomic_dec(__ATOMIC32(&mon->state->u.event.pollrefs));
+	atomic_dec(__ATOMIC32(&mon->sstate->u.event.pollrefs));
 }
 
 static __poll_t monitor_oob_poll(struct file *filp,
 				struct oob_poll_wait *wait)
 {
 	struct evl_monitor *mon = element_of(filp, struct evl_monitor);
-	struct evl_monitor_state *state = mon->state;
+	struct __evl_monitor_sstate *sstate = mon->sstate;
 	__poll_t ret = 0;
 	int val;
 
@@ -917,8 +917,8 @@ static __poll_t monitor_oob_poll(struct file *filp,
 		switch (mon->protocol) {
 		case EVL_EVENT_COUNT:
 			evl_poll_watch(&mon->poll_head, wait, monitor_unwatch);
-			atomic_inc(__ATOMIC32(&state->u.event.pollrefs));
-			if (atomic_read(__ATOMIC32(&state->u.event.value)) > 0)
+			atomic_inc(__ATOMIC32(&sstate->u.event.pollrefs));
+			if (atomic_read(__ATOMIC32(&sstate->u.event.value)) > 0)
 				ret = POLLIN|POLLRDNORM;
 			break;
 		case EVL_EVENT_MASK:
@@ -928,8 +928,8 @@ static __poll_t monitor_oob_poll(struct file *filp,
 			 * date as long as we support legacy ABIs
 			 * (pre-32).
 			 */
-			atomic_inc(__ATOMIC32(&state->u.event.pollrefs));
-			val = atomic_read(__ATOMIC32(&state->u.event.value));
+			atomic_inc(__ATOMIC32(&sstate->u.event.pollrefs));
+			val = atomic_read(__ATOMIC32(&sstate->u.event.value));
 			/*
 			 * Return POLLIN when some bits are present,
 			 * ready for consumption, or POLLOUT when the
@@ -1118,7 +1118,7 @@ static __poll_t monitor_poll(struct file *filp, poll_table *wait)
 	poll_wait(filp, &event->inband_wait_r, wait);
 	poll_wait(filp, &event->inband_wait_w, wait);
 
-	val = atomic_read(__ATOMIC32(&event->state->u.event.value));
+	val = atomic_read(__ATOMIC32(&event->sstate->u.event.value));
 	if (val)
 		ret |= POLLIN|POLLRDNORM;
 	else
@@ -1146,9 +1146,9 @@ static const struct file_operations monitor_fops = {
 
 static struct evl_element *
 monitor_factory_build(struct evl_factory *fac, const char __user *u_name,
-		void __user *u_attrs, int clone_flags, u32 *state_offp)
+		void __user *u_attrs, int clone_flags, u32 *sstate_offp)
 {
-	struct evl_monitor_state *state;
+	struct __evl_monitor_sstate *sstate;
 	struct evl_monitor_attrs attrs;
 	struct evl_monitor *mon;
 	struct evl_clock *clock;
@@ -1206,8 +1206,8 @@ monitor_factory_build(struct evl_factory *fac, const char __user *u_name,
 	if (ret)
 		goto fail_element;
 
-	state = evl_zalloc_chunk(&evl_shared_heap, sizeof(*state));
-	if (state == NULL) {
+	sstate = evl_zalloc_chunk(&evl_shared_heap, sizeof(*sstate));
+	if (sstate == NULL) {
 		ret = -ENOMEM;
 		goto fail_heap;
 	}
@@ -1216,14 +1216,14 @@ monitor_factory_build(struct evl_factory *fac, const char __user *u_name,
 	case EVL_MONITOR_GATE:
 		switch (attrs.protocol) {
 		case EVL_GATE_PP:
-			state->u.gate.ceiling = attrs.initval;
+			sstate->u.gate.ceiling = attrs.initval;
 			evl_init_mutex_pp(&mon->mutex, clock,
-					__ATOMIC32(&state->u.gate.owner),
-					&state->u.gate.ceiling);
+					__ATOMIC32(&sstate->u.gate.owner),
+					&sstate->u.gate.ceiling);
 			break;
 		case EVL_GATE_PI:
 			evl_init_mutex_pi(&mon->mutex, clock,
-					__ATOMIC32(&state->u.gate.owner));
+					__ATOMIC32(&sstate->u.gate.owner));
 			break;
 		}
 		raw_spin_lock_init(&mon->lock);
@@ -1231,8 +1231,8 @@ monitor_factory_build(struct evl_factory *fac, const char __user *u_name,
 		break;
 	case EVL_MONITOR_EVENT:
 		evl_init_wait(&mon->wait_queue, clock, EVL_WAIT_PRIO);
-		state->u.event.gate_offset = EVL_MONITOR_NOGATE;
-		atomic_set(__ATOMIC32(&state->u.event.value), attrs.initval);
+		sstate->u.event.gate_offset = EVL_MONITOR_NOGATE;
+		atomic_set(__ATOMIC32(&sstate->u.event.value), attrs.initval);
 		evl_init_poll_head(&mon->poll_head);
 		init_waitqueue_head(&mon->inband_wait_r);
 		init_waitqueue_head(&mon->inband_wait_w);
@@ -1247,9 +1247,9 @@ monitor_factory_build(struct evl_factory *fac, const char __user *u_name,
 	 */
 	mon->type = attrs.type;
 	mon->protocol = attrs.protocol;
-	mon->state = state;
-	*state_offp = evl_shared_offset(state);
-	evl_add_ns(&mon->element, monitor);
+	mon->sstate = sstate;
+	*sstate_offp = evl_shared_offset(sstate);
+	sstate->shdr.fundle = evl_add_ns(&mon->element, monitor);
 
 	return &mon->element;
 
@@ -1285,7 +1285,7 @@ static void monitor_factory_dispose(struct evl_element *e)
 		evl_destroy_mutex(&mon->mutex);
 	}
 
-	evl_free_chunk(&evl_shared_heap, mon->state);
+	evl_free_chunk(&evl_shared_heap, mon->sstate);
 	evl_destroy_element(&mon->element);
 	kfree_rcu(mon, element.rcu);
 }
@@ -1294,7 +1294,7 @@ static ssize_t state_show(struct device *dev,
 			struct device_attribute *attr,
 			char *buf)
 {
-	struct evl_monitor_state *state;
+	struct __evl_monitor_sstate *sstate;
 	struct evl_thread *owner = NULL;
 	struct evl_monitor *mon;
 	ssize_t ret = 0;
@@ -1304,25 +1304,25 @@ static ssize_t state_show(struct device *dev,
 	if (mon == NULL)
 		return -EIO;
 
-	state = mon->state;
+	sstate = mon->sstate;
 
 	if (mon->type == EVL_MONITOR_EVENT) {
 		switch (mon->protocol) {
 		case EVL_EVENT_MASK:
 			ret = snprintf(buf, PAGE_SIZE, "%#x\n",
-			       atomic_read(__ATOMIC32(&state->u.event.value)));
+			       atomic_read(__ATOMIC32(&sstate->u.event.value)));
 			break;
 		case EVL_EVENT_COUNT:
 			ret = snprintf(buf, PAGE_SIZE, "%d\n",
-			       atomic_read(__ATOMIC32(&state->u.event.value)));
+			       atomic_read(__ATOMIC32(&sstate->u.event.value)));
 			break;
 		case EVL_EVENT_GATED:
 			ret = snprintf(buf, PAGE_SIZE, "%#x\n",
-				state->flags);
+				sstate->flags);
 			break;
 		}
 	} else {
-		fun = atomic_read(__ATOMIC32(&state->u.gate.owner));
+		fun = atomic_read(__ATOMIC32(&sstate->u.gate.owner));
 		if (fun != EVL_NO_HANDLE) {
 			owner = __evl_lookup_ns(__evl_fundle_key(fun), thread);
 			if (!owner)
@@ -1330,13 +1330,13 @@ static ssize_t state_show(struct device *dev,
 			ret = snprintf(buf, PAGE_SIZE, "%s(%d) %u %u\n",
 				evl_element_name(&owner->element),
 				evl_get_inband_pid(owner),
-				state->u.gate.ceiling,
-				state->u.gate.recursive ? state->u.gate.nesting : 1);
+				sstate->u.gate.ceiling,
+				sstate->u.gate.recursive ? sstate->u.gate.nesting : 1);
 			evl_put_element(&owner->element);
 		} else {
 		no_owner:
 			ret = snprintf(buf, PAGE_SIZE, "-1 %u 0\n",
-				state->u.gate.ceiling);
+				sstate->u.gate.ceiling);
 		}
 	}
 

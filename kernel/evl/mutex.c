@@ -831,14 +831,14 @@ void evl_commit_mutex_ceiling(struct evl_mutex *mutex)
 	 * For PP locks, userland does, in that order:
 	 *
 	 * -- LOCK
-	 * 1. curr->u_window->pp_pending = fundle_of(mutex)
+	 * 1. curr->sstate->pp_pending = fundle_of(mutex)
 	 *    barrier();
 	 * 2. atomic_cmpxchg(lockp, EVL_NO_HANDLE, fundle_of(curr));
 	 *
 	 * -- UNLOCK
 	 * 1. atomic_cmpxchg(lockp, fundle_of(curr), EVL_NO_HANDLE); [unclaimed]
 	 *    barrier();
-	 * 2. curr->u_window->pp_pending = EVL_NO_HANDLE
+	 * 2. curr->sstate->pp_pending = EVL_NO_HANDLE
 	 *
 	 * Make sure we have not been caught in a rescheduling in
 	 * between those steps. If we did, then we won't be holding

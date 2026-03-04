@@ -626,9 +626,9 @@ static int init_shared_heap(void)
 	int ret;
 
 	size = CONFIG_EVL_NR_THREADS *
-		sizeof(struct evl_user_window) +
+		sizeof(struct __evl_thread_sstate) +
 		CONFIG_EVL_NR_MONITORS *
-		sizeof(struct evl_monitor_state);
+		sizeof(struct __evl_monitor_sstate);
 	size = PAGE_ALIGN(size);
 	mem = kzalloc(size, GFP_KERNEL);
 	if (mem == NULL)

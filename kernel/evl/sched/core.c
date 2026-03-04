@@ -1056,12 +1056,12 @@ int evl_switch_oob(void)
 
 	trace_evl_switch_oob(curr);
 
-	evl_clear_sync_uwindow(curr, EVL_T_INBAND);
+	evl_clear_sync_sstate(curr, EVL_T_INBAND);
 
 	ret = dovetail_leave_inband();
 	if (ret) {
 		evl_test_cancel();
-		evl_set_sync_uwindow(curr, EVL_T_INBAND);
+		evl_set_sync_sstate(curr, EVL_T_INBAND);
 		return ret;
 	}
 
@@ -1208,7 +1208,7 @@ void evl_switch_inband_details(int cause, union evl_value details)
 	}
 
 	/* @curr is now running inband. */
-	evl_sync_uwindow(curr);
+	evl_sync_sstate(curr);
 }
 EXPORT_SYMBOL_GPL(evl_switch_inband_details);
 

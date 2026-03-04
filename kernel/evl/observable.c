@@ -1132,7 +1132,7 @@ struct evl_observable *evl_alloc_observable(const char __user *u_name,
 
 static struct evl_element *
 observable_factory_build(struct evl_factory *fac, const char __user *u_name,
-		void __user *u_attrs, int clone_flags, u32 *state_offp)
+		void __user *u_attrs, int clone_flags, u32 *sstate_offp)
 {
 	struct evl_observable *observable;
 
