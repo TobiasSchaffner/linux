@@ -688,7 +688,7 @@ static void destroy_ring(struct proxy_ring *ring)
 
 static struct evl_element *
 proxy_factory_build(struct evl_factory *fac, const char __user *u_name,
-		void __user *u_attrs, int clone_flags, u32 *state_offp)
+		void __user *u_attrs, int clone_flags, u32 *sstate_offp)
 {
 	struct evl_proxy_attrs attrs;
 	struct evl_proxy *proxy;

@@ -545,7 +545,7 @@ static long ioctl_clone_device(struct file *filp, unsigned int cmd,
 {
 	struct evl_element *e = filp->private_data;
 	struct evl_clone_req req, __user *u_req;
-	__u32 val, state_offset = -1U;
+	__u32 val, sstate_offset = -1U;
 	const char __user *u_name;
 	struct evl_factory *fac;
 	void __user *u_attrs;
@@ -571,7 +571,7 @@ static long ioctl_clone_device(struct file *filp, unsigned int cmd,
 
 	u_attrs = evl_valptr64(req.attrs_ptr, void);
 	fac = container_of(filp->f_inode->i_cdev, struct evl_factory, cdev);
-	e = fac->build(fac, u_name, u_attrs, req.clone_flags, &state_offset);
+	e = fac->build(fac, u_name, u_attrs, req.clone_flags, &sstate_offset);
 	if (IS_ERR(e))
 		return PTR_ERR(e);
 
@@ -608,7 +608,7 @@ static long ioctl_clone_device(struct file *filp, unsigned int cmd,
 	ret |= put_user(val, &u_req->eids.minor);
 	val = evl_element_fundle(e);
 	ret |= put_user(val, &u_req->eids.fundle);
-	ret |= put_user(state_offset, &u_req->eids.state_offset);
+	ret |= put_user(sstate_offset, &u_req->eids.sstate_offset);
 	val = e->fpriv.efd;
 	ret |= put_user(val, &u_req->efd);
 

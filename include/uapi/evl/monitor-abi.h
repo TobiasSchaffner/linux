@@ -7,6 +7,7 @@
 #ifndef _EVL_UAPI_MONITOR_ABI_H
 #define _EVL_UAPI_MONITOR_ABI_H
 
+#include <evl/types-abi.h>
 #include <evl/factory-abi.h>
 
 #define EVL_MONITOR_DEV		"monitor"
@@ -33,17 +34,18 @@ struct evl_monitor_attrs {
 
 #define EVL_MONITOR_NOGATE  -1U
 
-struct evl_monitor_state {
-	__u32 flags;
+struct __evl_monitor_sstate {
+	struct __evl_sstate_header shdr;
+	__u32 flags;		/* EVL_MONITOR_{SIGNALED, ...} */
 	union {
 		struct {
-			__u32 owner; /* atomic_t */
+			__u32 owner; /* fundle in atomic_t */
 			__u32 ceiling;
 			__u32 recursive: 1,
 				nesting : 31;
 		} gate;
 		struct {
-			__u32 value; /* atomic_t */
+			__u32 value;	/* atomic_t */
 			__u32 pollrefs; /* atomic_t */
 			__u32 gate_offset;
 		} event;

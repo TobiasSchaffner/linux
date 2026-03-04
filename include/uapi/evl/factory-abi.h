@@ -13,8 +13,8 @@
 
 struct evl_element_ids {
 	__u32 minor;
-	__u32 fundle;
-	__u32 state_offset;
+	__u32 fundle;		/* fundle_t */
+	__u32 sstate_offset;
 };
 
 /* The core only uses bits 16-31, rest is available to libevl. */
