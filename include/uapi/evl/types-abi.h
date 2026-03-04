@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
  *
  * Derived from Xenomai Cobalt, https://xenomai.org/
- * Copyright (C) 2013, 2018 Philippe Gerum <rpm@xenomai.org>
+ * Copyright (C) 2013-2026 Philippe Gerum <rpm@xenomai.org>
  */
 
 #ifndef _EVL_UAPI_TYPES_ABI_H
@@ -68,5 +68,13 @@ union evl_value {
 #define evl_intval(__val)	((union evl_value){ .lval = (__val) })
 #define evl_ptrval(__ptr)	((union evl_value){ .ptr = (__ptr) })
 #define evl_nil			evl_intval(0)
+
+/*
+ * All shared states of elements for which fundle-based access is
+ * provided must start with the following header.
+ */
+struct __evl_sstate_header {
+	fundle_t fundle;
+};
 
 #endif /* !_EVL_UAPI_TYPES_ABI_H */

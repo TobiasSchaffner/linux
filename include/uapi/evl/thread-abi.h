@@ -94,7 +94,8 @@
 #define EVL_HMDIAG_STAGEX	8
 #define EVL_HMDIAG_OVERRUN	9
 
-struct evl_user_window {
+struct __evl_thread_sstate {
+	struct __evl_sstate_header shdr;
 	__u32 state;
 	__u32 info;
 	__u32 pp_pending;
