@@ -80,6 +80,7 @@ struct evl_element {
 	} fpriv;
 	struct evl_scope *scope;
 	struct evl_map_node ns_node;
+	struct list_head owned;	/* in oob_mm_state->elements */
 };
 
 static inline const char *
@@ -148,9 +149,14 @@ static inline bool evl_element_is_public(struct evl_element *e)
 	return !!(e->clone_flags & EVL_CLONE_PUBLIC);
 }
 
-static inline bool evl_element_has_coredev(struct evl_element *e)
+static inline bool evl_element_is_core(struct evl_element *e)
 {
-	return !!(e->clone_flags & EVL_CLONE_COREDEV);
+	return !!(e->clone_flags & __EVL_CLONE_CORE);
+}
+
+static inline bool evl_element_is_owned(struct evl_element *e)
+{
+	return e->clone_flags & __EVL_CLONE_OWNED;
 }
 
 static inline bool evl_element_is_observable(struct evl_element *e)
@@ -172,7 +178,7 @@ int evl_open_element(struct inode *inode,
 int evl_release_element(struct inode *inode,
 			struct file *filp);
 
-int evl_create_element_device(struct evl_element *e,
+int evl_create_core_device(struct evl_element *e,
 			struct evl_factory *fac,
 			const char *name);
 
