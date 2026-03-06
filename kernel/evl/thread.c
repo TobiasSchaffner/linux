@@ -33,6 +33,7 @@
 #include <evl/flag.h>
 #include <evl/factory.h>
 #include <evl/observable.h>
+#include <evl/control.h>
 #include <evl/uaccess.h>
 #include <evl/lock.h>
 #include <uapi/linux/sched/types.h>
@@ -1523,33 +1524,6 @@ notrace pid_t evl_get_inband_pid(struct evl_thread *thread)
 	return task_pid_nr(thread->altsched.task);
 }
 
-int activate_oob_mm_state(struct oob_mm_state *p)
-{
-	evl_init_wait(&p->ptrace_wait, &evl_mono_clock, EVL_WAIT_PRIO);
-	INIT_LIST_HEAD(&p->ptrace_queue);
-	p->ptrace_seq = 0;
-	INIT_LIST_HEAD(&p->threads);
-	INIT_LIST_HEAD(&p->elements);
-	raw_spin_lock_init(&p->lock);
-
-	smp_mb__before_atomic();
-	set_bit(EVL_MM_ACTIVE_BIT, &p->flags);
-
-	return 0;
-}
-
-static void flush_oob_mm_state(struct oob_mm_state *p)
-{
-	/*
-	 * We are called for every mm dropped. Since every oob state
-	 * is zeroed before use by the in-band kernel, processes with
-	 * no active out-of-band state will escape this cleanup work
-	 * on test_and_clear_bit().
-	 */
-	if (test_and_clear_bit(EVL_MM_ACTIVE_BIT, &p->flags))
-		evl_destroy_wait(&p->ptrace_wait);
-}
-
 void arch_inband_task_init(struct task_struct *tsk)
 {
 	struct oob_thread_state *p = dovetail_task_state(tsk);
@@ -1931,7 +1905,7 @@ static void handle_cleanup_event(struct mm_struct *mm)
 	if (curr && !(current->flags & PF_EXITING))
 		put_current_thread();
 
-	flush_oob_mm_state(&mm->oob_state);
+	evl_flush_oob_mm(&mm->oob_state);
 }
 
 void handle_inband_event(enum inband_event_type event, void *data)

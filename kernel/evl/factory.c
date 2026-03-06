@@ -598,6 +598,10 @@ static long ioctl_clone_device(struct file *filp, unsigned int cmd,
 		(u_name == NULL || req.clone_flags & __EVL_CLONE_OWNED))
 		return -EINVAL;
 
+	ret = evl_activate_oob_mm();
+	if (ret)
+		return ret;
+
 	u_attrs = evl_valptr64(req.attrs_ptr, void);
 	fac = container_of(filp->f_inode->i_cdev, struct evl_factory, cdev);
 	e = fac->build(fac, u_name, u_attrs, req.clone_flags, &sstate_offset);

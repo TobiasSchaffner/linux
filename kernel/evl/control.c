@@ -95,6 +95,54 @@ static int stop_services(void)
 	return ret;
 }
 
+/*
+ * __evl_activate_oob_mm - enables the oob context for the current mm
+ *
+ * The in-band kernel has no way to figure out whether initializing
+ * the oob context into a new mm might be relevant, so this has to be
+ * done on demand when the core is most likely going to need this
+ * state instead of performing this setup in init_oob_mm_state().
+ *
+ * This routine might be called multiple times, even concurrently -
+ * evl_activate_oob_mm() already did a quick check to filter out
+ * obviously useless calls, but we still have to check again
+ * atomically this time.
+ */
+int __evl_activate_oob_mm(struct oob_mm_state *p)
+{
+	/*
+	 * We have separate init and active bits, so that the active
+	 * bit is set only when the mm context is fully initialized,
+	 * while the init bit prevents concurrent inits to happen.
+	 */
+	if (test_and_set_bit(EVL_MM_INIT_BIT, &p->flags))
+		return 0;
+
+	evl_init_wait(&p->ptrace_wait, &evl_mono_clock, EVL_WAIT_PRIO);
+	INIT_LIST_HEAD(&p->ptrace_queue);
+	p->ptrace_seq = 0;
+	INIT_LIST_HEAD(&p->threads);
+	INIT_LIST_HEAD(&p->elements);
+	raw_spin_lock_init(&p->lock);
+
+	smp_mb__before_atomic();
+	set_bit(EVL_MM_ACTIVE_BIT, &p->flags);
+
+	return 0;
+}
+
+void evl_flush_oob_mm(struct oob_mm_state *p)
+{
+	/*
+	 * We are called for every mm dropped. Since every oob state
+	 * is zeroed before use by the in-band kernel, processes with
+	 * no active out-of-band state will escape this cleanup work
+	 * on test_and_clear_bit().
+	 */
+	if (test_and_clear_bit(EVL_MM_ACTIVE_BIT, &p->flags))
+		evl_destroy_wait(&p->ptrace_wait);
+}
+
 #ifdef CONFIG_EVL_SCHED_QUOTA
 
 static int do_quota_control(const struct evl_sched_ctlreq *ctl)
@@ -279,38 +327,22 @@ static long control_common_ioctl(struct file *filp, unsigned int cmd,
 
 static int control_open(struct inode *inode, struct file *filp)
 {
-	struct oob_mm_state *oob_mm = dovetail_mm_state();
-	int ret = 0;
+	int ret;
 
 	/*
-	 * Opening the control device is a strong hint that we are
-	 * about to host EVL threads in the current process, so this
-	 * makes sense to allocate the resources we'll need to
-	 * maintain them here. The in-band kernel has no way to figure
-	 * out when initializing the oob context for a new mm might be
-	 * relevant, so this has to be done on demand based on some
-	 * information only EVL has. This is the reason why there is
-	 * no initialization call for the oob_mm state defined in the
-	 * Dovetail interface, the in-band kernel would not know when
-	 * to call it.
+	 * Opening the control device is a clear hint that we are
+	 * going to need the oob context in the current mm. However,
+	 * applications might create elements via the clone interface
+	 * before this happens, so the oob context might be activated
+	 * from ioctl_clone_device() too.
 	 */
-
-	if (!oob_mm)	/* Userland only. */
-		return -EPERM;
-
-	/*
-	 * The control device might be opened multiple times, even
-	 * concurrently. This is why we have separate init and active
-	 * bits, so that the active bit is set only when the mm
-	 * context is fully initialized, while the init bit prevents
-	 * concurrent inits to happen.
-	 */
-	if (!test_and_set_bit(EVL_MM_INIT_BIT, &oob_mm->flags))
-		ret = activate_oob_mm_state(oob_mm);
+	ret = evl_activate_oob_mm();
+	if (ret)
+		return ret;
 
 	stream_open(inode, filp);
 
-	return ret;
+	return 0;
 }
 
 static long control_oob_ioctl(struct file *filp, unsigned int cmd,
