@@ -347,8 +347,6 @@ static inline void evl_propagate_schedparam_change(struct evl_thread *curr)
 
 pid_t evl_get_inband_pid(struct evl_thread *thread);
 
-int activate_oob_mm_state(struct oob_mm_state *p);
-
 struct evl_kthread {
 	struct evl_thread thread;
 	struct completion done;
