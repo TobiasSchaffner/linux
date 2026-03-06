@@ -57,4 +57,19 @@ void evl_add_state_chain(struct notifier_block *nb);
 
 void evl_remove_state_chain(struct notifier_block *nb);
 
+int __evl_activate_oob_mm(struct oob_mm_state *p);
+
+static inline int evl_activate_oob_mm(void)
+{
+	struct oob_mm_state *p = dovetail_mm_state();
+	int ret = 0;
+
+	if (unlikely(!test_bit(EVL_MM_INIT_BIT, &p->flags)))
+		ret = __evl_activate_oob_mm(p);
+
+	return ret;
+}
+
+void evl_flush_oob_mm(struct oob_mm_state *p);
+
 #endif /* !_EVL_CONTROL_H */
