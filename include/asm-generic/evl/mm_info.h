@@ -36,7 +36,7 @@ struct oob_mm_state {
 static inline void init_oob_mm_state(struct oob_mm_state *state)
 {
 	/*
-	 * Rest of init may be performed by activate_oob_mm_state()
+	 * Rest of init may be performed by evl_activate_oob_mm()
 	 * later on, only for threads bound to the core.
 	 */
 	state->flags = 0;
