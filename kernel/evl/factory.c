@@ -97,6 +97,7 @@ int evl_init_element(struct evl_element *e,
 	e->clone_flags = clone_flags;
 	e->scope = NULL;
 	evl_init_map_node(&e->ns_node);
+	INIT_LIST_HEAD(&e->owned);
 
 	return 0;
 }
@@ -144,6 +145,8 @@ static int bind_file_to_element(struct file *filp, struct evl_element *e)
 	struct evl_file_binding *fbind;
 	int ret;
 
+	EVL_WARN_ON(CORE, evl_element_is_owned(e));
+
 	fbind = kmalloc(sizeof(*fbind), GFP_KERNEL);
 	if (fbind == NULL)
 		return -ENOMEM;
@@ -164,6 +167,8 @@ static struct evl_element *unbind_file_from_element(struct file *filp)
 {
 	struct evl_file_binding *fbind = filp->private_data;
 	struct evl_element *e = fbind->element;
+
+	EVL_WARN_ON(CORE, evl_element_is_owned(e));
 
 	evl_release_file(&fbind->efile);
 	kfree(fbind);
@@ -306,6 +311,19 @@ int evl_release_element(struct inode *inode, struct file *filp)
 }
 EXPORT_SYMBOL_GPL(evl_release_element);
 
+static void register_owned_element(struct evl_element *e)
+{
+	struct oob_mm_state *p = dovetail_mm_state();
+	unsigned long flags;
+
+	if (EVL_WARN_ON(CORE, test_bit(EVL_MM_INIT_BIT, &p->flags)))
+		return;
+
+	raw_spin_lock_irqsave(&p->lock, flags);
+	list_add(&e->owned, &p->elements);
+	raw_spin_unlock_irqrestore(&p->lock, flags);
+}
+
 static void release_sys_device(struct device *dev)
 {
 	kfree(dev);
@@ -355,8 +373,8 @@ static int do_element_visibility(struct evl_element *e,
 	struct file *filp;
 	int ret, efd;
 
-	if (EVL_WARN_ON(CORE, !evl_element_has_coredev(e) && !current->mm))
-		e->clone_flags |= EVL_CLONE_COREDEV;
+	if (EVL_WARN_ON(CORE, !evl_element_is_core(e) && !current->mm))
+		e->clone_flags |= __EVL_CLONE_CORE;
 
 	/*
 	 * Unlike a private one, a publicly visible element exports a
@@ -373,12 +391,17 @@ static int do_element_visibility(struct evl_element *e,
 
 	*rdev = MKDEV(0, e->minor);
 
-	if (evl_element_has_coredev(e))
+	/*
+	 * If this private element was created by the core or owned by
+	 * a particular process, we are done.
+	 */
+	if (evl_element_is_core(e) || evl_element_is_owned(e))
 		return 0;
 
 	/*
-	 * Create a private user element, passing the real fops so
-	 * that FMODE_CAN_READ/WRITE are set accordingly by the vfs.
+	 * Create a private, file-bound user element, passing the real
+	 * fops so that FMODE_CAN_READ/WRITE are set accordingly by
+	 * the vfs.
 	 */
 	filp = anon_inode_getfile(evl_element_name(e), fac->fops,
 				NULL, O_RDWR);
@@ -435,6 +458,8 @@ static int create_element_device(struct evl_element *e,
 	u64 hlen;
 	int ret;
 
+	EVL_WARN_ON(CORE, evl_element_is_public(e) && evl_element_is_owned(e));
+
 	/*
 	 * Do a quick hash check on the new element name, to make sure
 	 * device_register() won't trigger a kernel log splash because
@@ -465,12 +490,12 @@ static int create_element_device(struct evl_element *e,
 	}
 
 	/*
-	 * Install fd on a private user element file only when we
-	 * cannot fail creating the device anymore. First take a
-	 * reference then install fd (which is a membar).
+	 * Install fd on a private, file-bound user element file only
+	 * when we cannot fail creating the device anymore. First take
+	 * a reference then install fd.
 	 */
-	if (!evl_element_is_public(e) && !evl_element_has_coredev(e)) {
-		__evl_get_element(e);
+	if (e->fpriv.filp) {
+		__evl_get_element(e); /* Matched in evl_release_element(). */
 		fd_install(e->fpriv.efd, e->fpriv.filp);
 	}
 
@@ -479,13 +504,12 @@ static int create_element_device(struct evl_element *e,
 	return 0;
 
 	/*
-	 * On error, public and/or core-owned elements should be
-	 * discarded by the caller.  Private user elements must be
-	 * disposed of in this routine if we cannot give them a
-	 * device.
+	 * On error, public and/or core elements should be discarded
+	 * by the caller.  Private user elements must be disposed of
+	 * in this routine if we cannot give them a device.
 	 */
 fail_hash:
-	if (!evl_element_is_public(e) && !evl_element_has_coredev(e))
+	if (!evl_element_is_public(e) && !evl_element_is_core(e))
 		fac->dispose(e);
 
 	return -EEXIST;
@@ -493,7 +517,7 @@ fail_hash:
 fail_device:
 	if (evl_element_is_public(e)) {
 		cdev_del(&e->cdev);
-	} else if (!evl_element_has_coredev(e)) {
+	} else if (e->fpriv.filp) {
 		put_unused_fd(e->fpriv.efd);
 		filp_close(e->fpriv.filp, current->files);
 	}
@@ -506,11 +530,14 @@ fail_visibility:
 	return ret;
 }
 
-int evl_create_element_device(struct evl_element *e,
+int evl_create_core_device(struct evl_element *e,
 			struct evl_factory *fac,
 			const char *name)
 {
 	struct filename *devname;
+
+	if (EVL_WARN_ON(CORE, evl_element_is_owned(e)))
+		e->clone_flags &= ~__EVL_CLONE_OWNED;
 
 	if (name) {
 		devname = getname_kernel(name);
@@ -519,11 +546,11 @@ int evl_create_element_device(struct evl_element *e,
 		e->devname = devname;
 	}
 
-	e->clone_flags |= EVL_CLONE_COREDEV;
+	e->clone_flags |= __EVL_CLONE_CORE;
 
 	return create_element_device(e, fac);
 }
-EXPORT_SYMBOL_GPL(evl_create_element_device);
+EXPORT_SYMBOL_GPL(evl_create_core_device);
 
 void evl_remove_element_device(struct evl_element *e)
 {
@@ -565,8 +592,10 @@ static long ioctl_clone_device(struct file *filp, unsigned int cmd,
 	if (ret)
 		return -EFAULT;
 
+	/* A public element must be named and file-bound. */
 	u_name = evl_valptr64(req.name_ptr, const char);
-	if (u_name == NULL && req.clone_flags & EVL_CLONE_PUBLIC)
+	if (req.clone_flags & EVL_CLONE_PUBLIC &&
+		(u_name == NULL || req.clone_flags & __EVL_CLONE_OWNED))
 		return -EINVAL;
 
 	u_attrs = evl_valptr64(req.attrs_ptr, void);
@@ -594,7 +623,7 @@ static long ioctl_clone_device(struct file *filp, unsigned int cmd,
 		 * associated with a coredev observable, the latter
 		 * does not export any direct interface to user.
 		 */
-		EVL_WARN_ON(CORE, evl_element_has_coredev(e));
+		EVL_WARN_ON(CORE, evl_element_is_core(e));
 		/*
 		 * @e might be stale if it was private, test the
 		 * visibility flag from the request block instead.
@@ -603,6 +632,9 @@ static long ioctl_clone_device(struct file *filp, unsigned int cmd,
 			fac->dispose(e);
 		return ret;
 	}
+
+	if (evl_element_is_owned(e))
+		register_owned_element(e);
 
 	val = e->minor;
 	ret |= put_user(val, &u_req->eids.minor);

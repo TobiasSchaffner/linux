@@ -23,9 +23,11 @@ struct oob_mm_state {
 	u32 ptrace_seq;
 	/* List of waiting ptrace-stopped threads. */
 	struct list_head ptrace_queue;
+	/* Elements whose lifetime is bound to the process. */
+	struct list_head elements;
 	/* List of (EVL) threads attached to process. */
 	struct list_head threads;
-	/* Guards ptrace_queue, threads. */
+	/* Guards ptrace_queue, threads, elements. */
 	hard_spinlock_t lock;
 	/* Scope of process-private elements. */
 	struct evl_scope scope;
@@ -33,7 +35,10 @@ struct oob_mm_state {
 
 static inline void init_oob_mm_state(struct oob_mm_state *state)
 {
-	/* Rest of init happens later on for oob threads only. */
+	/*
+	 * Rest of init may be performed by activate_oob_mm_state()
+	 * later on, only for threads bound to the core.
+	 */
 	state->flags = 0;
 }
 

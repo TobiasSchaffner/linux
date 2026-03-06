@@ -361,6 +361,35 @@ static void do_cleanup_current(struct evl_thread *curr)
 	uninit_thread(curr);
 }
 
+static void drop_owned_elements(struct evl_thread *curr)
+{
+	struct oob_mm_state *p = curr->oob_mm;
+	struct evl_element *e, *n;
+
+	if (!p)
+		return;
+
+	/*
+	 * Drop the initial reference we hold on __EVL_CLONE_OWNED
+	 * elements, this is the counterpart of the reference drop
+	 * which happens in evl_release_element() for file-bound
+	 * elements. If any fundle-based operation from another
+	 * process is currently in-flight, the disposal will be
+	 * postponed only after such operation ends when the last
+	 * reference is dropped.
+	 *
+	 * NOTE: Live-locking an element during a string of
+	 * fundle-based requests until the disposal handler can run
+	 * eventually is acceptable, the current mechanism just makes
+	 * sure that we won't keep stale and unused elements around
+	 * indefinitely.
+	 */
+	list_for_each_entry_safe(e, n, &p->elements, owned) {
+		list_del_init(&e->owned);
+		evl_put_element(e); /* Matches evl_init_element(). */
+	}
+}
+
 static void cleanup_current_thread(void)
 {
 	struct oob_thread_state *p = dovetail_current_state();
@@ -372,6 +401,7 @@ static void cleanup_current_thread(void)
 	 */
 	trace_evl_thread_unmap(curr);
 	dovetail_stop_altsched();
+	drop_owned_elements(curr);
 	do_cleanup_current(curr);
 
 	p->thread = NULL;	/* evl_current() <- NULL */
@@ -479,9 +509,9 @@ int __evl_run_kthread(struct evl_kthread *kthread, int clone_flags)
 	if (ret)
 		goto fail_element;
 
-	ret = evl_create_element_device(&thread->element,
-					&evl_thread_factory,
-					thread->name);
+	ret = evl_create_core_device(&thread->element,
+				&evl_thread_factory,
+				thread->name);
 	if (ret)
 		goto fail_device;
 
@@ -1499,6 +1529,7 @@ int activate_oob_mm_state(struct oob_mm_state *p)
 	INIT_LIST_HEAD(&p->ptrace_queue);
 	p->ptrace_seq = 0;
 	INIT_LIST_HEAD(&p->threads);
+	INIT_LIST_HEAD(&p->elements);
 	raw_spin_lock_init(&p->lock);
 
 	smp_mb__before_atomic();
@@ -2465,10 +2496,10 @@ thread_factory_build(struct evl_factory *fac, const char __user *u_name,
 		}
 		/*
 		 * Element name was already set from user input by
-		 * evl_alloc_observable(). evl_create_element_device()
-		 * is told to skip name assignment (NULL name).
+		 * evl_alloc_observable(). evl_create_core_device() is
+		 * told to skip name assignment (NULL name).
 		 */
-		ret = evl_create_element_device(
+		ret = evl_create_core_device(
 			&observable->element,
 			&evl_observable_factory, NULL);
 		if (ret)
