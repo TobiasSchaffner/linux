@@ -72,13 +72,6 @@ struct evl_element_ids {
 /* All the valid bits as far as user is concerned. */
 #define EVL_CLONE_MASK		(((__u32)-1 << 16) & ~EVL_CLONE_COREDEV)
 
-/*
- * Deprecated: this is a longstanding misnomer. This flag is really
- * about sending unicast notifications as opposed to broadcasting
- * events to all observers.
- */
-#define EVL_CLONE_MASTER	EVL_CLONE_UNICAST
-
 struct evl_clone_req {
 	__u64 name_ptr;		/* (const char __user *name) */
 	__u64 attrs_ptr;	/* (void __user *attrs) */
