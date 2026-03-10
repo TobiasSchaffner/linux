@@ -339,6 +339,11 @@ int evl_net_ipv4_solicit(struct net *net,
 						evl_net_ipv4_solicit_timeout * HZ
 			);
 		ret = e ? 0 : ret ?: -ETIMEDOUT;
+	} else {
+		ret = evl_net_update_arp(neigh);
+		if (ret)
+			return ret;
+		e = evl_net_get_arp_entry(dev, ipaddr);
 	}
 out:
 	evl_net_put_dev(dev);
