@@ -231,10 +231,10 @@ int evl_net_update_arp(struct neighbour *neigh) /* inband */
 	read_lock_bh(&neigh->lock);
 
 	/*
-	 * We only cache entries for connected neighbours: recheck
-	 * under lock.
+	 * We (re-)cache connected neighbours or no-ARP entries only:
+	 * recheck the entry state under lock.
 	 */
-	if (READ_ONCE(neigh->nud_state) & NUD_CONNECTED)
+	if (READ_ONCE(neigh->nud_state) & (NUD_CONNECTED|NUD_NOARP))
 		ret = cache_arp_entry(cache, neigh);
 
 	read_unlock_bh(&neigh->lock);
