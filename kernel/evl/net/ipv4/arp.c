@@ -216,8 +216,17 @@ struct evl_net_arp_entry *evl_net_get_arp_entry(struct net_device *dev, __be32 a
 int evl_net_update_arp(struct neighbour *neigh) /* inband */
 {
 	struct oob_net_state *nets = &dev_net(neigh->dev)->oob;
+	__be32 addr = *(const __be32 *)neigh->primary_key;
 	struct evl_cache *cache = &nets->ipv4.arp;
 	int ret = -ESTALE;
+
+	/*
+	 * Local broadcast and loopback entries are statically
+	 * resolved to pseudo-entries by the ARP lookup routine, don't
+	 * cache them.
+	 */
+	if (unlikely(ipv4_is_lbcast(addr) || ipv4_is_loopback(addr)))
+		return 0;
 
 	read_lock_bh(&neigh->lock);
 
