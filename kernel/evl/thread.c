@@ -2176,10 +2176,9 @@ static long thread_common_ioctl(struct evl_thread *thread,
 	return ret;
 }
 
-static long thread_oob_ioctl(struct file *filp, unsigned int cmd,
+static long __thread_oob_ioctl(struct evl_thread *thread, unsigned int cmd,
 			unsigned long arg)
 {
-	struct evl_thread *thread = element_of(filp, struct evl_thread);
 	struct evl_thread *curr = evl_current();
 	long ret = -EPERM;
 	__u32 monfd;
@@ -2216,11 +2215,17 @@ static long thread_oob_ioctl(struct file *filp, unsigned int cmd,
 	return ret;
 }
 
-static long thread_ioctl(struct file *filp, unsigned int cmd,
+static long thread_oob_ioctl(struct file *filp, unsigned int cmd,
 			unsigned long arg)
 {
 	struct evl_thread *thread = element_of(filp, struct evl_thread);
-	struct evl_thread *curr = evl_current();
+
+	return __thread_oob_ioctl(thread, cmd, arg);
+}
+
+static long __thread_ioctl(struct evl_thread *thread, unsigned int cmd,
+			unsigned long arg)
+{
 	long ret = -EPERM;
 
 	if (thread->state & EVL_T_ZOMBIE)
@@ -2228,7 +2233,7 @@ static long thread_ioctl(struct file *filp, unsigned int cmd,
 
 	switch (cmd) {
 	case EVL_THRIOC_SWITCH_INBAND:
-		if (thread == curr)
+ 		if (thread == evl_current())
 			ret = 0;
 		break;
 	case EVL_THRIOC_DETACH_SELF:
@@ -2248,6 +2253,14 @@ static long thread_ioctl(struct file *filp, unsigned int cmd,
 	}
 
 	return ret;
+}
+
+static long thread_ioctl(struct file *filp, unsigned int cmd,
+			unsigned long arg)
+{
+	struct evl_thread *thread = element_of(filp, struct evl_thread);
+
+	return __thread_ioctl(thread, cmd, arg);
 }
 
 static ssize_t thread_oob_read(struct file *filp,
@@ -2339,6 +2352,17 @@ static const struct file_operations thread_fops = {
 	.write		= thread_write,
 	.poll		= thread_poll,
 };
+
+long evl_functl_thread(struct evl_thread *thread,
+		unsigned int cmd, unsigned long arg)
+{
+	if (running_inband())
+		return __thread_ioctl(thread, cmd,
+				(unsigned long)compat_ptr(arg));
+
+	return __thread_oob_ioctl(thread, cmd,
+				(unsigned long)compat_ptr(arg));
+}
 
 static int map_uthread_self(struct evl_thread *thread)
 {
