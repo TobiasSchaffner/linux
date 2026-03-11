@@ -95,7 +95,7 @@ int evl_init_element(struct evl_element *e,
 	e->fpriv.efd = -1;
 	e->devname = NULL;
 	e->clone_flags = clone_flags;
-	e->ns = NULL;
+	e->scope = NULL;
 	evl_init_map_node(&e->ns_node);
 
 	return 0;

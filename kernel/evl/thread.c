@@ -345,7 +345,7 @@ static void do_cleanup_current(struct evl_thread *curr)
 
 	dequeue_old_thread(curr);
 
-	evl_remove_ns(&curr->element, thread);
+	evl_remove_ns(&evl_core_ns, &curr->element, thread);
 
 	rq = evl_get_thread_rq(curr, flags);
 
@@ -491,7 +491,7 @@ int __evl_run_kthread(struct evl_kthread *kthread, int clone_flags)
 		goto fail_spawn;
 	}
 
-	evl_add_ns(&thread->element, thread);
+	evl_add_ns(&evl_core_ns, &thread->element, thread);
 	wait_for_completion(&kthread->done);
 	if (kthread->status)
 		return kthread->status;
@@ -2494,7 +2494,7 @@ thread_factory_build(struct evl_factory *fac, const char __user *u_name,
 
 	sstate = curr->sstate;
 	*sstate_offp = evl_shared_offset(sstate);
-	sstate->shdr.fundle = evl_add_ns(&curr->element, thread);
+	sstate->shdr.fundle = evl_add_ns(&evl_core_ns, &curr->element, thread);
 
 	/*
 	 * Unlike most elements, a thread may exist in absence of any
