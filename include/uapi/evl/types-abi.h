@@ -26,11 +26,11 @@ typedef __u32 fundle_t;
 #define __FUNDLE_CLAIMED_MASK	(__FUNDLE_MASK(__FUNDLE_CLAIMED_BITS) << __FUNDLE_CLAIMED_SHIFT)
 #define __FUNDLE_CEILING_MASK	(__FUNDLE_MASK(__FUNDLE_CEILING_BITS) << __FUNDLE_CEILING_SHIFT)
 #define __FUNDLE_TYPE_MASK	(__FUNDLE_MASK(__FUNDLE_TYPE_BITS) << __FUNDLE_TYPE_SHIFT)
-#define __FUNDLE_KEY_MASK	(~(__FUNDLE_CLAIMED_MASK|__FUNDLE_CEILING_MASK|__FUNDLE_TYPE_MASK))
+#define __FUNDLE_KEY_MASK	(~(__FUNDLE_CLAIMED_MASK|__FUNDLE_CEILING_MASK))
 
 /*
- * Strip all reserved bits from the fundle, only retaining its key
- * value in the map.
+ * Strip the runtime information from the fundle, only retaining its
+ * key value in the map.
  */
 static inline fundle_t __evl_fundle_key(fundle_t handle)
 {

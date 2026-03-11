@@ -331,7 +331,7 @@ void evl_drop_subscriptions(struct evl_subscriber *sbr)
 		rb_erase(rb, &sbr->subscriptions);
 		/* Some subscriptions might be stale, check this. */
 		if (likely(!list_empty(&observer->next))) {
-			observable = evl_lookup_ns(observer->fundle, observable);
+			observable = evl_lookup_ns(&evl_core_ns, observer->fundle, observable);
 			if (EVL_WARN_ON(CORE, IS_ERR_OR_NULL(observable))) {
 				/* Something is going seriously wrong. */
 				dropped = false;
@@ -1125,7 +1125,7 @@ struct evl_observable *evl_alloc_observable(const char __user *u_name,
 	init_irq_work(&observable->flush_irqwork, inband_flush_irqwork);
 	evl_init_poll_head(&observable->poll_head);
 	raw_spin_lock_init(&observable->lock);
-	evl_add_ns(&observable->element, observable);
+	evl_add_ns(&evl_core_ns, &observable->element, observable);
 
 	return observable;
 }
@@ -1152,7 +1152,7 @@ static void observable_factory_dispose(struct evl_element *e)
 
 	observable = container_of(e, struct evl_observable, element);
 	evl_destroy_wait(&observable->oob_wait);
-	evl_remove_ns(e, observable);
+	evl_remove_ns(&evl_core_ns, e, observable);
 	evl_destroy_element(&observable->element);
 	kfree_rcu(observable, element.rcu);
 }

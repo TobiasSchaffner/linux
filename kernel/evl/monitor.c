@@ -126,7 +126,7 @@ void __evl_commit_monitor_ceiling(void)
 	 * curr->sstate has to be valid since curr bears EVL_T_USER.  If
 	 * pp_pending is a bad handle, just skip ceiling.
 	 */
-	gate = evl_lookup_ns(curr->sstate->pp_pending, monitor);
+	gate = evl_lookup_ns(&evl_core_ns, curr->sstate->pp_pending, monitor);
 	if (IS_ERR_OR_NULL(gate))
 		goto out;
 
@@ -1249,7 +1249,7 @@ monitor_factory_build(struct evl_factory *fac, const char __user *u_name,
 	mon->protocol = attrs.protocol;
 	mon->sstate = sstate;
 	*sstate_offp = evl_shared_offset(sstate);
-	sstate->shdr.fundle = evl_add_ns(&mon->element, monitor);
+	sstate->shdr.fundle = evl_add_ns(&evl_core_ns, &mon->element, monitor);
 
 	return &mon->element;
 
@@ -1270,7 +1270,7 @@ static void monitor_factory_dispose(struct evl_element *e)
 
 	mon = container_of(e, struct evl_monitor, element);
 
-	evl_remove_ns(e, monitor);
+	evl_remove_ns(&evl_core_ns, e, monitor);
 
 	if (mon->type == EVL_MONITOR_EVENT) {
 		evl_put_clock(mon->wait_queue.clock);
@@ -1324,7 +1324,7 @@ static ssize_t state_show(struct device *dev,
 	} else {
 		fun = atomic_read(__ATOMIC32(&sstate->u.gate.owner));
 		if (fun != EVL_NO_HANDLE) {
-			owner = __evl_lookup_ns(__evl_fundle_key(fun), thread);
+			owner = evl_lookup_ns_any(&evl_core_ns,	fun, thread);
 			if (!owner)
 				goto no_owner;
 			ret = snprintf(buf, PAGE_SIZE, "%s(%d) %u %u\n",

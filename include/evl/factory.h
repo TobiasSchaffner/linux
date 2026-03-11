@@ -78,7 +78,7 @@ struct evl_element {
 		struct file *filp;
 		int efd;
 	} fpriv;
-	struct evl_namespace *ns;
+	struct evl_scope *scope;
 	struct evl_map_node ns_node;
 };
 
@@ -91,10 +91,10 @@ evl_element_name(struct evl_element *e)
 	return NULL;
 }
 
-static inline struct evl_namespace *
-evl_element_ns(struct evl_element *e)
+static inline struct evl_scope *
+evl_element_scope(struct evl_element *e)
 {
-	return e->ns;
+	return e->scope;
 }
 
 static inline fundle_t evl_element_fundle(struct evl_element *e)
