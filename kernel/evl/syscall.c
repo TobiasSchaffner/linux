@@ -19,16 +19,28 @@
 #include <linux/sched/task_stack.h>
 #include <linux/sched/signal.h>
 #include <evl/thread.h>
+#include <evl/monitor.h>
 #include <evl/sched.h>
+#include <evl/factory.h>
 #include <asm/syscall.h>
 #include <uapi/evl/syscall-abi.h>
 #include <asm/evl/syscall.h>
 #include <trace/events/evl.h>
 
-#define EVL_SYSCALL(__name, __args)		\
-	long EVL_ ## __name __args
+#define __EVL_SYSCALL(__name, __args)	long EVL_ ## __name __args
+#define __EVL_SYSCALL_NAME(__name)	[sys_evl_ ## __name] = #__name
 
-static EVL_SYSCALL(read, (int fd, char __user *u_buf, size_t size))
+#define __EVL_SYSCALL_PROPAGATE   0
+#define __EVL_SYSCALL_STOP        1
+
+static const char *evl_sysnames[] = {
+	   __EVL_SYSCALL_NAME(read),
+	   __EVL_SYSCALL_NAME(write),
+	   __EVL_SYSCALL_NAME(ioctl),
+	   __EVL_SYSCALL_NAME(functl),
+};
+
+static __EVL_SYSCALL(read, (int fd, char __user *u_buf, size_t size))
 {
 	struct evl_file *efilp = evl_get_file(fd);
 	struct file *filp;
@@ -55,7 +67,7 @@ out:
 	return ret;
 }
 
-static EVL_SYSCALL(write, (int fd, const char __user *u_buf, size_t size))
+static __EVL_SYSCALL(write, (int fd, const char __user *u_buf, size_t size))
 {
 	struct evl_file *efilp = evl_get_file(fd);
 	struct file *filp;
@@ -82,7 +94,7 @@ out:
 	return ret;
 }
 
-static EVL_SYSCALL(ioctl, (int fd, unsigned int request, unsigned long arg))
+static __EVL_SYSCALL(ioctl, (int fd, unsigned int request, unsigned long arg))
 {
 	struct evl_file *efilp = evl_get_file(fd);
 	long ret = -ENOTTY;
@@ -108,17 +120,31 @@ static EVL_SYSCALL(ioctl, (int fd, unsigned int request, unsigned long arg))
 	return ret;
 }
 
-#define __EVL_CALL_NAME(__name)  \
-	[sys_evl_ ## __name] = #__name
+static __EVL_SYSCALL(functl, (fundle_t fundle, unsigned int request, unsigned long arg))
+{
+	struct evl_thread *thread;
+	struct evl_monitor *mon;
+	long ret = -EINVAL;
 
-static const char *evl_sysnames[] = {
-	   __EVL_CALL_NAME(read),
-	   __EVL_CALL_NAME(write),
-	   __EVL_CALL_NAME(ioctl),
-};
+	switch (__evl_fundle_type(fundle)) {
+	case __evl_type_thread:
+		thread = evl_lookup_ns(&evl_core_ns, fundle, thread);
+		if (likely(thread)) {
+			ret = evl_functl_thread(thread, request, arg);
+			evl_put_element(&thread->element);
+		}
+		break;
+	case __evl_type_monitor:
+		mon = evl_lookup_ns(&evl_core_ns, fundle, monitor);
+		if (likely(mon)) {
+			ret = evl_functl_monitor(mon, request, arg);
+			evl_put_element(&mon->element);
+		}
+		break;
+	}
 
-#define SYSCALL_PROPAGATE   0
-#define SYSCALL_STOP        1
+	return ret;
+}
 
 static __always_inline
 void invoke_syscall(unsigned int nr, struct pt_regs *regs,
@@ -145,6 +171,12 @@ void invoke_syscall(unsigned int nr, struct pt_regs *regs,
 		break;
 	case sys_evl_ioctl:
 		ret = EVL_ioctl((int)args[0],
+				(unsigned int)args[1],
+				args[2]);
+		break;
+	case sys_evl_functl:
+	case sys_evl_ifunctl:
+		ret = EVL_functl((int)args[0],
 				(unsigned int)args[1],
 				args[2]);
 		break;
@@ -242,16 +274,16 @@ static int do_oob_syscall(struct irq_stage *stage, struct pt_regs *regs,
 				"syscall <oob_%s> denied to %s[%d]\n",
 				evl_sysnames[scno], tsk->comm, task_pid_nr(tsk));
 		syscall_set_return_value(tsk, regs, -EPERM, 0);
-		return SYSCALL_STOP;
+		return __EVL_SYSCALL_STOP;
 	}
 
 	/*
-	 * If the syscall originates from in-band context, hand it
-	 * over to handle_pipelined_syscall() where the caller would
-	 * be switched to out-of-band context prior to handling the
+	 * If the syscall originates from the in-band stage, we need
+	 * to take the long route. Tell Dovetail to hand it over to
+	 * the next stage down the pipeline (i.e. in-band).
 	 */
 	if (stage != &oob_stage)
-		return SYSCALL_PROPAGATE;
+		return __EVL_SYSCALL_PROPAGATE;
 
 	trace_evl_oob_sysentry(scno);
 
@@ -290,11 +322,11 @@ do_stop:
 
 	trace_evl_oob_sysexit(syscall_get_return_value(tsk, regs));
 
-	return SYSCALL_STOP;
+	return __EVL_SYSCALL_STOP;
 
 do_inband:
 	if (evl_is_inband())
-		return SYSCALL_PROPAGATE;
+		return __EVL_SYSCALL_PROPAGATE;
 
 	/*
 	 * We don't want to trigger a stage switch whenever the
@@ -305,9 +337,9 @@ do_inband:
 	 */
 	if (is_valid_inband_syscall(scno)) {
 		if (handle_vdso_fallback(regs, scno, args))
-			return SYSCALL_STOP;
+			return __EVL_SYSCALL_STOP;
 		evl_switch_inband(EVL_HMDIAG_SYSDEMOTE);
-		return SYSCALL_PROPAGATE;
+		return __EVL_SYSCALL_PROPAGATE;
 	}
 
 	printk(EVL_WARNING "invalid in-band syscall <%u>\n", scno);
@@ -315,78 +347,77 @@ do_inband:
 bad_syscall:
 	syscall_set_return_value(tsk, regs, -ENOSYS, 0);
 
-	return SYSCALL_STOP;
+	return __EVL_SYSCALL_STOP;
+}
+
+static inline bool force_inband_call(bool is_evlsc, unsigned int scno)
+{
+	return is_evlsc && scno == sys_evl_ifunctl;
 }
 
 static int do_inband_syscall(struct pt_regs *regs, unsigned int scno,
 			unsigned long *args,
 			bool is_evlsc)
 {
-	struct evl_thread *curr = evl_current(); /* Always valid. */
+	struct evl_thread *curr = evl_current();
 	struct task_struct *tsk = current;
 	int ret;
 
-	/*
-	 * Some architectures may use special out-of-bound syscall
-	 * numbers which escape Dovetail's range check, e.g. when
-	 * handling aarch32 syscalls over an aarch64 kernel. When so,
-	 * assume this is an in-band syscall which we need to
-	 * propagate downstream to the common handler.
-	 */
-	if (curr == NULL)
-		return SYSCALL_PROPAGATE;
+	if (likely(curr)) {
+		/*
+		 * Catch cancellation requests pending for EVL threads
+		 * undergoing the weak scheduling policy which issue
+		 * in-band syscalls. Those are less likely to cross
+		 * evl_exit_to_user() as they should run in-band most
+		 * of the time.
+		 */
+		evl_test_cancel();
 
-	/*
-	 * Catch cancellation requests pending for threads undergoing
-	 * the weak scheduling policy which issue in-band
-	 * syscalls. Those are less likely to cross evl_exit_to_user()
-	 * as they should run in-band most of the time.
-	 */
-	evl_test_cancel();
-
-	/* Handle lazy schedparam updates before switching. */
-	evl_propagate_schedparam_change(curr);
+		/* Handle pending lazy schedparam updates. */
+		evl_propagate_schedparam_change(curr);
+	}
 
 	/* Propagate in-band syscalls. */
 	if (!is_evlsc)
-		return SYSCALL_PROPAGATE;
+		return __EVL_SYSCALL_PROPAGATE;
 
-	/*
-	 * Process an out-of-band syscall after switching current to
-	 * the out-of-band stage.  do_oob_syscall() already checked
-	 * the syscall number.
-	 */
 	trace_evl_inband_sysentry(scno);
 
-	ret = evl_switch_oob();
 	/*
-	 * -ERESTARTSYS might be received if switching oob was blocked
-	 * by a pending signal, otherwise -EINTR might be received
-	 * upon signal detection after the transition to oob context,
-	 * in which case the common logic applies (i.e. based on
-	 * EVL_T_KICKED and/or signal_pending()).
+	 * At this point, we need to switch EVL threads to the
+	 * out-of-band stage for handling out-of-band EVL syscalls.
+	 *
+	 * NOTE: -ERESTARTSYS might be received if switching oob was
+	 * blocked by a pending signal, otherwise -EINTR might be
+	 * received upon signal detection after the transition to oob
+	 * context, in which case the common logic applies (i.e. based
+	 * on EVL_T_KICKED and/or signal_pending()).
 	 */
-	if (ret == -ERESTARTSYS) {
-		syscall_set_return_value(tsk, regs, ret, 0);
-		goto done;
+	if (likely(!force_inband_call(is_evlsc, scno))) {
+		ret = evl_switch_oob();
+		if (ret == -ERESTARTSYS) {
+			syscall_set_return_value(tsk, regs, ret, 0);
+			goto done;
+		}
 	}
 
 	invoke_syscall(scno, regs, args);
 
-	if (unlikely(evl_is_inband()))
-		goto done;
+	if (unlikely(!curr))
+		goto out;
 
-	evl_exit_to_user();
+	if (!evl_is_inband())
+		evl_exit_to_user();
 done:
 	if (curr->local_info & EVL_T_IGNOVR)
 		curr->local_info &= ~EVL_T_IGNOVR;
 
 	evl_opt_counter_inc(&curr->stat.sc);
 	evl_sync_sstate(curr);
-
+out:
 	trace_evl_inband_sysexit(syscall_get_return_value(tsk, regs));
 
-	return SYSCALL_STOP;
+	return __EVL_SYSCALL_STOP;
 }
 
 static bool collect_syscall_args(struct pt_regs *regs,
@@ -444,8 +475,14 @@ int handle_oob_syscall(struct pt_regs *regs)
 	int ret;
 
 	is_evlsc = collect_syscall_args(regs, args, &scno);
-	ret = do_oob_syscall(&oob_stage, regs, scno, args, is_evlsc);
-	EVL_WARN_ON(CORE, ret == SYSCALL_PROPAGATE); /* Keep me there! */
+	if (unlikely(force_inband_call(is_evlsc, scno))) {
+		evl_switch_inband(EVL_HMDIAG_SYSDEMOTE);
+		ret = do_inband_syscall(regs, scno, args, is_evlsc);
+	} else {
+		ret = do_oob_syscall(&oob_stage, regs, scno, args, is_evlsc);
+	}
+
+	EVL_WARN_ON(CORE, ret == __EVL_SYSCALL_PROPAGATE); /* Keep me there! */
 
 	return ret;
 }
