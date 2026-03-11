@@ -32,7 +32,8 @@ struct evl_map_node {
 
 void evl_init_map(struct evl_map *map);
 
-fundle_t evl_map_node(struct evl_map *map, struct evl_map_node *n);
+fundle_t evl_map_node(struct evl_map *map, struct evl_map_node *n,
+	unsigned int type);
 
 void evl_unmap_node(struct evl_map *map, struct evl_map_node *n);
 

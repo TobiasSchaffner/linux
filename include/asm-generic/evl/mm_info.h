@@ -9,10 +9,10 @@
 #define EVL_MM_INIT_BIT    31
 
 /*
- * A namespace is merely a placeholder designating the scope which
+ * A scope is merely a placeholder designating the context which
  * defines it.
  */
-struct evl_namespace { };
+struct evl_scope { };
 
 struct oob_mm_state {
 	/* EVL_MM_*_BIT */
@@ -27,8 +27,8 @@ struct oob_mm_state {
 	struct list_head threads;
 	/* Guards ptrace_queue, threads. */
 	hard_spinlock_t lock;
-	/* Namespace of process-private elements. */
-	struct evl_namespace ns;
+	/* Scope of process-private elements. */
+	struct evl_scope scope;
 };
 
 static inline void init_oob_mm_state(struct oob_mm_state *state)
