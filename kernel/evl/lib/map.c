@@ -51,11 +51,15 @@ static int map_node_at(struct evl_map *map,
 	return 0;
 }
 
-fundle_t evl_map_node(struct evl_map *map, struct evl_map_node *n)
+fundle_t evl_map_node(struct evl_map *map, struct evl_map_node *n,
+		unsigned int type)
 {
 	fundle_t fundle, guard = 0;
 	unsigned long flags;
 	int ret;
+
+	if (EVL_WARN_ON(CORE, type > __FUNDLE_MASK(__FUNDLE_TYPE_BITS)))
+		return EVL_NO_HANDLE;
 
 	/*
 	 * We enforce inband-only context because dealing with
@@ -86,6 +90,7 @@ fundle_t evl_map_node(struct evl_map *map, struct evl_map_node *n)
 		if (fundle == EVL_FUNDLE_LIMIT)	/* Wrap around */
 			fundle = map->generator = 1;
 
+		fundle |= (type << __FUNDLE_TYPE_SHIFT);
 		ret = map_node_at(map, n, fundle);
 
 		raw_spin_unlock_irqrestore(&map->lock, flags);

@@ -464,7 +464,7 @@ retry:
 	} while (!fast_mutex_is_claimed(h));
 
 	/* Fetch the owner as userland sees it. */
-	owner = evl_lookup_ns(__evl_fundle_key(h), thread);
+	owner = evl_lookup_ns(&evl_core_ns, h, thread);
 
 	/*
 	 * We might have a scope issue, although this should never
