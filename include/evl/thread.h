@@ -347,6 +347,9 @@ static inline void evl_propagate_schedparam_change(struct evl_thread *curr)
 
 pid_t evl_get_inband_pid(struct evl_thread *thread);
 
+long evl_functl_thread(struct evl_thread *thread,
+		unsigned int cmd, unsigned long arg);
+
 struct evl_kthread {
 	struct evl_thread thread;
 	struct completion done;
