@@ -2699,7 +2699,7 @@ static ssize_t stats_show(struct device *dev,
 			struct device_attribute *attr,
 			char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "0 0 0 0 0\n");
+	return snprintf(buf, PAGE_SIZE, "0 0 0 0 0 0\n");
 }
 
 #endif	/* !CONFIG_EVL_RUNSTATS */
