@@ -53,7 +53,7 @@ long evl_functl_monitor(struct evl_monitor *mon,
 		unsigned int cmd, unsigned long arg);
 
 int evl_signal_monitor_targeted(struct evl_thread *target,
-				int monfd);
+				__u32 eventfun);
 
 void __evl_commit_monitor_ceiling(void);
 
