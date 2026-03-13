@@ -1130,12 +1130,12 @@ monitor_factory_build(struct evl_factory *fac, const char __user *u_name,
 	case EVL_MONITOR_GATE:
 		switch (attrs.protocol) {
 		case EVL_GATE_PP:
-			if (attrs.initval == 0 ||
-				attrs.initval > EVL_FIFO_MAX_PRIO)
+			if (attrs.ceiling < 1 ||
+				attrs.ceiling > EVL_FIFO_MAX_PRIO)
 				return ERR_PTR(-EINVAL);
 			break;
 		case EVL_GATE_PI:
-			if (attrs.initval)
+			if (attrs.ceiling)
 				return ERR_PTR(-EINVAL);
 			break;
 		default:
@@ -1179,11 +1179,13 @@ monitor_factory_build(struct evl_factory *fac, const char __user *u_name,
 
 	switch (attrs.type) {
 	case EVL_MONITOR_GATE:
+		sstate->u.gate.recursive = attrs.recursive;
 		switch (attrs.protocol) {
 		case EVL_GATE_PP:
-			sstate->u.gate.ceiling = attrs.initval;
+			sstate->u.gate.ceiling = attrs.ceiling;
 			evl_init_mutex_pp(&mon->mutex, clock,
 					__ATOMIC32(&sstate->u.gate.owner),
+					/* CAUTION: we do want the ceiling addr in sstate. */
 					&sstate->u.gate.ceiling);
 			break;
 		case EVL_GATE_PI:
