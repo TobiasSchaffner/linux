@@ -8,6 +8,7 @@
 #include <linux/compat.h>
 #include <evl/memory.h>
 #include <evl/monitor.h>
+#include <evl/namespace.h>
 #include <evl/uaccess.h>
 #include <trace/events/evl.h>
 
@@ -19,36 +20,31 @@ static __always_inline  atomic_t *__ATOMIC32(__u32 *ptr)
 	return (atomic_t *)ptr;
 }
 
-static const struct file_operations monitor_fops;
-
-static struct evl_monitor *get_monitor_by_fd(int efd, struct evl_file **efilpp)
+static struct evl_monitor *get_monitor_by_fundle(fundle_t fundle, int type)
 {
-	struct evl_file *efilp = evl_get_file(efd);
+	struct evl_monitor *mon = evl_lookup_ns(&evl_core_ns, fundle, monitor);
 
-	if (efilp && efilp->filp->f_op == &monitor_fops) {
-		*efilpp = efilp;
-		return element_of(efilp->filp, struct evl_monitor);
+	if (!mon)
+		return NULL;
+
+	if (mon->type != type) {
+		evl_put_element(&mon->element);
+		return NULL;
 	}
 
-	return NULL;
+	return mon;
 }
 
-int evl_signal_monitor_targeted(struct evl_thread *target, int monfd)
+int evl_signal_monitor_targeted(struct evl_thread *target, __u32 eventfun)
 {
 	struct evl_wait_channel *wchan;
 	struct evl_monitor *event;
-	struct evl_file *efilp;
 	unsigned long flags;
 	int ret = 0;
 
-	event = get_monitor_by_fd(monfd, &efilp);
+	event = get_monitor_by_fundle(eventfun, EVL_MONITOR_EVENT);
 	if (event == NULL)
 		return -EINVAL;
-
-	if (event->type != EVL_MONITOR_EVENT) {
-		ret = -EINVAL;
-		goto out;
-	}
 
 	/*
 	 * Current must hold the gate lock before calling us; if not,
@@ -70,8 +66,8 @@ int evl_signal_monitor_targeted(struct evl_thread *target, int monfd)
 		evl_put_thread_wchan(wchan);
 
 	raw_spin_unlock_irqrestore(&target->lock, flags);
-out:
-	evl_put_file(efilp);
+
+	evl_put_element(&event->element);
 
 	return ret;
 }
@@ -577,7 +573,6 @@ static int wait_gated_event(struct evl_monitor *event,
 {
 	struct evl_thread *curr = evl_current();
 	struct evl_monitor *gate;
-	struct evl_file *efilp;
 	enum evl_tmode tmode;
 	unsigned long flags;
 	struct evl_rq *rq;
@@ -588,14 +583,9 @@ static int wait_gated_event(struct evl_monitor *event,
 		return -EINVAL;
 
 	/* Find the gate monitor protecting us. */
-	gate = get_monitor_by_fd(req->gatefd, &efilp);
+	gate = get_monitor_by_fundle(req->gatefun, EVL_MONITOR_GATE);
 	if (gate == NULL)
 		return -EINVAL;
-
-	if (gate->type != EVL_MONITOR_GATE) {
-		ret = -EINVAL;
-		goto put;
-	}
 
 	/* Make sure we actually passed the gate. */
 	if (!evl_is_mutex_owner(gate->mutex.fastlock, fundle_of(curr))) {
@@ -665,7 +655,7 @@ static int wait_gated_event(struct evl_monitor *event,
 	if (ret == -ERESTARTSYS)
 		ret = -EINTR;	/* Prevent syscall restart. */
 put:
-	evl_put_file(efilp);
+	evl_put_element(&gate->element);
 
 	return ret;
 }
@@ -682,7 +672,7 @@ static int wait_monitor(struct evl_monitor *mon,
 	if (mon->type != EVL_MONITOR_EVENT)
 		return -EINVAL;
 
-	if (req->gatefd < 0) {
+	if (req->gatefun == EVL_NO_HANDLE) {
 		switch (mon->protocol) {
 		case EVL_EVENT_COUNT:
 			ret = wait_count(mon, f_flags, u_timeout);
@@ -704,20 +694,19 @@ static int unwait_monitor(struct evl_monitor *mon,
 			struct evl_monitor_unwaitreq *req)
 {
 	struct evl_monitor *gate;
-	struct evl_file *efilp;
 	int ret;
 
 	if (mon->type != EVL_MONITOR_EVENT)
 		return -EINVAL;
 
 	/* Find the gate monitor we need to re-acquire. */
-	gate = get_monitor_by_fd(req->gatefd, &efilp);
+	gate = get_monitor_by_fundle(req->gatefun, EVL_MONITOR_GATE);
 	if (gate == NULL)
 		return -EINVAL;
 
 	ret = enter_monitor(gate, NULL);
 
-	evl_put_file(efilp);
+	evl_put_element(&gate->element);
 
 	return ret;
 }
