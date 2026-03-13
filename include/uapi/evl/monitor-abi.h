@@ -27,16 +27,20 @@ struct evl_monitor_attrs {
 	__u32 initval;
 };
 
-/* State flags. */
-#define EVL_MONITOR_SIGNALED   0x1 /* Gate/Event */
-#define EVL_MONITOR_BROADCAST  0x2 /* Event */
-#define EVL_MONITOR_TARGETED   0x4 /* Event */
-
 #define EVL_MONITOR_NOGATE  -1U
 
 struct __evl_monitor_sstate {
 	struct __evl_sstate_header shdr;
-	__u32 flags;		/* EVL_MONITOR_{SIGNALED, ...} */
+	__u32 type : 2;
+	__u32 protocol : 4;
+	union {
+		struct {
+			__u32 signaled : 1;
+			__u32 broadcast : 1;
+			__u32 targeted : 1;
+		};
+		__u32 all;
+	} flags;
 	union {
 		struct {
 			__u32 owner; /* fundle in atomic_t */

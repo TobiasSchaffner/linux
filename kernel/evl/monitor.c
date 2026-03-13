@@ -55,8 +55,8 @@ int evl_signal_monitor_targeted(struct evl_thread *target, __u32 eventfun)
 
 	wchan = evl_get_thread_wchan(target);
 	if (wchan == &event->wait_queue.wchan) {
-		event->sstate->flags |= (EVL_MONITOR_TARGETED|
-					EVL_MONITOR_SIGNALED);
+		event->sstate->flags.targeted = true;
+		event->sstate->flags.signaled = true;
 		raw_spin_lock(&target->rq->lock);
 		target->info |= EVL_T_SIGNAL;
 		raw_spin_unlock(&target->rq->lock);
@@ -114,10 +114,8 @@ static void untrack_event(struct evl_monitor *event, struct evl_monitor *gate)
 static void wakeup_waiters(struct evl_monitor *event, struct evl_monitor *gate)
 {
 	struct __evl_monitor_sstate *sstate = event->sstate;
+	bool bcast = sstate->flags.broadcast;
 	struct evl_thread *waiter, *n;
-	bool bcast;
-
-	bcast = !!(sstate->flags & EVL_MONITOR_BROADCAST);
 
 	/*
 	 * We are called upon exiting a gate which serializes access
@@ -136,9 +134,8 @@ static void wakeup_waiters(struct evl_monitor *event, struct evl_monitor *gate)
 	if (evl_wait_active(&event->wait_queue)) {
 		if (bcast) {
 			evl_flush_wait_locked(&event->wait_queue, 0);
-		} else if (sstate->flags & EVL_MONITOR_TARGETED) {
-			evl_for_each_waiter_safe(waiter, n,
-						&event->wait_queue) {
+		} else if (sstate->flags.targeted) {
+			evl_for_each_waiter_safe(waiter, n, &event->wait_queue) {
 				if (waiter->info & EVL_T_SIGNAL)
 					evl_wake_up(&event->wait_queue,
 						waiter, 0);
@@ -149,9 +146,7 @@ static void wakeup_waiters(struct evl_monitor *event, struct evl_monitor *gate)
 		untrack_event(event, gate);
 	} /* Otherwise, spurious wakeup (fine, might happen). */
 
-	sstate->flags &= ~(EVL_MONITOR_SIGNALED|
-			EVL_MONITOR_BROADCAST|
-			EVL_MONITOR_TARGETED);
+	sstate->flags.all = 0;
 }
 
 static int __enter_monitor(struct evl_monitor *gate,
@@ -214,11 +209,11 @@ static void __exit_monitor(struct evl_monitor *gate, struct evl_thread *curr) /*
 	 * Since gate->mutex is held, we can manipulate the shared
 	 * state flags racelessly.
 	 */
-	if (sstate->flags & EVL_MONITOR_SIGNALED) {
-		sstate->flags &= ~EVL_MONITOR_SIGNALED;
+	if (sstate->flags.signaled) {
+		sstate->flags.signaled = false;
 		list_for_each_entry_safe(event, n, &gate->events, next) {
 			raw_spin_lock(&event->wait_queue.wchan.lock);
-			if (event->sstate->flags & EVL_MONITOR_SIGNALED)
+			if (event->sstate->flags.signaled)
 				wakeup_waiters(event, gate);
 			raw_spin_unlock(&event->wait_queue.wchan.lock);
 		}
@@ -1220,6 +1215,13 @@ monitor_factory_build(struct evl_factory *fac, const char __user *u_name,
 	mon->sstate = sstate;
 	*sstate_offp = evl_shared_offset(sstate);
 	sstate->shdr.fundle = evl_add_ns(&evl_core_ns, &mon->element, monitor);
+	/*
+	 * CAUTION: the following is only a courtesy to userland. We
+	 * never, ever rely on this information which might be
+	 * corrupted/tampered with by a broken/rogue user.
+	 */
+	sstate->type = mon->type;
+	sstate->protocol = mon->protocol;
 
 	return &mon->element;
 
@@ -1287,8 +1289,7 @@ static ssize_t state_show(struct device *dev,
 			       atomic_read(__ATOMIC32(&sstate->u.event.value)));
 			break;
 		case EVL_EVENT_GATED:
-			ret = snprintf(buf, PAGE_SIZE, "%#x\n",
-				sstate->flags);
+			ret = snprintf(buf, PAGE_SIZE, "%#x\n",	sstate->flags.all);
 			break;
 		}
 	} else {
