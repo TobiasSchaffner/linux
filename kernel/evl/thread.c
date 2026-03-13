@@ -2181,7 +2181,7 @@ static long __thread_oob_ioctl(struct evl_thread *thread, unsigned int cmd,
 {
 	struct evl_thread *curr = evl_current();
 	long ret = -EPERM;
-	__u32 monfd;
+	__u32 eventfun;
 
 	if (thread->state & EVL_T_ZOMBIE)
 		return -ESTALE;
@@ -2198,10 +2198,10 @@ static long __thread_oob_ioctl(struct evl_thread *thread, unsigned int cmd,
 		}
 		break;
 	case EVL_THRIOC_SIGNAL:
-		ret = raw_get_user(monfd, (__u32 *)arg);
+		ret = raw_get_user(eventfun, (__u32 *)arg);
 		if (ret)
 			return -EFAULT;
-		ret = evl_signal_monitor_targeted(thread, monfd);
+		ret = evl_signal_monitor_targeted(thread, eventfun);
 		break;
 	case EVL_THRIOC_YIELD:
 		evl_release_thread(curr, 0, 0);
