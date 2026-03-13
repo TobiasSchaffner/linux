@@ -453,6 +453,30 @@ static bool collect_syscall_args(struct pt_regs *regs,
 	return true;
 }
 
+/*
+ * When legacy syscall support is enabled, Dovetail might be confused
+ * by architectures using special in-band syscall numbers which have
+ * the __OOB_SYSCALL_BIT set, e.g. some may be issued in aarch32 over
+ * aarch64 compat mode. Ideally, CONFIG_DOVETAIL_LEGACY_SYSCALL_RANGE
+ * should be off when EVL is enabled since we don't support the legacy
+ * call form. Unfortunately, Dovetail still enables this compat
+ * feature by default, which might cause our in-band handler to
+ * receive non-EVL syscalls advertised as EVL ones. The following
+ * routine detects such situation and propagates the misrouted syscall
+ * downstream to the common in-band handler.
+ */
+static inline
+bool detect_misrouted_syscall(struct pt_regs *regs)
+{
+	unsigned int nr = syscall_get_nr(current, regs);
+
+	if (IS_ENABLED(CONFIG_DOVETAIL_LEGACY_SYSCALL_RANGE) &&
+		nr & __OOB_SYSCALL_BIT)
+		return true;
+
+	return false;
+}
+
 int handle_pipelined_syscall(struct irq_stage *stage, struct pt_regs *regs)
 {
 	unsigned long args[6] = { 0 };
@@ -461,8 +485,11 @@ int handle_pipelined_syscall(struct irq_stage *stage, struct pt_regs *regs)
 
 	is_evlsc = collect_syscall_args(regs, args, &scno);
 
-	if (unlikely(running_inband()))
+	if (unlikely(running_inband())) {
+		if (detect_misrouted_syscall(regs))
+			return __EVL_SYSCALL_PROPAGATE;
 		return do_inband_syscall(regs, scno, args, is_evlsc);
+	}
 
 	return do_oob_syscall(stage, regs, scno, args, is_evlsc);
 }
