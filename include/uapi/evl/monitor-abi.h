@@ -24,7 +24,13 @@ struct evl_monitor_attrs {
 	__u32 clockfd;
 	__u32 type : 2,
 	      protocol : 4;
-	__u32 initval;
+	union {
+		__u32 initval;
+		struct {
+			__u32 ceiling : 7;
+			__u32 recursive : 1;
+		};
+	};
 };
 
 #define EVL_MONITOR_NOGATE  -1U
