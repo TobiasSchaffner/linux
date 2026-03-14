@@ -171,26 +171,45 @@ static int enter_monitor(struct evl_monitor *gate,
 			struct __evl_timespec __user *u_timeout)
 {
 	struct evl_thread *curr = evl_current();
+	int ret;
 
 	if (gate->type != EVL_MONITOR_GATE)
 		return -EINVAL;
 
+	/*
+	 * We only handle first-order locking, user-space should deal
+	 * with locking recursion.
+	 */
 	if (evl_is_mutex_owner(gate->mutex.fastlock, fundle_of(curr)))
-		return -EDEADLK; /* Deny recursive locking. */
+		return -EDEADLK;
 
 	evl_commit_monitor_ceiling();
 
-	return __enter_monitor(gate, u_timeout);
+	ret = __enter_monitor(gate, u_timeout);
+	if (ret)
+		return ret;
+
+	gate->sstate->u.gate.nesting = 1;
+
+	return ret;
 }
 
 static int tryenter_monitor(struct evl_monitor *gate)
 {
+	int ret;
+
 	if (gate->type != EVL_MONITOR_GATE)
 		return -EINVAL;
 
 	evl_commit_monitor_ceiling();
 
-	return evl_trylock_mutex(&gate->mutex);
+	ret = evl_trylock_mutex(&gate->mutex);
+	if (ret)
+		return ret;
+
+	gate->sstate->u.gate.nesting = 1;
+
+	return 0;
 }
 
 /*
