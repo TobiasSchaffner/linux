@@ -43,7 +43,7 @@ void evl_net_cleanup_packet(struct net *net)
 	EVL_WARN_ON(NET, !evl_rculist_empty(&nets->packet.all_listeners));
 }
 
-/* oob, hard irqs off */
+/* oob, hard irqs ON */
 static bool __packet_deliver(struct evl_rculist *rxq,
 			struct sk_buff *skb, int protocol)
 {
@@ -51,6 +51,7 @@ static bool __packet_deliver(struct evl_rculist *rxq,
 	bool delivered = false;
 	struct evl_socket *esk;
 	struct sk_buff *qskb;
+	unsigned long flags;
 	u16 vlan_id;
 	int ifindex;
 
@@ -96,13 +97,13 @@ static bool __packet_deliver(struct evl_rculist *rxq,
 			continue;
 		}
 
-		raw_spin_lock(&esk->input_wait.wchan.lock);
+		raw_spin_lock_irqsave(&esk->input_wait.wchan.lock, flags);
 
 		list_add_tail(&qskb->list, &esk->input);
 		if (evl_wait_active(&esk->input_wait))
 			evl_wake_up_head(&esk->input_wait);
 
-		raw_spin_unlock(&esk->input_wait.wchan.lock);
+		raw_spin_unlock_irqrestore(&esk->input_wait.wchan.lock, flags);
 
 		evl_signal_poll_events(&esk->poll_head,	POLLIN|POLLRDNORM);
 		delivered = true;
