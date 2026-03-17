@@ -8,6 +8,7 @@
  * parameter. Now every user can use their own standalone ratelimit_state.
  */
 
+#include <dovetail/thread_info_accessors.h>
 #include <linux/ratelimit.h>
 #include <linux/jiffies.h>
 #include <linux/export.h>
@@ -34,6 +35,9 @@ int ___ratelimit(struct ratelimit_state *rs, const char *func)
 	int burst = READ_ONCE(rs->burst);
 	unsigned long flags;
 	int ret = 0;
+
+	if (running_oob())	/* Dovetail: oob escapes ratelimiting. */
+		return 1;
 
 	/*
 	 * Zero interval says never limit, otherwise, non-positive burst
