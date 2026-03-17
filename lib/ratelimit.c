@@ -35,6 +35,9 @@ int ___ratelimit(struct ratelimit_state *rs, const char *func)
 	unsigned long flags;
 	int ret = 0;
 
+	if (running_oob())	/* Dovetail: oob escapes ratelimiting. */
+		return 1;
+
 	/*
 	 * Zero interval says never limit, otherwise, non-positive burst
 	 * says always limit.
