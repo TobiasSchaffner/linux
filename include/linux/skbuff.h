@@ -5657,6 +5657,22 @@ static inline struct sk_buff *get_oob_skb(void)
 	return __get_oob_skb();
 }
 
+static inline void skb_mark_oob(struct sk_buff *skb)
+{
+}
+
+static inline void skb_mark_oob_released(struct sk_buff *skb)
+{
+}
+
+static inline void skb_mark_oob_timestamped(struct sk_buff *skb)
+{
+}
+
+static inline void skb_mark_oob_managed(struct sk_buff *skb)
+{
+}
+
 #endif	/* !CONFIG_NET_OOB */
 
 #endif	/* __KERNEL__ */
