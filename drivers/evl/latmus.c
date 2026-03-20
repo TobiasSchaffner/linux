@@ -166,14 +166,23 @@ static int add_measurement_sample(struct latmus_runner *runner,
 	ktime_t period = runner->period;
 	int delta, cell, offset_delta;
 
+	delta = (int)ktime_to_ns(ktime_sub(timestamp, state->ideal));
+	state->ideal = ktime_add(state->ideal, period);
+
+	while (delta > 0 &&
+		(unsigned int)delta > ktime_to_ns(period)) { /* period > 0 */
+		if (runner->warmup_samples >= runner->warmup_limit)
+			state->overruns++;
+		state->ideal = ktime_add(state->ideal, period);
+		delta -= ktime_to_ns(period);
+	}
+
 	/* Skip samples in warmup time. */
 	if (runner->warmup_samples < runner->warmup_limit) {
 		runner->warmup_samples++;
-		state->ideal = ktime_add(state->ideal, period);
 		return 0;
 	}
 
-	delta = (int)ktime_to_ns(ktime_sub(timestamp, state->ideal));
 	offset_delta = delta - state->offset;
 	if (offset_delta < state->min_lat)
 		state->min_lat = offset_delta;
@@ -193,14 +202,6 @@ static int add_measurement_sample(struct latmus_runner *runner,
 	}
 
 	state->sum += offset_delta;
-	state->ideal = ktime_add(state->ideal, period);
-
-	while (delta > 0 &&
-		(unsigned int)delta > ktime_to_ns(period)) { /* period > 0 */
-		state->overruns++;
-		state->ideal = ktime_add(state->ideal, period);
-		delta -= ktime_to_ns(period);
-	}
 
 	if (++state->cur_samples >= state->max_samples)
 		send_measurement(runner);
