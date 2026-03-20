@@ -277,11 +277,12 @@ evl_net_get_arp_entry_or_pseudo(struct net_device *dev, __be32 ipaddr,
 				dev->broadcast, ETH_ALEN, pseudo_earp);
 
 	if (ipv4_is_multicast(ipaddr)) {
+		u32 ipne = ntohl(ipaddr);
 		u8 mac_mcast_addr[ETH_ALEN];
 		memcpy(mac_mcast_addr, eth_ipv4_mcast_addr_base, ETH_ALEN);
-		mac_mcast_addr[ETH_ALEN - 1] = ipaddr & 0xff;
-		mac_mcast_addr[ETH_ALEN - 2] = (ipaddr >> 8) & 0xff;
-		mac_mcast_addr[ETH_ALEN - 3] = (ipaddr >> 16) & 0x7f;
+		mac_mcast_addr[ETH_ALEN - 1] = ipne & 0xff;
+		mac_mcast_addr[ETH_ALEN - 2] = (ipne >> 8) & 0xff;
+		mac_mcast_addr[ETH_ALEN - 3] = (ipne >> 16) & 0x7f;
 		return fill_pseudo_arp(dev, ipaddr, mac_mcast_addr,
 				sizeof(mac_mcast_addr), pseudo_earp);
 	}
