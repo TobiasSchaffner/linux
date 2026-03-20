@@ -971,7 +971,7 @@ static int run_measurement(struct latmus_runner *runner,
 		return -EFAULT;
 
 	ret = measure_continously(runner);
-	if (ret != -EINTR)
+	if (ret != -EINTR && ret != -ERESTARTSYS)
 		return ret;
 
 	/*
