@@ -377,7 +377,7 @@ static ssize_t send_packet(struct evl_socket *esk,
 	 */
 	real_dev = evl_net_real_dev(dev);
 
-	skb = evl_net_dev_alloc_skb(real_dev, timeout, tmode);
+	skb = evl_net_dev_alloc_skb(dev, timeout, tmode);
 	if (IS_ERR(skb)) {
 		ret = PTR_ERR(skb);
 		goto out;
