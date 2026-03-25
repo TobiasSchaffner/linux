@@ -128,6 +128,12 @@ static struct page *alloc_bufpage(struct net_device *dev,
 	return page;
 }
 
+/*
+ * evl_net_dev_alloc_skb - allocate a buffer for transmit.
+ *
+ * @dev is the target device, VLAN or real. Make sure to pass the VLAN
+ * netdev if 802.1q encapsulation is required on transmit.
+ */
 struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 				      ktime_t timeout, enum evl_tmode tmode)
 {
@@ -178,7 +184,9 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 	 * headroom, so that we won't have to reallocate for such
 	 * purpose.
 	 */
-	skb_reserve(skb, VLAN_HLEN);
+	if (is_vlan_dev(dev))
+		skb_reserve(skb, VLAN_HLEN);
+
 	skb->dev = real_dev;
 
 	/*
@@ -596,7 +604,10 @@ void evl_net_dev_purge_pool(struct net_device *dev)
 
 /*
  * evl_net_wget_skb - allocate a buffer with contention management for
- * output.
+ * transmit.
+ *
+ * @dev is the target device, VLAN or real. Make sure to pass the VLAN
+ * netdev if 802.1q encapsulation is required on transmit.
  *
  * If the allocation causes the per-socket write contention threshold
  * to be crossed, the caller may sleep according to the timeout
