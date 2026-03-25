@@ -126,6 +126,9 @@ static int enable_oob_port(struct net_device *dev,
 	 * _never_ for a VLAN device.
 	 */
 	real_dev = evl_net_real_dev(dev);
+	if (!(real_dev->flags & IFF_UP))
+		return -ENETDOWN;
+
 	rnds = &real_dev->oob_state;
 	est = pest = rnds->estate;
 	if (pest == NULL) {
