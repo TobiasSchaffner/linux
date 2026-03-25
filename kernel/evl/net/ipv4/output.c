@@ -112,7 +112,7 @@ struct sk_buff *evl_net_ipv4_build_datagram(struct evl_socket *esk,
 		start_time = evl_ktime_monotonic();
 
 	for (;;) {
-		skb = evl_net_wget_skb(esk, real_dev, timeout);
+		skb = evl_net_wget_skb(esk, dev, timeout);
 		if (IS_ERR(skb)) {
 			ret = PTR_ERR(skb);
 			goto fail;
