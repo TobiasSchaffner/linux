@@ -41,14 +41,21 @@ static bool pop_vlan_header(struct sk_buff *skb)
 }
 
 /**
- * evl_net_ether_accept - Unconditionally accept an ethernet packet
- * for the out-of-band stack, stripping out the VLAN information if
- * present.
+ * evl_net_ether_accept - Accept an ethernet packet.
+ *
+ * Unlike evl_net_ether_accept_vlan(), this routine does not filter
+ * the input on the VLAN tag. However, non-IPv4 packets are rejected,
+ * so that other payload types we don't deal with always flow through
+ * the inband stack (e.g. ETH_P_ARP).
+ *
+ * VLAN encapsulation is stripped out if present.
  *
  * @skb the packet to deliver. May be linked to some upstream queue.
  */
 bool evl_net_ether_accept(struct sk_buff *skb)
 {
+	if (skb->protocol != htons(ETH_P_IP))
+		return false;
 	/*
 	 * If VLAN (un)tagging is not hw-accelerated, pop the VLAN
 	 * header manually.
