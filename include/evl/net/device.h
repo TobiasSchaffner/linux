@@ -52,20 +52,23 @@ evl_net_filter_rx(struct net_device *dev, struct sk_buff *skb)
 {
 	struct evl_netdev_state *est = dev->oob_state.estate;
 
-	/*
-	 * Unconditionally accept all traffic sent to oob-enabled
-	 * loopback devices from the oob stage. Those devices are very
-	 * unlikely to support VLANs, but we could still use a filter
-	 * to accept in-band traffic, so keep on checking for the
-	 * latter.
-	 */
-	if (dev->flags & IFF_LOOPBACK && running_oob())
-		return EVL_RX_ACCEPT;
+	/* We should receive traffic only from base/physical interfaces. */
+	if (EVL_WARN_ON_ONCE(NET, is_vlan_dev(dev)))
+		return EVL_RX_SKIP;
 
 	if (test_bit(EVL_NETDEV_RX_FILTER_BIT, &est->flags))
 		return __evl_net_filter_rx(est, skb);
 
-	return EVL_RX_VLAN;
+	/*
+	 * If no filter handled the packet and the oob port is enabled
+	 * directly on the receiving (base) interface, then assume
+	 * that such device is entirely dedicated to oob
+	 * traffic. Accept all packets flowing in.  This includes
+	 * IFF_LOOPBACK devices (e.e. 'lo') so that we unconditionally
+	 * accept incoming traffic if we have an active oob port
+	 * there.
+	 */
+	return netif_oob_port(dev) ? EVL_RX_ACCEPT : EVL_RX_VLAN;
 }
 
 static inline struct net_device *evl_net_real_dev(struct net_device *dev)
