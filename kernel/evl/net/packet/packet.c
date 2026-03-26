@@ -134,7 +134,7 @@ static bool packet_deliver(struct sk_buff *skb, int protocol) /* oob */
 {
 	struct evl_rculist *rxq = get_rxq(dev_net(skb->dev), protocol);
 
-	if (WARN_ON(!rxq))
+	if (!rxq)
 		return false;
 
 	return __packet_deliver(rxq, skb, protocol);
