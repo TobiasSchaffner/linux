@@ -9,6 +9,7 @@
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/netdevice.h>
+#include <evl/net/device.h>
 #include <evl/net/qdisc.h>
 
 static LIST_HEAD(all_net_qdisc);
@@ -70,7 +71,7 @@ EXPORT_SYMBOL_GPL(evl_net_free_qdisc);
  */
 int evl_net_sched_packet(struct net_device *dev, struct sk_buff *skb) /* oob/in-band */
 {
-	struct evl_net_qdisc *qdisc = dev->oob_state.estate->qdisc;
+	struct evl_net_qdisc *qdisc = evl_net_get_state(dev)->qdisc;
 
 	return qdisc->oob_ops->enqueue(qdisc, skb);
 }
