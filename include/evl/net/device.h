@@ -44,13 +44,33 @@ int evl_net_dev_allocfd(struct net *net, const char *devname);
 
 void evl_net_dev_tx_nomem(struct net_device *dev);
 
+static inline struct net_device *evl_net_real_dev(struct net_device *dev)
+{
+	if (is_vlan_dev(dev))
+		return vlan_dev_real_dev(dev);
+
+	return dev;
+}
+
+static inline struct evl_netdev_state *evl_net_get_state(struct net_device *dev)
+{
+	struct net_device *real_dev = evl_net_real_dev(dev);
+
+	return real_dev->oob_state.estate;
+}
+
+static inline struct evl_netdev_stats *evl_net_get_stats(struct net_device *dev)
+{
+	return dev->oob_state.stats;
+}
+
 enum evl_net_rx_action
 __evl_net_filter_rx(struct evl_netdev_state *est, struct sk_buff *skb);
 
 static inline enum evl_net_rx_action
 evl_net_filter_rx(struct net_device *dev, struct sk_buff *skb)
 {
-	struct evl_netdev_state *est = dev->oob_state.estate;
+	struct evl_netdev_state *est = evl_net_get_state(dev);
 
 	/* We should receive traffic only from base/physical interfaces. */
 	if (EVL_WARN_ON_ONCE(NET, is_vlan_dev(dev)))
@@ -69,21 +89,6 @@ evl_net_filter_rx(struct net_device *dev, struct sk_buff *skb)
 	 * there.
 	 */
 	return netif_oob_port(dev) ? EVL_RX_ACCEPT : EVL_RX_VLAN;
-}
-
-static inline struct net_device *evl_net_real_dev(struct net_device *dev)
-{
-	if (is_vlan_dev(dev))
-		return vlan_dev_real_dev(dev);
-
-	return dev;
-}
-
-static inline struct evl_netdev_state *evl_net_get_state(struct net_device *dev)
-{
-	struct net_device *real_dev = evl_net_real_dev(dev);
-
-	return real_dev->oob_state.estate;
 }
 
 #endif

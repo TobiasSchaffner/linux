@@ -110,6 +110,7 @@ static inline void do_tx(struct evl_net_qdisc *qdisc,
 void evl_net_do_tx(void *arg)
 {
 	struct net_device *dev = arg;
+	struct evl_netdev_stats *stats;
 	struct evl_netdev_state *est;
 	struct evl_net_qdisc *qdisc;
 	unsigned int packets_out;
@@ -118,7 +119,8 @@ void evl_net_do_tx(void *arg)
 	u64 bytes_out;
 	int ret;
 
-	est = dev->oob_state.estate;
+	est = evl_net_get_state(dev);
+	stats = evl_net_get_stats(dev);
 	qdisc = est->qdisc;
 
 	while (!evl_kthread_should_stop()) {
@@ -137,8 +139,8 @@ void evl_net_do_tx(void *arg)
 			bool more;
 			skb = qdisc->oob_ops->dequeue(qdisc, &more);
 			if (skb == NULL) {
-				evl_counter_add_careful(&est->stats.tx_packets, packets_out);
-				evl_counter_add_careful(&est->stats.tx_bytes, bytes_out);
+				evl_counter_add_careful(&stats->tx_packets, packets_out);
+				evl_counter_add_careful(&stats->tx_bytes, bytes_out);
 				break;
 			}
 			packets_out++;
@@ -205,7 +207,7 @@ static void xmit_inband(struct irq_work *work) /* in-band, stalled */
 /* oob or in-band */
 static int xmit_oob(struct net_device *real_dev, struct sk_buff *skb)
 {
-	struct evl_netdev_state *est = real_dev->oob_state.estate;
+	struct evl_netdev_state *est = evl_net_get_state(real_dev);
 	int ret;
 
 	ret = evl_net_sched_packet(real_dev, skb);

@@ -842,8 +842,8 @@ int evl_net_deliver_udp(struct sk_buff *skb)
 		return -EINVAL;	/* Obviously garbled, drop that. */
 
 	if (!verify_checksum(skb)) {
-		struct evl_netdev_state *est = evl_net_get_state(skb->dev);
-		evl_counter_inc_careful(&est->stats.csum_errors);
+		struct evl_netdev_stats *stats = evl_net_get_stats(skb->dev);
+		evl_counter_inc_careful(&stats->csum_errors);
 		return -EINVAL;
 	}
 

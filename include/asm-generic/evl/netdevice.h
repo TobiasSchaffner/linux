@@ -51,22 +51,23 @@ struct evl_netdev_state {
 	struct evl_net_ebpf_filter __rcu *rx_filter;
 	/* Runtime state flags. */
 	unsigned long flags;
-	/* Statistics */
-	struct {
-		evl_counter64 rx_packets;
-		evl_counter64 rx_bytes;
-		evl_counter64 tx_packets;
-		evl_counter64 tx_bytes;
-		evl_counter32 rx_nomem;
-		evl_counter32 tx_nomem;
-		evl_counter32 csum_errors;
-	} stats;
 	/* Count of oob ports referring to this device. */
 	int refs;
 };
 
+struct evl_netdev_stats {
+	evl_counter64 rx_packets;
+	evl_counter64 rx_bytes;
+	evl_counter64 tx_packets;
+	evl_counter64 tx_bytes;
+	evl_counter32 rx_nomem;
+	evl_counter32 tx_nomem;
+	evl_counter32 csum_errors;
+};
+
 struct oob_netdev_state {
 	struct evl_netdev_state *estate;
+	struct evl_netdev_stats *stats;
 	struct evl_crossing crossing;
 	struct list_head next;
 };
