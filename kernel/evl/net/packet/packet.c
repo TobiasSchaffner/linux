@@ -585,7 +585,7 @@ static __poll_t poll_packet(struct evl_socket *esk,
 
 	dev = get_netif(esk);
 	if (dev) {
-		est = dev->oob_state.estate;
+		est = evl_net_get_state(dev);
 		evl_poll_watch(&est->poll_head, wait, NULL);
 		/* FIXME: Assume we can always TX, which is too optimistic. */
 		ret |= POLLOUT|POLLWRNORM;

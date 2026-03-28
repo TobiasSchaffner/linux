@@ -106,6 +106,7 @@ static int enable_oob_port(struct net_device *dev,
 {
 	struct oob_netdev_state *rnds, *nds;
 	struct evl_netdev_state *pest, *est;
+	struct evl_netdev_stats *stats;
 	struct net_device *real_dev;
 	struct evl_kthread *kt;
 	unsigned long flags;
@@ -119,27 +120,38 @@ static int enable_oob_port(struct net_device *dev,
 	 * If @dev is a VLAN device, diversion is turned on for the
 	 * real device it sits on top of, so that the EVL stack is
 	 * given a chance to pick the ingress traffic to be routed to
-	 * the oob stage. The resources we need are allocated only for
-	 * the real device.
-	 *
-	 * NOTE: the diversion flag is set for a real device only,
-	 * _never_ for a VLAN device.
+	 * the oob stage. A runtime state is allocated once, only for
+	 * a real/base device. Statistics are allocated for every
+	 * device, real or VLAN.
 	 */
 	real_dev = evl_net_real_dev(dev);
 	if (!(real_dev->flags & IFF_UP))
 		return -ENETDOWN;
 
+	stats = kzalloc(sizeof(*stats), GFP_KERNEL);
+	if (stats == NULL)
+		return -ENOMEM;
+
 	rnds = &real_dev->oob_state;
 	est = pest = rnds->estate;
 	if (pest == NULL) {
 		est = kzalloc(sizeof(*est), GFP_KERNEL);
-		if (est == NULL)
+		if (est == NULL) {
+			kfree(stats);
 			return -ENOMEM;
+		}
 		rnds->estate = est;
+		rnds->stats = kzalloc(sizeof(*stats), GFP_KERNEL);
+		if (rnds->stats == NULL) {
+			kfree(est);
+			kfree(stats);
+			return -ENOMEM;
+		}
 	}
 
 	nds = &dev->oob_state;
 	evl_init_crossing(&nds->crossing);
+	nds->stats = stats;
 
 	if (est->refs++ > 0)	/* Guarded by rtnl_lock. */
 		goto queue;
@@ -204,7 +216,10 @@ static int enable_oob_port(struct net_device *dev,
 	if (nds != rnds) /* i.e. dev is a VLAN interface. */
 		evl_init_crossing(&rnds->crossing);
 
-	/* Divert traffic from the real device. */
+	/*
+	 * Tell the in-band stack to divert traffic flowing in from
+	 * the real device to netif_deliver_oob().
+	 */
 	ret = netif_enable_oob_diversion(real_dev);
 	if (ret)
 		goto fail_enable_diversion;
@@ -242,7 +257,11 @@ fail_alloc_qdisc:
 	if (!pest) {
 		kfree(est);
 		rnds->estate = NULL;
+		kfree(rnds->stats);
+		rnds->stats = NULL;
 	}
+
+	kfree(stats);
 
 	return ret;
 }
@@ -286,6 +305,11 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	evl_pass_crossing(&nds->crossing);
 
 	netif_disable_oob_port(dev);
+
+	if (dev != real_dev) {
+		kfree(nds->stats);
+		nds->stats = NULL;
+	}
 
 	rnds = &real_dev->oob_state;
 	est = rnds->estate;
@@ -334,6 +358,8 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	evl_net_free_qdisc(est->qdisc);
 	kfree(est);
 	rnds->estate = NULL;
+	kfree(rnds->stats);
+	rnds->stats = NULL;
 }
 
 static int switch_oob_port(struct net_device *dev,
@@ -497,11 +523,8 @@ bool netif_oob_get_port(struct net_device *dev)
 
 ssize_t netif_oob_query_pool(struct net_device *dev, char *buf)
 {
-	struct evl_netdev_state *est;
-	struct net_device *real_dev;
+	struct evl_netdev_state *est = evl_net_get_state(dev);
 
-	real_dev = evl_net_real_dev(dev);
-	est = real_dev->oob_state.estate;
 	if (est == NULL)
 		return -ENXIO;
 
@@ -615,22 +638,20 @@ static int set_rx_filter(struct net_device *dev, unsigned long arg)
 	return 0;
 }
 
-#define _distance(a, b)	(s32)((a) - (b))
-
 static int get_dev_stat(struct net_device *dev, struct evl_net_devstat *devs)
 {
-	struct net_device *real_dev = evl_net_real_dev(dev);
-	struct evl_netdev_state *est = real_dev->oob_state.estate;
+	struct evl_netdev_stats *stats = evl_net_get_stats(dev);
+	struct evl_netdev_state *est = evl_net_get_state(dev);
 
 	devs->__flags = 0;	/* Clear this first. */
-	devs->oob_capable = netdev_is_oob_capable(real_dev);
-	devs->rx_packets = evl_counter_read_careful(&est->stats.rx_packets);
-	devs->rx_bytes = evl_counter_read_careful(&est->stats.rx_bytes);
-	devs->tx_packets = evl_counter_read_careful(&est->stats.tx_packets);
-	devs->tx_bytes = evl_counter_read_careful(&est->stats.tx_bytes);
-	devs->rx_nomem = evl_counter_read_careful(&est->stats.rx_nomem);
-	devs->tx_nomem = evl_counter_read_careful(&est->stats.tx_nomem);
-	devs->csum_errors = evl_counter_read_careful(&est->stats.csum_errors);
+	devs->oob_capable = netdev_is_oob_capable(evl_net_real_dev(dev));
+	devs->rx_packets = evl_counter_read_careful(&stats->rx_packets);
+	devs->rx_bytes = evl_counter_read_careful(&stats->rx_bytes);
+	devs->tx_packets = evl_counter_read_careful(&stats->tx_packets);
+	devs->tx_bytes = evl_counter_read_careful(&stats->tx_bytes);
+	devs->rx_nomem = evl_counter_read_careful(&stats->rx_nomem);
+	devs->tx_nomem = evl_counter_read_careful(&stats->tx_nomem);
+	devs->csum_errors = evl_counter_read_careful(&stats->csum_errors);
 	devs->skb_size = est->buf_size;
 	devs->skb_free = READ_ONCE(est->tx_pages->alloc.count);
 	devs->skb_total = est->pool_max;
@@ -641,10 +662,9 @@ static int get_dev_stat(struct net_device *dev, struct evl_net_devstat *devs)
 /* in-band hook, called by a driver upon oob memory shortage on RX. */
 void netif_rx_nomem_oob(struct net_device *dev)
 {
-	struct net_device *real_dev = evl_net_real_dev(dev);
-	struct evl_netdev_state *est = real_dev->oob_state.estate;
+	struct evl_netdev_stats *stats = evl_net_get_stats(dev);
 
-	evl_counter_inc_careful(&est->stats.tx_nomem);
+	evl_counter_inc_careful(&stats->tx_nomem);
 }
 EXPORT_SYMBOL(netif_rx_nomem_oob);
 

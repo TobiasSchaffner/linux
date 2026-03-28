@@ -94,10 +94,10 @@ static inline void maybe_kick_recycler(void)
 		evl_call_inband(&recycler_work);
 }
 
-static struct page *alloc_bufpage(struct net_device *dev,
+static struct page *alloc_bufpage(struct net_device *real_dev,
 				ktime_t timeout, enum evl_tmode tmode)
 {
-	struct evl_netdev_state *est = dev->oob_state.estate;
+	struct evl_netdev_state *est = evl_net_get_state(real_dev);
 	unsigned long flags;
 	struct page *page;
 	int ret;
@@ -138,6 +138,7 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 				      ktime_t timeout, enum evl_tmode tmode)
 {
 	struct evl_netdev_state *est;
+	struct evl_netdev_stats *stats;
 	struct net_device *real_dev;
 	struct sk_buff *skb;
 	struct page *page;
@@ -160,11 +161,12 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 	 * per-device pool, enforcing congestion control according to
 	 * the specified timeout rule.
 	 */
+	est = evl_net_get_state(dev);
+	stats = evl_net_get_stats(dev);
 	real_dev = evl_net_real_dev(dev);
-	est = real_dev->oob_state.estate;
 	page = alloc_bufpage(real_dev, timeout, tmode);
 	if (IS_ERR(page)) {
-		evl_counter_inc_careful(&est->stats.tx_nomem);
+		evl_counter_inc_careful(&stats->tx_nomem);
 		return ERR_PTR(PTR_ERR(page));
 	}
 
@@ -223,8 +225,8 @@ static void free_inband_skb(struct sk_buff *skb)
 
 static void __free_evl_skb(struct sk_buff *skb, struct net_device *dev)
 {
+	struct evl_netdev_state *est = evl_net_get_state(dev);
 	struct skb_shared_info *shinfo = skb_shinfo(skb);
-	struct evl_netdev_state *est = dev->oob_state.estate;
 	unsigned long flags;
 	netmem_ref netmem;
 
@@ -286,7 +288,7 @@ put_skb:
  * Free an skb we originally allocated from our pool. The caller has
  * exclusive ownership on this (i.e. no other reference is pending).
  *
- * CAUTION: skb->dev might be invalid, always use the cached value in
+ * CAUTION: skb->dev might be invalid, always use
  * skb_shinfo_oob(skb)->owner on the release path instead. See comment
  * in evl_net_dev_alloc_skb().
  */
@@ -537,18 +539,18 @@ void evl_net_uncharge_skb_wmem(struct sk_buff *skb)
 }
 
 /* in-band */
-int evl_net_dev_build_pool(struct net_device *dev)
+int evl_net_dev_build_pool(struct net_device *real_dev)
 {
 	struct page_pool_params pp_params;
 	struct evl_netdev_state *est;
 
-	if (EVL_WARN_ON(NET, is_vlan_dev(dev)))
+	if (EVL_WARN_ON(NET, is_vlan_dev(real_dev)))
 		return -EINVAL;
 
-	if (EVL_WARN_ON(NET, netif_oob_diversion(dev)))
+	if (EVL_WARN_ON(NET, netif_oob_diversion(real_dev)))
 		return -EBUSY;
 
-	est = dev->oob_state.estate;
+	est = evl_net_get_state(real_dev);
 
 	/*
 	 * Set up a page pool for TX from the EVL netstack through the
@@ -559,8 +561,8 @@ int evl_net_dev_build_pool(struct net_device *dev)
 		.order = ilog2(est->buf_size / PAGE_SIZE),
 		.flags = PP_FLAG_PAGE_OOB,
 		.pool_size = est->pool_max,
-		.nid = dev->dev.parent ? dev_to_node(dev->dev.parent) : NUMA_NO_NODE,
-		.dev = dev->dev.parent,
+		.nid = real_dev->dev.parent ? dev_to_node(real_dev->dev.parent) : NUMA_NO_NODE,
+		.dev = real_dev->dev.parent,
 		.dma_dir = DMA_NONE,
 		.offset = 0,
 		.max_len = est->buf_size,
@@ -574,7 +576,7 @@ int evl_net_dev_build_pool(struct net_device *dev)
 	 * support which enables DMA_BIDIRECTIONAL (DMA_TO_DEVICE is
 	 * not supported).
 	 */
-	if (pp_params.dev && netdev_is_oob_capable(dev)) {
+	if (pp_params.dev && netdev_is_oob_capable(real_dev)) {
 		pp_params.flags |= PP_FLAG_DMA_MAP | PP_FLAG_DMA_SYNC_DEV;
 		pp_params.dma_dir = DMA_BIDIRECTIONAL;
 	}
@@ -590,14 +592,17 @@ int evl_net_dev_build_pool(struct net_device *dev)
 }
 
 /* in-band, only when diversion is disabled! */
-void evl_net_dev_purge_pool(struct net_device *dev)
+void evl_net_dev_purge_pool(struct net_device *real_dev)
 {
 	struct evl_netdev_state *est;
 
-	if (EVL_WARN_ON(NET, netif_oob_diversion(dev)))
+	if (EVL_WARN_ON(NET, is_vlan_dev(real_dev)))
 		return;
 
-	est = dev->oob_state.estate;
+	if (EVL_WARN_ON(NET, netif_oob_diversion(real_dev)))
+		return;
+
+	est = evl_net_get_state(real_dev);
 	evl_destroy_wait(&est->tx_wait);
 	page_pool_destroy(est->tx_pages);
 }

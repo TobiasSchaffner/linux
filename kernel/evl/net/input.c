@@ -77,6 +77,7 @@ static void do_poll(struct evl_netdev_state *est) /* oob */
 void evl_net_do_rx(void *arg)
 {
 	struct net_device *dev = arg;
+	struct evl_netdev_stats *stats;
 	struct evl_netdev_state *est;
 	struct sk_buff *skb, *next;
 	unsigned int packets_in;
@@ -84,7 +85,8 @@ void evl_net_do_rx(void *arg)
 	u64 bytes_in;
 	int ret;
 
-	est = dev->oob_state.estate;
+	est = evl_net_get_state(dev);
+	stats = evl_net_get_stats(dev);
 
 	while (!evl_kthread_should_stop()) {
 		while (!test_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags)) {
@@ -113,8 +115,8 @@ void evl_net_do_rx(void *arg)
 				bytes_in += skb->len;
 				EVL_NET_CB(skb)->handler->ingress(skb);
 			}
-			evl_counter_add_careful(&est->stats.rx_packets, packets_in);
-			evl_counter_add_careful(&est->stats.rx_bytes, bytes_in);
+			evl_counter_add_careful(&stats->rx_packets, packets_in);
+			evl_counter_add_careful(&stats->rx_bytes, bytes_in);
 		}
 
 		evl_net_ipv4_gc(dev_net(dev));
@@ -143,7 +145,7 @@ static inline void wake_rx(struct evl_netdev_state *est)
 
 void evl_net_wake_rx(struct net_device *dev)
 {
-	struct evl_netdev_state *est = dev->oob_state.estate;
+	struct evl_netdev_state *est = evl_net_get_state(dev);
 
 	set_bit(EVL_NETDEV_RX_SCHED_BIT, &est->flags);
 	wake_rx(est);
@@ -171,11 +173,7 @@ EXPORT_SYMBOL_GPL(evl_net_wake_rx);
 void evl_net_receive(struct sk_buff *skb,
 		struct evl_net_handler *handler) /* in-band or oob */
 {
-	struct net_device *dev = skb->dev;
-	struct evl_netdev_state *est = dev->oob_state.estate;
-
-	if (EVL_WARN_ON(NET, dev == NULL))
-		return;
+	struct evl_netdev_state *est = evl_net_get_state(skb->dev);
 
 	if (refcount_read(&evl_net_rx_timestamping) > 1) {
 		skb_shinfo_oob(skb)->device_time = evl_ktime_monotonic();
@@ -185,8 +183,10 @@ void evl_net_receive(struct sk_buff *skb,
 	EVL_NET_CB(skb)->handler = handler;
 
 	skb_reset_network_header(skb);
+
 	if (!skb_transport_header_was_set(skb))
 		skb_reset_transport_header(skb);
+
 	skb_reset_mac_len(skb);
 
 	/*
@@ -218,8 +218,7 @@ void evl_net_receive(struct sk_buff *skb,
  */
 void napi_schedule_oob(struct napi_struct *n) /* inband/oob */
 {
-	struct net_device *dev = n->dev;
-	struct evl_netdev_state *est = dev->oob_state.estate;
+	struct evl_netdev_state *est = evl_net_get_state(n->dev);
 	unsigned long flags;
 
 	if (EVL_WARN_ON(NET, !(n->state & NAPIF_STATE_SCHED)))
@@ -239,7 +238,7 @@ void napi_schedule_oob(struct napi_struct *n) /* inband/oob */
 		raw_spin_unlock_irqrestore(&est->napi_lock, flags);
 		wake_rx(est);
 	} else {
-		evl_net_wake_rx(dev);
+		evl_net_wake_rx(n->dev);
 	}
 }
 
