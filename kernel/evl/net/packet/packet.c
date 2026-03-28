@@ -390,7 +390,6 @@ static ssize_t send_packet(struct evl_socket *esk,
 
 	skb_reset_mac_header(skb);
 	skb->protocol = htons(esk->protocol);
-	skb->dev = real_dev;
 	skb->priority = READ_ONCE(esk->sk->sk_priority);
 
 	count = evl_copy_from_uio(iov, iovlen, skb->data, skb_tailroom(skb), &rem);

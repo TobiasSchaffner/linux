@@ -468,6 +468,32 @@ struct net_device *evl_net_get_dev_by_name(struct net *net, const char *name)
 	return ret;
 }
 
+struct net_device *evl_net_find_vlan_dev(struct net *net,
+					__be16 vlan_proto, __u16 vlan_id)
+{
+	struct net_device *dev, *ret = NULL;
+	struct oob_netdev_state *nds;
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&oob_port_lock, flags);
+
+	list_for_each_entry(nds, &oob_port_list, next) {
+		dev = container_of(nds, struct net_device, oob_state);
+		if (dev_net(dev) != net || !is_vlan_dev(dev))
+			continue;
+		if (vlan_dev_vlan_proto(dev) != vlan_proto)
+			continue;
+		if (vlan_dev_vlan_id(dev) == vlan_id) {
+			ret = dev;
+			break;
+		}
+	}
+
+	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
+
+	return ret;
+}
+
 void evl_net_get_dev(struct net_device *dev)
 {
 	struct oob_netdev_state *nds = &dev->oob_state;

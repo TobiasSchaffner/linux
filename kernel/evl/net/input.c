@@ -113,6 +113,7 @@ void evl_net_do_rx(void *arg)
 				list_del(&skb->list);
 				packets_in++;
 				bytes_in += skb->len;
+				skb_shinfo_oob(skb)->owner = skb->dev;
 				EVL_NET_CB(skb)->handler->ingress(skb);
 			}
 			evl_counter_add_careful(&stats->rx_packets, packets_in);
@@ -262,11 +263,12 @@ void napi_schedule_oob(struct napi_struct *n) /* inband/oob */
  */
 bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 {
-	struct net_device *dev = skb->dev;
+	struct net_device *real_dev = skb->dev;
 	bool picked;
 
 	/* We deal with Ethernet and loopback devices only. */
-	if (unlikely(dev->type != ARPHRD_ETHER && dev->type != ARPHRD_LOOPBACK))
+	if (unlikely(real_dev->type != ARPHRD_ETHER &&
+			real_dev->type != ARPHRD_LOOPBACK))
 		return false;
 
 	/*
@@ -276,7 +278,7 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 	 * are not interested in it. If no filter is active,
 	 * EVL_RX_VLAN is applied.
 	 */
-	switch (evl_net_filter_rx(dev, skb)) {
+	switch (evl_net_filter_rx(real_dev, skb)) {
 	case EVL_RX_VLAN:
 		picked = evl_net_ether_accept_vlan(skb);
 		/* Apply our regular VLAN-based filter. */
@@ -301,9 +303,12 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 	 * only use a hint to determine whether we should push the
 	 * buffer to the in-band nit, all operations are properly
 	 * serialized there.
+	 *
+	 * NOTE: skb->dev may have switched from a real device to a
+	 * VLAN interface.
 	 */
-	if (picked && dev_nit_active(dev))
-		evl_net_tap_in(dev, skb);
+	if (picked && dev_nit_active(skb->dev))
+		evl_net_tap_in(skb->dev, skb);
 
 	return picked;
 }

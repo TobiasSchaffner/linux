@@ -49,7 +49,7 @@ static void timestamp_at_sched(struct sk_buff *skb)
 }
 
 static inline netdev_tx_t
-oob_start_xmit(struct net_device *dev, struct sk_buff *skb, bool more)
+oob_start_xmit(struct net_device *real_dev, struct sk_buff *skb, bool more)
 {
 	struct netdev_queue *txq;
 	netdev_tx_t ret;
@@ -59,25 +59,28 @@ oob_start_xmit(struct net_device *dev, struct sk_buff *skb, bool more)
 	 * assuming the inband code does so routinely for in-band
 	 * traffic.
 	 */
-	txq = netdev_get_tx_queue(dev, skb_get_queue_mapping(skb));
+	txq = netdev_get_tx_queue(real_dev, skb_get_queue_mapping(skb));
 
 	/*
-	 * If we got there, @dev is deemed oob-capable
+	 * If we got there, @real_dev is deemed oob-capable
 	 * (IFF_OOB_CAPABLE, see evl_net_transmit()). The driver should
 	 * check the current execution stage for handling the
 	 * out-of-band packet properly.
 	 */
 	netif_tx_lock_oob(txq);
-	ret = netdev_start_xmit(skb, dev, txq, more);
+	ret = netdev_start_xmit(skb, real_dev, txq, more);
 	netif_tx_unlock_oob(txq);
 
 	return ret;
 }
 
 static inline void do_tx(struct evl_net_qdisc *qdisc,
-			struct net_device *dev, struct sk_buff *skb,
+			struct sk_buff *skb,
 			bool more)
 {
+	struct net_device *dev = skb->dev,
+		*real_dev = evl_net_real_dev(dev);
+
 	/*
 	 * CAUTION: We must timestamp before uncharging which clears
 	 * the socket tracking info.
@@ -96,7 +99,7 @@ static inline void do_tx(struct evl_net_qdisc *qdisc,
 
 	evl_net_uncharge_skb_wmem(skb);
 
-	switch (oob_start_xmit(dev, skb, more)) {
+	switch (oob_start_xmit(real_dev, skb, more)) {
 	case NETDEV_TX_OK:
 		break;
 	default: /* busy, or whatever */
@@ -145,7 +148,7 @@ void evl_net_do_tx(void *arg)
 			}
 			packets_out++;
 			bytes_out += skb->len;
-			do_tx(qdisc, dev, skb, more);
+			do_tx(qdisc, skb, more);
 		}
 	}
 
@@ -232,8 +235,8 @@ static int xmit_oob(struct net_device *real_dev, struct sk_buff *skb)
  *	queue.
  *
  *	Prerequisites:
- *	- skb->dev is a valid (real) device. The caller must prevent from
- *        the interface going down.
+ *	- skb->dev is a valid device (real or VLAN). The caller must
+ *        prevent from the interface going down.
  *	- skb->sk == NULL.
  */
 int evl_net_transmit(struct net_device *dev, struct sk_buff *skb) /* oob or in-band */

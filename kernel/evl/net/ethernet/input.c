@@ -10,12 +10,33 @@
 #include <evl/net/skb.h>
 #include <evl/net/input.h>
 #include <evl/net/packet.h>
+#include <evl/net/device.h>
 #include <evl/net/ipv4.h>
 #include <evl/net/timestamping.h>
 
 static DECLARE_BITMAP(vlan_map, VLAN_N_VID);
 
 static struct evl_net_handler evl_net_ether;
+
+static void ether_receive(struct sk_buff *skb)
+{
+	struct evl_netdev_stats *stats;
+	struct net_device *vlan_dev;
+
+	if (skb_vlan_tag_present(skb)) {
+		vlan_dev = evl_net_find_vlan_dev(
+			dev_net(skb->dev),
+			skb->vlan_proto, skb_vlan_tag_get_id(skb));
+		if (likely(vlan_dev)) {
+			skb->dev = vlan_dev;
+			stats = evl_net_get_stats(vlan_dev);
+			evl_counter_inc_careful(&stats->rx_packets);
+			evl_counter_add_careful(&stats->rx_bytes, skb->len);
+		}
+	}
+
+	evl_net_receive(skb, &evl_net_ether);
+}
 
 static bool pop_vlan_header(struct sk_buff *skb)
 {
@@ -63,20 +84,20 @@ bool evl_net_ether_accept(struct sk_buff *skb)
 	if (!skb_vlan_tag_present(skb) && !pop_vlan_header(skb))
 		return false;
 
-	evl_net_receive(skb, &evl_net_ether);
+	ether_receive(skb);
 
 	return true;
 }
 
 /*
- * Check whether we should consider the packet for VLAN-based
- * selection, fetching the TCI we are interested in if so. We handle
- * IPv4 with 802.1Q or 802.1ad (QinQ) encapsulation. In the latter
- * case, the encapsulated protocol and TCI data we look for are
- * carried by the inner 802.1Q header. We do not alter the input
- * packet.
+ * Check whether the packet contains a VLAN-encapsulated IPv4 payload,
+ * fetching the TCI if so. We handle IPv4 with 802.1Q or 802.1ad
+ * (QinQ) encapsulation. In the latter case, the encapsulated protocol
+ * and TCI data we look for are carried by the inner 802.1Q header.
+ *
+ * This routine does not alter @skb.
  */
-static bool accept_vlan_encap(struct sk_buff *skb, u16 *vlan_tci)
+static bool has_vlan_encapsulation(struct sk_buff *skb, u16 *vlan_tci)
 {
 	struct vlan_ethhdr *ehdr = (struct vlan_ethhdr *)skb_mac_header(skb);
 	struct vlan_hdr *inner;
@@ -140,7 +161,7 @@ bool evl_net_ether_accept_vlan(struct sk_buff *skb)
 		 * out-of-band VLAN channel, in which case we pop the
 		 * VLAN header(s) before queuing it for processing.
 		 */
-		if (!accept_vlan_encap(skb, &vlan_tci))
+		if (!has_vlan_encapsulation(skb, &vlan_tci))
 			return false;
 
 		/* Check the VLAN channel proper. */
@@ -154,9 +175,13 @@ bool evl_net_ether_accept_vlan(struct sk_buff *skb)
 		 */
 		if (!pop_vlan_header(skb))
 			return false;
+
+		/* For ether_receive() to set skb->dev appropriately. */
+		if (!skb_vlan_tag_present(skb))
+			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), vlan_tci);
 	}
 
-	evl_net_receive(skb, &evl_net_ether);
+	ether_receive(skb);
 
 	return true;
 }
