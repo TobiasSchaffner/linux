@@ -21,6 +21,7 @@
  */
 int evl_net_ether_transmit_raw(struct net_device *dev, struct sk_buff *skb)
 {
+	struct evl_netdev_stats *stats;
 	__be16 vlan_proto;
 	u16 vlan_tci;
 
@@ -29,6 +30,9 @@ int evl_net_ether_transmit_raw(struct net_device *dev, struct sk_buff *skb)
 		vlan_tci = vlan_dev_vlan_id(dev);
 		vlan_tci |= vlan_dev_get_egress_qos_mask(dev, skb->priority);
 		__vlan_insert_tag(skb, vlan_proto, vlan_tci);
+		stats = evl_net_get_stats(dev);
+		evl_counter_inc_careful(&stats->tx_packets);
+		evl_counter_add_careful(&stats->tx_bytes, skb->len);
 	}
 
 	netdev_dbg(dev, "transmitting %px\n", skb);

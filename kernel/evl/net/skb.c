@@ -189,7 +189,7 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 	if (is_vlan_dev(dev))
 		skb_reserve(skb, VLAN_HLEN);
 
-	skb->dev = real_dev;
+	skb->dev = dev;
 
 	/*
 	 * Keep a pointer to the device owning the storage area for
@@ -288,9 +288,9 @@ put_skb:
  * Free an skb we originally allocated from our pool. The caller has
  * exclusive ownership on this (i.e. no other reference is pending).
  *
- * CAUTION: skb->dev might be invalid, always use
- * skb_shinfo_oob(skb)->owner on the release path instead. See comment
- * in evl_net_dev_alloc_skb().
+ * CAUTION: skb->dev might be invalid or refer to a VLAN device,
+ * always use skb_shinfo_oob(skb)->owner for release to the proper
+ * pool instead. See comment in evl_net_dev_alloc_skb().
  */
 static void free_evl_skb(struct sk_buff *skb)
 {
