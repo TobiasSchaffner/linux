@@ -4,6 +4,7 @@
 
 #include <linux/list.h>
 #include <linux/rcupdate.h>
+#include <linux/refcount.h>
 #include <net/page_pool/types.h>
 #include <evl/wait.h>
 #include <evl/poll.h>
@@ -51,8 +52,8 @@ struct evl_netdev_state {
 	struct evl_net_ebpf_filter __rcu *rx_filter;
 	/* Runtime state flags. */
 	unsigned long flags;
-	/* Count of oob ports referring to this device. */
-	int refs;
+	/* Number of oob ports using this device. */
+	refcount_t users;
 };
 
 struct evl_netdev_stats {
