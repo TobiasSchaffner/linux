@@ -378,7 +378,7 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	/*
 	 * Now we may attempt to pass the crossing, waiting until all
 	 * in-flight oob operations holding a reference on the network
-	 * device acting as an oob port have completed.
+	 * device have completed.
 	 */
 	evl_pass_crossing(&nds->crossing);
 
