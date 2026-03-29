@@ -52,21 +52,14 @@ static bool __packet_deliver(struct evl_rculist *rxq,
 	struct evl_socket *esk;
 	struct sk_buff *qskb;
 	unsigned long flags;
-	u16 vlan_id;
-	int ifindex;
+	int bound_if;
 
 	rcu_read_lock();
 
 	evl_rculist_for_each_entry(esk, rxq, u.packet.next) {
-		/* Check device binding if set. */
-		ifindex = READ_ONCE(esk->u.packet.real_ifindex);
-		if (ifindex) {
-			if (ifindex != dev->ifindex)
-				continue;
-			vlan_id = READ_ONCE(esk->u.packet.vlan_id);
-			if (vlan_id && skb_vlan_tag_get_id(skb) != vlan_id)
-				continue;
-		}
+		bound_if = READ_ONCE(esk->u.packet.bound_if);
+		if (bound_if && bound_if != dev->ifindex)
+			continue;
 
 		/*
 		 * All sockets bound to ETH_P_ALL receive a clone of
@@ -207,10 +200,9 @@ static int bind_packet_socket(struct evl_socket *esk,
 			struct sockaddr_unsized *addr,
 			int len)
 {
-	int ret = 0, new_ifindex, real_ifindex, old_ifindex;
-	struct net_device *dev = NULL;
+	struct net_device *bound_dev;
 	struct sockaddr_ll *sll;
-	u16 vlan_id;
+	int bound_if;
 
 	if (len != sizeof(*sll))
 		return -EINVAL;
@@ -222,30 +214,15 @@ static int bind_packet_socket(struct evl_socket *esk,
 	if (!get_rxq(esk->net, ntohs(sll->sll_protocol)))
 		return -EINVAL;
 
-	new_ifindex = sll->sll_ifindex;
+	bound_if = sll->sll_ifindex;
+	if (bound_if) {
+		bound_dev = evl_net_get_dev_by_index(esk->net, bound_if);
+		if (!bound_dev)
+			return -EINVAL;
+		evl_net_put_dev(bound_dev);
+	}
 
 	mutex_lock(&esk->lock);
-
-	old_ifindex = esk->u.packet.ifindex;
-	if (new_ifindex != old_ifindex) {
-		if (new_ifindex) {
-			dev = evl_net_get_dev_by_index(esk->net, new_ifindex);
-			if (dev == NULL) {
-				ret = -EINVAL;
-				goto out;
-			}
-			if (is_vlan_dev(dev)) {
-				vlan_id = vlan_dev_vlan_id(dev);
-				real_ifindex = vlan_dev_real_dev(dev)->ifindex;
-			} else {
-				vlan_id = 0;
-				real_ifindex = dev->ifindex;
-			}
-		} else {
-			vlan_id = 0;
-			real_ifindex = 0;
-		}
-	}
 
 	/* Rebind if we track a different protocol. */
 	if (esk->protocol != ntohs(sll->sll_protocol)) {
@@ -253,29 +230,16 @@ static int bind_packet_socket(struct evl_socket *esk,
 		do_bind(esk, ntohs(sll->sll_protocol));
 	}
 
-	/*
-	 * Change device binding information in a way which won't fool
-	 * __packet_deliver().
-	 */
-	if (new_ifindex != old_ifindex) {
-		WRITE_ONCE(esk->u.packet.vlan_id, VLAN_N_VID);
-		WRITE_ONCE(esk->u.packet.real_ifindex, real_ifindex);
-		WRITE_ONCE(esk->u.packet.vlan_id, vlan_id);
-		WRITE_ONCE(esk->u.packet.ifindex, new_ifindex);
-	}
-out:
+	WRITE_ONCE(esk->u.packet.bound_if, bound_if);
+
 	mutex_unlock(&esk->lock);
 
-	if (dev)
-		evl_net_put_dev(dev);
-
-	return ret;
+	return 0;
 }
 
 static struct net_device *get_netif(struct evl_socket *esk)
 {
-	return  evl_net_get_dev_by_index(esk->net,
-					esk->u.packet.ifindex);
+	return evl_net_get_dev_by_index(esk->net, esk->u.packet.bound_if);
 }
 
 static struct net_device *find_xmit_device(struct evl_socket *esk,
