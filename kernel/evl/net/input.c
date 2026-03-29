@@ -271,6 +271,8 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 			real_dev->type != ARPHRD_LOOPBACK))
 		return false;
 
+	rcu_read_lock();
+
 	/*
 	 * Filter the incoming packet through the eBPF RX program
 	 * attached to the input device (if any), passing it down to
@@ -289,13 +291,17 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 		break;
 	case EVL_RX_DROP:
 		/* Blackhole. */
+		rcu_read_unlock();
 		evl_net_free_skb(skb);
 		return true;
 	case EVL_RX_SKIP:
 	default:
 		/* Leave the packet to inband. */
+		rcu_read_unlock();
 		return false;
 	}
+
+	rcu_read_unlock();
 
 	/*
 	 * Feed in-band input taps if any. Racing with in-band updates

@@ -608,20 +608,14 @@ int evl_netdev_event(struct notifier_block *ev_block,
 }
 
 enum evl_net_rx_action
-__evl_net_filter_rx(struct evl_netdev_state *est, struct sk_buff *skb)
+__evl_net_filter_rx(struct evl_netdev_state *est, struct sk_buff *skb) /* rcu_read_lock held. */
 {
-	struct evl_net_ebpf_filter *filter = READ_ONCE(est->rx_filter);
 	enum evl_net_rx_action ret = EVL_RX_VLAN;
+	struct evl_net_ebpf_filter *filter;
 
-	if (filter) {
-		rcu_read_lock(); /* Recheck under lock. */
-
-		filter = rcu_dereference(est->rx_filter);
-		if (filter)
-			ret = bpf_prog_run_clear_cb(filter->prog, skb);
-
-		rcu_read_unlock();
-	}
+	filter = rcu_dereference(est->rx_filter);
+	if (filter)
+		ret = bpf_prog_run_clear_cb(filter->prog, skb);
 
 	return ret;
 }
