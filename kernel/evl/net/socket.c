@@ -364,6 +364,7 @@ int sock_oob_attach(struct socket *sock)
 	esk->rmem_max = sk->sk_rcvbuf;
 	esk->wmem_max = sk->sk_sndbuf;
 	evl_init_crossing(&esk->wmem_drain);
+	INIT_LIST_HEAD(&esk->next_binding);
 
 	ret = proto->attach(esk, proto, ntohs(sk->sk_protocol));
 	if (ret)

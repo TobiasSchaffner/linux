@@ -191,6 +191,8 @@ static int enable_base_device(struct net_device *real_dev,
 		est->tx_handler = kt;
 	}
 
+	mutex_init(&nds->bind_lock);
+	INIT_LIST_HEAD(&nds->bindings);
 	evl_init_crossing(&nds->crossing);
 
 	/*
@@ -321,12 +323,16 @@ static int enable_oob_port(struct net_device *dev,
 	if (real_dev == dev)
 		goto queue;
 
+	/* This is a VLAN device, set it up too. */
+
 	stats = kzalloc(sizeof(*stats), GFP_KERNEL);
 	if (stats == NULL) {
 		disable_base_device(real_dev);
 		return -ENOMEM;
 	}
 
+	mutex_init(&nds->bind_lock);
+	INIT_LIST_HEAD(&nds->bindings);
 	evl_init_crossing(&nds->crossing);
 	nds->stats = stats;
 queue:
@@ -344,6 +350,21 @@ queue:
 	return ret;
 }
 
+static void drop_bindings(struct oob_netdev_state *nds)
+{
+	struct evl_socket *esk, *n;
+
+	/* Force unbind any socket bound to the downed device. */
+	mutex_lock(&nds->bind_lock);
+
+	list_for_each_entry_safe(esk, n, &nds->bindings, next_binding) {
+		list_del_init(&n->next_binding);
+		esk->proto->force_unbind(esk);
+	}
+
+	mutex_unlock(&nds->bind_lock);
+}
+
 /*
  * disable_oob_port - Dectivate an out-of-band port.
  *
@@ -353,7 +374,7 @@ queue:
  */
 static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held */
 {
-	struct oob_netdev_state *nds;
+	struct oob_netdev_state *nds = &dev->oob_state;
 	struct net_device *real_dev;
 	unsigned long flags;
 
@@ -363,6 +384,9 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	/* Remove the oob-enabled device from the routing system. */
 	evl_net_remove_device_route(dev);
 
+	/* Force unbind any socket bound to the downed device. */
+	drop_bindings(nds);
+
 	/*
 	 * Make sure that no evl_down_crossing() can be issued after
 	 * we attempt to pass the crossing. Since the former can only
@@ -370,7 +394,6 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	 * list, first unlink the latter _then_ pass the crossing
 	 * next.
 	 */
-	nds = &dev->oob_state;
 	raw_spin_lock_irqsave(&oob_port_lock, flags);
 	list_del(&nds->next);
 	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
@@ -523,6 +546,42 @@ struct net_device *evl_net_find_vlan_dev(struct net *net,
 	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
 
 	return ret;
+}
+
+void evl_net_dev_bind(struct net_device *dev, struct evl_socket *esk)
+{
+	struct oob_netdev_state *nds = &dev->oob_state;
+
+	if (EVL_WARN_ON(NET, !list_empty(&esk->next_binding)))
+		return;
+
+	mutex_lock(&nds->bind_lock);
+	list_add(&esk->next_binding, &dev->oob_state.bindings);
+	mutex_unlock(&nds->bind_lock);
+}
+
+void evl_net_dev_unbind(struct evl_socket *esk, int bound_if)
+{
+	struct oob_netdev_state *nds;
+	struct net_device *dev;
+
+	if (!bound_if) {
+		EVL_WARN_ON(NET, !list_empty(&esk->next_binding));
+		return;
+	}
+
+	if (EVL_WARN_ON(NET, list_empty(&esk->next_binding)))
+		return;
+
+	dev = evl_net_get_dev_by_index(sock_net(esk->sk), bound_if);
+	if (EVL_WARN_ON(NET, !dev))
+		return;
+
+	nds = &dev->oob_state;
+	mutex_lock(&nds->bind_lock);
+	list_del_init(&esk->next_binding);
+	mutex_unlock(&nds->bind_lock);
+	evl_net_put_dev(dev);
 }
 
 void evl_net_get_dev(struct net_device *dev)

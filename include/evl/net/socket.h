@@ -37,6 +37,7 @@ struct evl_net_proto {
 	void (*destroy)(struct evl_socket *esk);
 	int (*bind)(struct evl_socket *esk,
 		struct sockaddr_unsized *addr, int len);
+	void (*force_unbind)(struct evl_socket *esk);
 	int (*connect)(struct evl_socket *esk,
 		struct sockaddr_unsized *addr, int len, int flags);
 	int (*shutdown)(struct evl_socket *esk, int how);
@@ -91,10 +92,12 @@ struct evl_socket {
 	spinlock_t ts_lock;
 	struct evl_net_timestamps __rcu *tx_timestamps;
 	refcount_t refs;	/* release vs destroy */
+	struct list_head next_binding;
 	union {
 		/* Packet interface data. */
 		struct {
 			int bound_if;
+			bool force_unbound;
 			struct list_head next;
 		} packet;
 		/* Used by all IP protocols we support. */
