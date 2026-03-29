@@ -94,9 +94,7 @@ struct evl_socket {
 	union {
 		/* Packet interface data. */
 		struct {
-			int real_ifindex;
-			int ifindex; /* Same as real_ifindex or vlan ifindex */
-			u16 vlan_id; /* Zero (unfiltered) or VLAN_N_VID, otherwise vlan device */
+			int bound_if;
 			struct list_head next;
 		} packet;
 		/* Used by all IP protocols we support. */
