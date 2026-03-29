@@ -97,64 +97,41 @@ start_handler_thread(struct net_device *dev,
 }
 
 /*
- * enable_oob_port - @dev is a device which we want to enable as a
- * port for channeling out-of-band traffic. This may be a real device,
- * or a VLAN interface.
+ * enable_base_device - Enable packet diversion on a real device.
+ *
+ * This routine allocates a runtime state for the device, starts the
+ * RX/TX kthreads as necessary. May be called for an already enabled
+ * device, which yields a nop.
  */
-static int enable_oob_port(struct net_device *dev,
-			struct evl_net_devparams *p) /* inband, rtnl_lock held */
+static int enable_base_device(struct net_device *real_dev,
+			struct evl_net_devparams *p)
 {
-	struct oob_netdev_state *rnds, *nds;
-	struct evl_netdev_state *pest, *est;
 	struct evl_netdev_stats *stats;
-	struct net_device *real_dev;
+	struct evl_netdev_state *est;
+	struct oob_netdev_state *nds;
 	struct evl_kthread *kt;
-	unsigned long flags;
 	unsigned int mtu;
 	int ret;
 
-	if (netif_oob_port(dev))
-		return 0;	/* Already enabled. */
-
-	/*
-	 * If @dev is a VLAN device, diversion is turned on for the
-	 * real device it sits on top of, so that the EVL stack is
-	 * given a chance to pick the ingress traffic to be routed to
-	 * the oob stage. A runtime state is allocated once, only for
-	 * a real/base device. Statistics are allocated for every
-	 * device, real or VLAN.
-	 */
-	real_dev = evl_net_real_dev(dev);
-	if (!(real_dev->flags & IFF_UP))
-		return -ENETDOWN;
-
-	stats = kzalloc(sizeof(*stats), GFP_KERNEL);
-	if (stats == NULL)
-		return -ENOMEM;
-
-	rnds = &real_dev->oob_state;
-	est = pest = rnds->estate;
-	if (pest == NULL) {
-		est = kzalloc(sizeof(*est), GFP_KERNEL);
-		if (est == NULL) {
-			kfree(stats);
-			return -ENOMEM;
-		}
-		rnds->estate = est;
-		rnds->stats = kzalloc(sizeof(*stats), GFP_KERNEL);
-		if (rnds->stats == NULL) {
-			kfree(est);
-			kfree(stats);
-			return -ENOMEM;
-		}
+	nds = &real_dev->oob_state;
+	est = nds->estate;
+	if (est) {
+		refcount_inc(&est->users);
+		return 0;	/* Already set up. */
 	}
 
-	nds = &dev->oob_state;
-	evl_init_crossing(&nds->crossing);
-	nds->stats = stats;
+	est = kzalloc(sizeof(*est), GFP_KERNEL);
+	if (est == NULL)
+		return -ENOMEM;
 
-	if (est->refs++ > 0)	/* Guarded by rtnl_lock. */
-		goto queue;
+	nds->estate = est;
+	stats = kzalloc(sizeof(*stats), GFP_KERNEL);
+	if (stats == NULL) {
+		kfree(est);
+		return -ENOMEM;
+	}
+
+	nds->stats = stats;
 
 	if (!p->poolsz)
 		p->poolsz = EVL_DEFAULT_NETDEV_POOLSZ;
@@ -171,6 +148,7 @@ static int enable_oob_port(struct net_device *dev,
 	if (!(real_dev->flags & IFF_LOOPBACK) && p->bufsz < mtu)
 		p->bufsz = mtu;
 
+	refcount_set(&est->users, 1);
 	est->pool_max = p->poolsz;
 	est->buf_size = p->bufsz;
 	spin_lock_init(&est->filter_lock);
@@ -213,8 +191,7 @@ static int enable_oob_port(struct net_device *dev,
 		est->tx_handler = kt;
 	}
 
-	if (nds != rnds) /* i.e. dev is a VLAN interface. */
-		evl_init_crossing(&rnds->crossing);
+	evl_init_crossing(&nds->crossing);
 
 	/*
 	 * Tell the in-band stack to divert traffic flowing in from
@@ -223,19 +200,8 @@ static int enable_oob_port(struct net_device *dev,
 	ret = netif_enable_oob_diversion(real_dev);
 	if (ret)
 		goto fail_enable_diversion;
-queue:
-	netif_enable_oob_port(dev);
 
-	raw_spin_lock_irqsave(&oob_port_lock, flags);
-	list_add(&nds->next, &oob_port_list);
-	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
-
-	/* Declare the oob-enabled device to the routing system. */
-	ret = evl_net_add_device_route(dev);
-	if (ret)
-		disable_oob_port(dev);
-
-	return ret;
+	return 0;
 
 fail_enable_diversion:
 	if (est->tx_handler) {
@@ -254,80 +220,40 @@ fail_start_rx:
 fail_build_pool:
 	evl_net_free_qdisc(est->qdisc);
 fail_alloc_qdisc:
-	if (!pest) {
-		kfree(est);
-		rnds->estate = NULL;
-		kfree(rnds->stats);
-		rnds->stats = NULL;
-	}
-
+	kfree(est);
+	nds->estate = NULL;
 	kfree(stats);
+	nds->stats = NULL;
 
 	return ret;
 }
 
 /*
- * disable_oob_port - @dev is a device for which we want to disable
- * the oob port capability (see enable_oob_port()). This may be a real
- * device, or a VLAN interface.
+ * disable_base_device - Disable packet diversion on a real device.
+ *
+ * This routine attempts to deallocate the runtime state of a base
+ * device, stopping the associated RX/TX kthreads as necessary. May
+ * return with no action if more users (i.e. VLAN devices with active
+ * oob ports) are still sitting on the device.
  */
-static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held */
+static void disable_base_device(struct net_device *real_dev) /* inband, rtnl_lock held */
 {
-	struct oob_netdev_state *nds, *rnds;
+	struct oob_netdev_state *rnds;
 	struct evl_netdev_state *est;
-	struct net_device *real_dev;
-	unsigned long flags;
-
-	if (!netif_oob_port(dev))
-		return;
-
-	/* Remove the oob-enabled device from the routing system. */
-	evl_net_remove_device_route(dev);
-
-	/*
-	 * Make sure that no evl_down_crossing() can be issued after
-	 * we attempt to pass the crossing. Since the former can only
-	 * happen as a result of finding the device in the active
-	 * list, first unlink the latter _then_ pass the crossing
-	 * next.
-	 */
-	real_dev = evl_net_real_dev(dev);
-	nds = &dev->oob_state;
-	raw_spin_lock_irqsave(&oob_port_lock, flags);
-	list_del(&nds->next);
-	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
-
-	/*
-	 * Ok, now we may attempt to pass the crossing, waiting until
-	 * all in-flight oob operations holding a reference on the
-	 * network device acting as an oob port have completed.
-	 */
-	evl_pass_crossing(&nds->crossing);
-
-	netif_disable_oob_port(dev);
-
-	if (dev != real_dev) {
-		kfree(nds->stats);
-		nds->stats = NULL;
-	}
 
 	rnds = &real_dev->oob_state;
 	est = rnds->estate;
 
-	if (EVL_WARN_ON(NET, est->refs <= 0))
-		return;
-
 	/*
-	 * We might have multiple VLAN devices acting as oob ports
-	 * sitting on the same real device, so use refcounting.
+	 * We might have VLAN devices sitting on this base device, so
+	 * use refcounting.
 	 */
-	if (--est->refs > 0)	/* Guarded by rtnl_lock. */
+	if (!refcount_dec_and_test(&est->users))
 		return;
 
 	/*
-	 * Last ref. from a port to a real device dropped. Dismantle
-	 * the extension for the latter. Start with unblocking all the
-	 * waiters.
+	 * No more users, we may dismantle the runtime state. Start
+	 * with unblocking all the waiters.
 	 */
 	evl_signal_poll_events(&est->poll_head, POLLERR);
 	evl_flush_wait(&est->tx_wait, EVL_T_RMID);
@@ -360,6 +286,111 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	rnds->estate = NULL;
 	kfree(rnds->stats);
 	rnds->stats = NULL;
+}
+
+/*
+ * enable_oob_port - Activate an out-of-band port.
+ *
+ * @dev - the device we want to enable the oob port on.
+ *
+ * @dev may be a real device, or a VLAN interface.
+ */
+static int enable_oob_port(struct net_device *dev,
+			struct evl_net_devparams *p) /* inband, rtnl_lock held */
+{
+	struct evl_netdev_stats *stats;
+	struct oob_netdev_state *nds;
+	struct net_device *real_dev;
+	unsigned long flags;
+	int ret;
+
+	if (netif_oob_port(dev))
+		return 0;	/* Already enabled. */
+
+	real_dev = evl_net_real_dev(dev);
+	if (!(real_dev->flags & IFF_UP))
+		return -ENETDOWN;
+
+	/* Enable packet diversion on the base device. */
+	ret = enable_base_device(real_dev, p);
+	if (ret)
+		return ret;
+
+	nds = &dev->oob_state;
+
+	if (real_dev == dev)
+		goto queue;
+
+	stats = kzalloc(sizeof(*stats), GFP_KERNEL);
+	if (stats == NULL) {
+		disable_base_device(real_dev);
+		return -ENOMEM;
+	}
+
+	evl_init_crossing(&nds->crossing);
+	nds->stats = stats;
+queue:
+	netif_enable_oob_port(dev);
+
+	raw_spin_lock_irqsave(&oob_port_lock, flags);
+	list_add(&nds->next, &oob_port_list);
+	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
+
+	/* Advertise the device to the routing system. */
+	ret = evl_net_add_device_route(dev);
+	if (ret)
+		disable_oob_port(dev);
+
+	return ret;
+}
+
+/*
+ * disable_oob_port - Dectivate an out-of-band port.
+ *
+ * @dev - the device we want to disable the oob port from.
+ *
+ * @dev may be a real device, or a VLAN interface.
+ */
+static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held */
+{
+	struct oob_netdev_state *nds;
+	struct net_device *real_dev;
+	unsigned long flags;
+
+	if (!netif_oob_port(dev))
+		return;
+
+	/* Remove the oob-enabled device from the routing system. */
+	evl_net_remove_device_route(dev);
+
+	/*
+	 * Make sure that no evl_down_crossing() can be issued after
+	 * we attempt to pass the crossing. Since the former can only
+	 * happen as a result of finding the device in the active
+	 * list, first unlink the latter _then_ pass the crossing
+	 * next.
+	 */
+	nds = &dev->oob_state;
+	raw_spin_lock_irqsave(&oob_port_lock, flags);
+	list_del(&nds->next);
+	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
+
+	/*
+	 * Now we may attempt to pass the crossing, waiting until all
+	 * in-flight oob operations holding a reference on the network
+	 * device acting as an oob port have completed.
+	 */
+	evl_pass_crossing(&nds->crossing);
+
+	netif_disable_oob_port(dev);
+
+	real_dev = evl_net_real_dev(dev);
+	if (dev != real_dev) {
+		kfree(nds->stats);
+		nds->stats = NULL;
+	}
+
+	disable_base_device(real_dev);
 }
 
 static int switch_oob_port(struct net_device *dev,
