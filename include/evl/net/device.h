@@ -16,6 +16,7 @@
 struct evl_net_devparams;
 struct notifier_block;
 struct sk_buff;
+struct evl_socket;
 
 int evl_net_switch_oob_port(struct net_device *dev,
 			    struct evl_net_devparams *p);
@@ -31,6 +32,12 @@ evl_net_get_dev_by_flags(struct net *net, int flags);
 
 struct net_device *
 evl_net_get_dev_by_name(struct net *net, const char *name);
+
+void evl_net_dev_bind(struct net_device *dev,
+		      struct evl_socket *esk);
+
+void evl_net_dev_unbind(struct evl_socket *esk,
+			int bound_if);
 
 void evl_net_get_dev(struct net_device *dev);
 
