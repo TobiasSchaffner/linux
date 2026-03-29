@@ -5,6 +5,7 @@
 #include <linux/list.h>
 #include <linux/rcupdate.h>
 #include <linux/refcount.h>
+#include <linux/mutex.h>
 #include <net/page_pool/types.h>
 #include <evl/wait.h>
 #include <evl/poll.h>
@@ -69,8 +70,10 @@ struct evl_netdev_stats {
 struct oob_netdev_state {
 	struct evl_netdev_state *estate;
 	struct evl_netdev_stats *stats;
+	struct mutex bind_lock;
+	struct list_head bindings; /* evl_socket->next_binding */
 	struct evl_crossing crossing;
-	struct list_head next;
+	struct list_head next;	/* in oob_port_list */
 };
 
 struct oob_netqueue_state {

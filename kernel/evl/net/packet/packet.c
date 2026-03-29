@@ -52,13 +52,15 @@ static bool __packet_deliver(struct evl_rculist *rxq,
 	struct evl_socket *esk;
 	struct sk_buff *qskb;
 	unsigned long flags;
+	bool force_unbound;
 	int bound_if;
 
 	rcu_read_lock();
 
 	evl_rculist_for_each_entry(esk, rxq, u.packet.next) {
+		force_unbound = READ_ONCE(esk->u.packet.force_unbound);
 		bound_if = READ_ONCE(esk->u.packet.bound_if);
-		if (bound_if && bound_if != dev->ifindex)
+		if (force_unbound || (bound_if && bound_if != dev->ifindex))
 			continue;
 
 		/*
@@ -192,6 +194,7 @@ static void do_unbind(struct evl_socket *esk)
 /* in-band, esk->lock held or __sk_destruct() */
 static void destroy_packet_socket(struct evl_socket *esk)
 {
+	evl_net_dev_unbind(esk, esk->u.packet.bound_if);
 	do_unbind(esk);
 }
 
@@ -202,7 +205,7 @@ static int bind_packet_socket(struct evl_socket *esk,
 {
 	struct net_device *bound_dev;
 	struct sockaddr_ll *sll;
-	int bound_if;
+	int new_if, old_if;
 
 	if (len != sizeof(*sll))
 		return -EINVAL;
@@ -214,15 +217,26 @@ static int bind_packet_socket(struct evl_socket *esk,
 	if (!get_rxq(esk->net, ntohs(sll->sll_protocol)))
 		return -EINVAL;
 
-	bound_if = sll->sll_ifindex;
-	if (bound_if) {
-		bound_dev = evl_net_get_dev_by_index(esk->net, bound_if);
-		if (!bound_dev)
+	mutex_lock(&esk->lock);
+
+	old_if = esk->u.packet.bound_if;
+
+	new_if = sll->sll_ifindex;
+	if (new_if) {
+		bound_dev = evl_net_get_dev_by_index(esk->net, new_if);
+		if (!bound_dev) {
+			mutex_unlock(&esk->lock);
 			return -EINVAL;
+		}
+		evl_net_dev_unbind(esk, old_if);
+		evl_net_dev_bind(bound_dev, esk);
 		evl_net_put_dev(bound_dev);
+		WRITE_ONCE(esk->u.packet.force_unbound, false);
+	} else {
+		evl_net_dev_unbind(esk, old_if);
 	}
 
-	mutex_lock(&esk->lock);
+	WRITE_ONCE(esk->u.packet.bound_if, new_if);
 
 	/* Rebind if we track a different protocol. */
 	if (esk->protocol != ntohs(sll->sll_protocol)) {
@@ -230,16 +244,21 @@ static int bind_packet_socket(struct evl_socket *esk,
 		do_bind(esk, ntohs(sll->sll_protocol));
 	}
 
-	WRITE_ONCE(esk->u.packet.bound_if, bound_if);
-
 	mutex_unlock(&esk->lock);
 
 	return 0;
 }
 
+static void force_unbind_packet_socket(struct evl_socket *esk)
+{
+	WRITE_ONCE(esk->u.packet.force_unbound, true);
+	WRITE_ONCE(esk->u.packet.bound_if, 0);
+}
+
 static struct net_device *get_netif(struct evl_socket *esk)
 {
-	return evl_net_get_dev_by_index(esk->net, esk->u.packet.bound_if);
+	return evl_net_get_dev_by_index(esk->net,
+					esk->u.packet.bound_if);
 }
 
 static struct net_device *find_xmit_device(struct evl_socket *esk,
@@ -562,6 +581,7 @@ static struct evl_net_proto ether_packet_proto = {
 	.attach	= attach_packet_socket,
 	.destroy = destroy_packet_socket,
 	.bind = bind_packet_socket,
+	.force_unbind = force_unbind_packet_socket,
 	.oob_send = send_packet,
 	.oob_poll = poll_packet,
 	.oob_receive = receive_packet,
