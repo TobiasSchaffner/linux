@@ -71,6 +71,11 @@ static inline struct evl_netdev_stats *evl_net_get_stats(struct net_device *dev)
 enum evl_net_rx_action
 __evl_net_filter_rx(struct evl_netdev_state *est, struct sk_buff *skb);
 
+/*
+ * evl_net_filter_rx - Set a filter on a base device.
+ *
+ * The caller must hold the RCU (read-side) lock.
+ */
 static inline enum evl_net_rx_action
 evl_net_filter_rx(struct net_device *dev, struct sk_buff *skb)
 {
