@@ -128,16 +128,18 @@ static long net_ioctl(struct file *filp, unsigned int cmd,
 		if (!dev)
 			return -EINVAL;
 		ret = evl_net_switch_oob_port(dev, &devp);
-		dev_put(dev);	/* Drop the ref. obtained from dev_get_by_name() */
 		if (ret)
 			break;
 		/* The port is left open on user-specific errors. */
 		ufd = __evl_net_dev_allocfd(dev);
-		if (ufd < 0)
-			break;
-		ret = put_user((__u32)ufd, &u_devp->fd);
-		if (ret)
-			ret = -EFAULT;
+		if (ufd < 0) {
+			dev_put(dev);
+			ret = ufd;
+		} else {
+			ret = put_user((__u32)ufd, &u_devp->fd);
+			if (ret)
+				ret = -EFAULT;
+		}
 		break;
 	case EVL_NET_GETDEVFD:	/* Get a fildes on an oob-enabled device. */
 		u_fdreq = (typeof(u_fdreq))arg;

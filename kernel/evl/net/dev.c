@@ -97,13 +97,13 @@ start_handler_thread(struct net_device *dev,
 }
 
 /*
- * enable_base_device - Enable packet diversion on a real device.
+ * setup_base_device - Setup a real device for packet diversion.
  *
  * This routine allocates a runtime state for the device, starts the
- * RX/TX kthreads as necessary. May be called for an already enabled
+ * RX/TX kthreads as necessary. May be called for an already set up
  * device, which yields a nop.
  */
-static int enable_base_device(struct net_device *real_dev,
+static int setup_base_device(struct net_device *real_dev,
 			struct evl_net_devparams *p)
 {
 	struct evl_netdev_stats *stats;
@@ -231,27 +231,18 @@ fail_alloc_qdisc:
 }
 
 /*
- * disable_base_device - Disable packet diversion on a real device.
+ * dismantle_base_device - Disable packet diversion on a real device.
  *
- * This routine attempts to deallocate the runtime state of a base
- * device, stopping the associated RX/TX kthreads as necessary. May
- * return with no action if more users (i.e. VLAN devices with active
- * oob ports) are still sitting on the device.
+ * This routine deallocates the runtime state of a base device,
+ * stopping the associated RX/TX kthreads as necessary.
  */
-static void disable_base_device(struct net_device *real_dev) /* inband, rtnl_lock held */
+static void dismantle_base_device(struct net_device *real_dev) /* inband, rtnl_lock held */
 {
 	struct oob_netdev_state *rnds;
 	struct evl_netdev_state *est;
 
 	rnds = &real_dev->oob_state;
 	est = rnds->estate;
-
-	/*
-	 * We might have VLAN devices sitting on this base device, so
-	 * use refcounting.
-	 */
-	if (!refcount_dec_and_test(&est->users))
-		return;
 
 	/*
 	 * No more users, we may dismantle the runtime state. Start
@@ -290,6 +281,20 @@ static void disable_base_device(struct net_device *real_dev) /* inband, rtnl_loc
 	rnds->stats = NULL;
 }
 
+static bool __put_base_device(struct net_device *real_dev)
+{
+	struct oob_netdev_state *rnds = &real_dev->oob_state;
+	struct evl_netdev_state *est = rnds->estate;
+
+	return refcount_dec_and_test(&est->users);
+}
+
+static void put_base_device(struct net_device *real_dev)
+{
+	if (__put_base_device(real_dev))
+		dismantle_base_device(real_dev);
+}
+
 /*
  * enable_oob_port - Activate an out-of-band port.
  *
@@ -314,7 +319,7 @@ static int enable_oob_port(struct net_device *dev,
 		return -ENETDOWN;
 
 	/* Enable packet diversion on the base device. */
-	ret = enable_base_device(real_dev, p);
+	ret = setup_base_device(real_dev, p);
 	if (ret)
 		return ret;
 
@@ -327,7 +332,7 @@ static int enable_oob_port(struct net_device *dev,
 
 	stats = kzalloc(sizeof(*stats), GFP_KERNEL);
 	if (stats == NULL) {
-		disable_base_device(real_dev);
+		put_base_device(real_dev);
 		return -ENOMEM;
 	}
 
@@ -398,22 +403,19 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	list_del(&nds->next);
 	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
 
-	/*
-	 * Now we may attempt to pass the crossing, waiting until all
-	 * in-flight oob operations holding a reference on the network
-	 * device have completed.
-	 */
-	evl_pass_crossing(&nds->crossing);
-
 	netif_disable_oob_port(dev);
-
 	real_dev = evl_net_real_dev(dev);
 	if (dev != real_dev) {
+		evl_pass_crossing(&nds->crossing);
 		kfree(nds->stats);
 		nds->stats = NULL;
+		put_base_device(real_dev);
+	} else {
+		if (__put_base_device(dev)) {
+			evl_pass_crossing(&nds->crossing);
+			dismantle_base_device(dev);
+		}
 	}
-
-	disable_base_device(real_dev);
 }
 
 static int switch_oob_port(struct net_device *dev,
@@ -810,7 +812,7 @@ static int netdev_release(struct inode *inode, struct file *filp)
 {
 	struct net_device *dev = filp->private_data;
 
-	evl_net_put_dev(dev);
+	dev_put(dev);
 
 	return 0;
 }
@@ -840,6 +842,7 @@ int __evl_net_dev_allocfd(struct net_device *dev)
 		goto fail;
 	}
 
+	/* The caller forwarded us a reference to @dev. */
 	filp->private_data = dev;
 
 	fd_install(fd, filp);
@@ -854,20 +857,22 @@ fail:
 int evl_net_dev_allocfd(struct net *net, const char *devname)
 {
 	struct net_device *dev;
-	int ret;
+	int fd;
 
 	dev = evl_net_get_dev_by_name(net, devname);
 	if (!dev)
 		return -EINVAL;
 
-	ret = __evl_net_dev_allocfd(dev);
-	if (ret)
-		evl_net_put_dev(dev);
+	dev_hold(dev);
+	fd = __evl_net_dev_allocfd(dev);
+	evl_net_put_dev(dev);
+	if (fd < 0)
+		dev_put(dev);
 
 	/*
 	 * On success, the reference on @dev will be released by
 	 * netdev_release().
 	 */
 
-	return ret;
+	return fd;
 }
