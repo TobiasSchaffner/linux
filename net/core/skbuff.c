@@ -1680,6 +1680,8 @@ EXPORT_SYMBOL(consume_skb);
 void __consume_stateless_skb(struct sk_buff *skb)
 {
 	trace_consume_skb(skb, __builtin_return_address(0));
+	if (skb_release_oob(skb))
+		return;
 	skb_release_data(skb, SKB_CONSUMED);
 	kfree_skbmem(skb);
 }
