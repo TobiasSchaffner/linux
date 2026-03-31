@@ -75,19 +75,11 @@ static bool pop_vlan_header(struct sk_buff *skb)
  * so that other payload types we don't deal with always flow through
  * the inband stack (e.g. ETH_P_ARP).
  *
- * VLAN encapsulation is stripped out if present.
- *
  * @skb the packet to deliver. May be linked to some upstream queue.
  */
 bool evl_net_ether_accept(struct sk_buff *skb)
 {
 	if (skb->protocol != htons(ETH_P_IP))
-		return false;
-	/*
-	 * If VLAN (un)tagging is not hw-accelerated, pop the VLAN
-	 * header manually.
-	 */
-	if (!skb_vlan_tag_present(skb) && !pop_vlan_header(skb))
 		return false;
 
 	ether_receive(skb);
