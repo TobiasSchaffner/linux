@@ -55,6 +55,9 @@
  *                                                -> free_skb_oob(skb)
  *                        -> dev_kfree_skb(skb)
  *                                -> consume_skb(skb) [1]
+ * 			  |
+ * 			    __consume_stateless_skb(skb)
+ * 						  -> free_skb_oob(skb)
  */
 
 #define SKB_RECYCLING_THRESHOLD 32
