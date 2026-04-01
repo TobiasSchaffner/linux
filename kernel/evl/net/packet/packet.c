@@ -372,7 +372,6 @@ static ssize_t send_packet(struct evl_socket *esk,
 	}
 
 	skb_reset_mac_header(skb);
-	skb->protocol = htons(esk->protocol);
 	skb->priority = READ_ONCE(esk->sk->sk_priority);
 
 	count = evl_copy_from_uio(iov, iovlen, skb->data, skb_tailroom(skb), &rem);
@@ -385,10 +384,7 @@ static ssize_t send_packet(struct evl_socket *esk,
 		goto cleanup;
 
 	skb_put(skb, count);
-
-	if (!skb->protocol || skb->protocol == htons(ETH_P_ALL))
-		skb->protocol = dev_parse_header_protocol(skb);
-
+	skb->protocol = dev_parse_header_protocol(skb);
 	skb_set_network_header(skb, real_dev->hard_header_len);
 
 	/*
