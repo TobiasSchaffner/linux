@@ -110,7 +110,7 @@ void evl_net_do_rx(void *arg)
 			list_for_each_entry_safe(skb, next, &list, list) {
 				if (skb_is_oob_timestamped(skb))
 					skb_shinfo_oob(skb)->queuing_time = evl_ktime_monotonic();
-				list_del(&skb->list);
+				list_del_init(&skb->list);
 				packets_in++;
 				bytes_in += skb->len;
 				skb_shinfo_oob(skb)->owner = skb->dev;
@@ -189,6 +189,16 @@ void evl_net_receive(struct sk_buff *skb,
 		skb_reset_transport_header(skb);
 
 	skb_reset_mac_len(skb);
+
+	/*
+	 * Feed in-band input taps if any. Note that dev_nit_active()
+	 * racing with updates to the packet type chain is ok, this
+	 * solely checks for list emptiness to determine whether we
+	 * should push the buffer to the in-band nit, all operations
+	 * are properly serialized there.
+	 */
+	if (dev_nit_active(skb->dev))
+		evl_net_tap_in(skb->dev, skb);
 
 	/*
 	 * Enqueue the packet. The NIC driver is expected to call
@@ -302,19 +312,6 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 	}
 
 	rcu_read_unlock();
-
-	/*
-	 * Feed in-band input taps if any. Racing with in-band updates
-	 * to the packet type chain is ok, we don't dereference it but
-	 * only use a hint to determine whether we should push the
-	 * buffer to the in-band nit, all operations are properly
-	 * serialized there.
-	 *
-	 * NOTE: skb->dev may have switched from a real device to a
-	 * VLAN interface.
-	 */
-	if (picked && dev_nit_active(skb->dev))
-		evl_net_tap_in(skb->dev, skb);
 
 	return picked;
 }
