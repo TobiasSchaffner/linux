@@ -29,12 +29,6 @@ static void ether_receive(struct sk_buff *skb)
 			skb->vlan_proto, skb_vlan_tag_get_id(skb));
 		if (likely(vlan_dev)) {
 			skb->dev = vlan_dev;
-			/*
-			 * Make sure that packet sniffers reading the
-			 * input taps we may feed don't display the
-			 * VLAN encapsulation in headers.
-			 */
-			__vlan_hwaccel_clear_tag(skb);
 			stats = evl_net_get_stats(vlan_dev);
 			evl_counter_inc_careful(&stats->rx_packets);
 			evl_counter_add_careful(&stats->rx_bytes, skb->len);
