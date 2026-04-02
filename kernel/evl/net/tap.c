@@ -7,6 +7,7 @@
 #include <linux/inband_work.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
+#include <linux/if_vlan.h>
 #include <evl/net/skb.h>
 #include <evl/net/tap.h>
 
@@ -19,11 +20,46 @@ struct evl_net_tap_data {
 
 static void feed_tap_in(struct net_device *dev, struct sk_buff *skb)
 {
+	struct sk_buff *bskb;
+
+	if (EVL_WARN_ON(NET, !skb_mac_header_was_set(skb)))
+		return;
+
 	lockdep_assert_in_softirq();
+
 	/*
-	 * The buffer headers are reset and untagged from VLAN bits if
-	 * any as well (see netif_deliver_oob()).
+	 * If receiving from a VLAN device, attempt to feed the tap of
+	 * its base device as well. Allocation failure is not deemed
+	 * critical (although most likely to go worse soon enough),
+	 * just skip this part.
 	 */
+	if (is_vlan_dev(dev)) {
+		skb_push(skb, skb->mac_len); /* Restore the MAC header. */
+
+		/* Add back a VLAN header to a copy of skb. */
+		bskb = pskb_copy(skb, GFP_ATOMIC);
+		if (unlikely(!bskb))
+			goto unlucky;
+
+		bskb->dev = vlan_dev_real_dev(dev);
+		bskb = __vlan_hwaccel_push_inside(bskb);
+		if (likely(bskb)) {
+			skb_reset_mac_len(bskb);
+			dev_queue_recv_nit(bskb, bskb->dev);
+		}
+
+		kfree_skb(bskb);
+	unlucky:
+		__skb_pull(skb, skb->mac_len);
+
+		/*
+		 * Make sure that a packet sniffer reading the input
+		 * tap of the VLAN device won't display the VLAN
+		 * encapsulation.
+		 */
+		__vlan_hwaccel_clear_tag(skb);
+	}
+
 	dev_queue_recv_nit(skb, dev);
 }
 
@@ -82,6 +118,30 @@ void evl_net_tap_in(struct net_device *dev, struct sk_buff *skb)
 
 static void feed_tap_out(struct net_device *dev, struct sk_buff *skb)
 {
+	struct sk_buff *bskb;
+
+	if (!is_vlan_dev(dev))
+		goto do_basedev;
+
+	if (EVL_WARN_ON(NET, !skb_mac_header_was_set(skb)))
+		goto no_vlan;
+
+	/* Strip the VLAN header before sending to the VLAN tap. */
+	bskb = pskb_copy(skb, GFP_ATOMIC);
+	if (unlikely(!bskb))
+		goto no_vlan;
+
+	if (!skb_vlan_pop(bskb)) {
+		bskb->dev = dev;
+		local_bh_disable();
+		dev_queue_xmit_nit(bskb, dev);
+		local_bh_enable();
+	}
+
+	kfree_skb(bskb);
+no_vlan:
+	dev = vlan_dev_real_dev(dev);
+do_basedev:
 	local_bh_disable();
 	dev_queue_xmit_nit(skb, dev);
 	local_bh_enable();

@@ -87,13 +87,7 @@ static inline void do_tx(struct evl_net_qdisc *qdisc,
 	 */
 	timestamp_at_device(skb);
 
-	/*
-	 * Feed in-band output taps if any. Racing with in-band
-	 * updates to the packet type chain is ok, we don't
-	 * dereference it but only use a hint to determine whether we
-	 * should push the buffer to the in-band nit, all operations
-	 * are properly serialized there.
-	 */
+	/* See comment about feeding taps in evl_net_do_rx(). */
 	if (dev_nit_active(dev))
 		evl_net_tap_out(dev, skb);
 
