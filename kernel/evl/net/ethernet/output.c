@@ -29,11 +29,15 @@ int evl_net_ether_transmit_raw(struct net_device *dev, struct sk_buff *skb)
 		vlan_proto = vlan_dev_vlan_proto(dev);
 		vlan_tci = vlan_dev_vlan_id(dev);
 		vlan_tci |= vlan_dev_get_egress_qos_mask(dev, skb->priority);
+		/* Can't fail on skb_cow_head(), we reserved VLAN_ETH_HLEN. */
 		__vlan_insert_tag(skb, vlan_proto, vlan_tci);
+		skb->protocol = vlan_proto;
 		stats = evl_net_get_stats(dev);
 		evl_counter_inc_careful(&stats->tx_packets);
 		evl_counter_add_careful(&stats->tx_bytes, skb->len);
 	}
+
+	skb_reset_mac_len(skb);
 
 	netdev_dbg(dev, "transmitting %px\n", skb);
 
@@ -45,6 +49,7 @@ static int ether_transmit_one(struct net_device *dev, struct sk_buff *skb,
 {
 	struct ethhdr *eth;
 
+	skb_reset_network_header(skb);
 	eth = skb_push(skb, ETH_HLEN);
 	skb_reset_mac_header(skb);
 	eth->h_proto = skb->protocol;
