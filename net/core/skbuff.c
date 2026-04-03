@@ -1581,6 +1581,11 @@ void skb_dump(const char *level, const struct sk_buff *skb, bool full_pkt)
 		printk("%ssk family=%hu type=%u proto=%u\n",
 		       level, sk->sk_family, sk->sk_type, sk->sk_protocol);
 
+#ifdef CONFIG_NET_OOB
+	printk("%soob buffer=%d data=%d released=%d\n",
+		level, skb_is_oob(skb), skb_is_oob_managed(skb), skb_is_oob_released(skb));
+#endif
+
 	if (full_pkt && headroom)
 		print_hex_dump(level, "skb headroom: ", DUMP_PREFIX_OFFSET,
 			       16, 1, skb->head, headroom, false);
