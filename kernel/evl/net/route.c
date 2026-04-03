@@ -12,23 +12,6 @@
 #include <evl/net/ipv4/arp.h>
 
 /*
- * Release a route. This is a common helper which may be called by the
- * drop() handler from the generic cache layer for any cached IP route
- * entry.
- */
-void evl_net_free_route(struct evl_cache_entry *entry) /* in-band */
-{
-	struct evl_net_route *e =
-		container_of(entry, struct evl_net_route, entry);
-
-	netdev_dbg(evl_net_route_dev(e), "dropping IPv4 route %pI4\n", e->key);
-
-	ip_rt_put(e->rt);
-
-	kfree(e);
-}
-
-/*
  * in-band hook which receives IPv4 routing decisions which go through
  * an oob-enabled device.
  */

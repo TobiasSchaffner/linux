@@ -38,8 +38,6 @@ int evl_net_cache_route(struct evl_cache *cache,
 			const void *key,
 			size_t key_len);
 
-void evl_net_free_route(struct evl_cache_entry *entry);
-
 static inline void evl_net_put_route(struct evl_net_route *ert)
 {
 	evl_put_cache_entry(&ert->entry);
