@@ -42,12 +42,24 @@ static const void *get_ipv4_key(const struct evl_cache_entry *entry)
 	return e->key;
 }
 
+static void drop_ipv4_route(struct evl_cache_entry *entry) /* in-band */
+{
+	struct evl_net_route *e =
+		container_of(entry, struct evl_net_route, entry);
+
+	netdev_dbg(evl_net_route_dev(e), "dropping IPv4 route %pI4\n", e->key);
+
+	ip_rt_put(e->rt);
+
+	kfree(e);
+}
+
 static struct evl_cache_ops ipv4_route_cache_ops = {
 	.hash		= hash_ipv4_route,
 	.eq		= eq_ipv4_route,
 	.get_key	= get_ipv4_key,
 	.format_key	= format_ipv4_key,
-	.drop		= evl_net_free_route,
+	.drop		= drop_ipv4_route,
 };
 
 int evl_net_init_ipv4_routing(struct net *net)
