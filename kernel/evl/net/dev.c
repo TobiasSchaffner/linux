@@ -60,14 +60,6 @@
 #define EVL_MAX_NETDEV_POOLSZ  32768
 #define EVL_MAX_NETDEV_BUFSZ   (PAGE_SIZE * 4)
 
-/*
- * The list of network interfaces (real and virtual devices) which are
- * usable for sending/receiving oob traffic.
- */
-static LIST_HEAD(oob_port_list);
-
-static DEFINE_HARD_SPINLOCK(oob_port_lock);
-
 static struct evl_net_ebpf_filter *
 __set_rx_filter(struct evl_netdev_state *est,
 		struct evl_net_ebpf_filter *filter);
@@ -308,7 +300,6 @@ static int enable_oob_port(struct net_device *dev,
 	struct evl_netdev_stats *stats;
 	struct oob_netdev_state *nds;
 	struct net_device *real_dev;
-	unsigned long flags;
 	int ret;
 
 	if (netif_oob_port(dev))
@@ -340,12 +331,9 @@ static int enable_oob_port(struct net_device *dev,
 	INIT_LIST_HEAD(&nds->bindings);
 	evl_init_crossing(&nds->crossing);
 	nds->stats = stats;
+	list_add_rcu(&nds->next, &dev_net(dev)->oob.oob_vlans); /* Guarded by rtnl */
 queue:
 	netif_enable_oob_port(dev);
-
-	raw_spin_lock_irqsave(&oob_port_lock, flags);
-	list_add(&nds->next, &oob_port_list);
-	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
 
 	/* Advertise the device to the routing system. */
 	ret = evl_net_add_device_route(dev);
@@ -381,7 +369,6 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 {
 	struct oob_netdev_state *nds = &dev->oob_state;
 	struct net_device *real_dev;
-	unsigned long flags;
 
 	if (!netif_oob_port(dev))
 		return;
@@ -393,19 +380,16 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 	drop_bindings(nds);
 
 	/*
-	 * Make sure that no evl_down_crossing() can be issued after
-	 * we attempt to pass the crossing. Since the former can only
-	 * happen as a result of finding the device in the active
-	 * list, first unlink the latter _then_ pass the crossing
-	 * next.
+	 * Make sure that no evl_down_crossing() can be issued on the
+	 * device after we attempt to pass its crossing. Since we must
+	 * find that device with an active port first to do so, turn
+	 * the latter off before passing the crossing.
 	 */
-	raw_spin_lock_irqsave(&oob_port_lock, flags);
-	list_del(&nds->next);
-	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
-
 	netif_disable_oob_port(dev);
+
 	real_dev = evl_net_real_dev(dev);
 	if (dev != real_dev) {
+		list_del_rcu(&nds->next); /* Guarded by rtnl */
 		evl_pass_crossing(&nds->crossing);
 		kfree(nds->stats);
 		nds->stats = NULL;
@@ -500,30 +484,31 @@ struct net_device *evl_net_get_dev_by_name(struct net *net, const char *name)
 	return dev;
 }
 
+/**
+ * evl_net_find_vlan_dev - find an VLAN device from its id.
+ *
+ * Only VLAN devices with an active oob port are considered.  May be
+ * called from any stage, RCU read-side required.
+ */
 struct net_device *evl_net_find_vlan_dev(struct net *net,
 					__be16 vlan_proto, __u16 vlan_id)
 {
-	struct net_device *dev, *ret = NULL;
+	struct net_device *dev, *vlan_dev = NULL;
 	struct oob_netdev_state *nds;
-	unsigned long flags;
 
-	raw_spin_lock_irqsave(&oob_port_lock, flags);
-
-	list_for_each_entry(nds, &oob_port_list, next) {
+	list_for_each_entry_rcu(nds, &net->oob.oob_vlans, next) {
 		dev = container_of(nds, struct net_device, oob_state);
 		if (dev_net(dev) != net || !is_vlan_dev(dev))
 			continue;
 		if (vlan_dev_vlan_proto(dev) != vlan_proto)
 			continue;
 		if (vlan_dev_vlan_id(dev) == vlan_id) {
-			ret = dev;
+			vlan_dev = dev;
 			break;
 		}
 	}
 
-	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
-
-	return ret;
+	return vlan_dev;
 }
 
 void evl_net_dev_bind(struct net_device *dev, struct evl_socket *esk)
