@@ -480,28 +480,6 @@ struct net_device *evl_net_get_dev_by_index(struct net *net, int ifindex)
 	return ret;
 }
 
-struct net_device *evl_net_get_dev_by_flags(struct net *net, int ifflags)
-{
-	struct net_device *dev, *ret = NULL;
-	struct oob_netdev_state *nds;
-	unsigned long flags;
-
-	raw_spin_lock_irqsave(&oob_port_lock, flags);
-
-	list_for_each_entry(nds, &oob_port_list, next) {
-		dev = container_of(nds, struct net_device, oob_state);
-		if (dev_net(dev) == net && dev->flags & ifflags) {
-			evl_down_crossing(&nds->crossing);
-			ret = dev;
-			break;
-		}
-	}
-
-	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
-
-	return ret;
-}
-
 struct net_device *evl_net_get_dev_by_name(struct net *net, const char *name)
 {
 	struct net_device *dev, *ret = NULL;
