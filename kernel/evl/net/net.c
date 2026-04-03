@@ -33,6 +33,7 @@ void net_init_oob_state(struct net *net)
 {
 	evl_net_init_packet(net);
 	evl_net_init_ipv4(net);
+	INIT_LIST_HEAD(&net->oob.oob_vlans);
 }
 
 /*
