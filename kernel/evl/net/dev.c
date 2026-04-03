@@ -457,49 +457,47 @@ EXPORT_SYMBOL_GPL(evl_net_switch_oob_port);
 
 struct net_device *evl_net_get_dev_by_index(struct net *net, int ifindex)
 {
-	struct net_device *dev, *ret = NULL;
 	struct oob_netdev_state *nds;
-	unsigned long flags;
+	struct net_device *dev;
 
 	if (!ifindex)
 		return NULL;
 
-	raw_spin_lock_irqsave(&oob_port_lock, flags);
+	dev = dev_get_by_index(net, ifindex);
+	if (!dev)
+		return NULL;
 
-	list_for_each_entry(nds, &oob_port_list, next) {
-		dev = container_of(nds, struct net_device, oob_state);
-		if (dev_net(dev) == net && dev->ifindex == ifindex) {
-			evl_down_crossing(&nds->crossing);
-			ret = dev;
-			break;
-		}
+	if (!netif_oob_port(dev)) {
+		dev_put(dev);
+		return NULL;
 	}
 
-	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
+	nds = &dev->oob_state;
+	evl_down_crossing(&nds->crossing);
+	dev_put(dev);
 
-	return ret;
+	return dev;
 }
 
 struct net_device *evl_net_get_dev_by_name(struct net *net, const char *name)
 {
-	struct net_device *dev, *ret = NULL;
 	struct oob_netdev_state *nds;
-	unsigned long flags;
+	struct net_device *dev;
 
-	raw_spin_lock_irqsave(&oob_port_lock, flags);
+	dev = dev_get_by_name(net, name);
+	if (!dev)
+		return NULL;
 
-	list_for_each_entry(nds, &oob_port_list, next) {
-		dev = container_of(nds, struct net_device, oob_state);
-		if (dev_net(dev) == net && !strcmp(netdev_name(dev), name)) {
-			evl_down_crossing(&nds->crossing);
-			ret = dev;
-			break;
-		}
+	if (!netif_oob_port(dev)) {
+		dev_put(dev);
+		return NULL;
 	}
 
-	raw_spin_unlock_irqrestore(&oob_port_lock, flags);
+	nds = &dev->oob_state;
+	evl_down_crossing(&nds->crossing);
+	dev_put(dev);
 
-	return ret;
+	return dev;
 }
 
 struct net_device *evl_net_find_vlan_dev(struct net *net,
