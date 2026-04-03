@@ -82,6 +82,8 @@ struct oob_net_state {
 		/* Cache of active UDP4 receivers. */
 		struct evl_cache udp;
 	} ipv4;
+	/* VLAN devices with active oob ports. */
+	struct list_head oob_vlans;
 };
 
 void net_init_oob_state(struct net *net);
