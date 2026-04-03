@@ -11,7 +11,7 @@
 #include <evl/net/skb.h>
 #include <evl/net/tap.h>
 
-#define EVL_TAP_RING_SIZE  2048
+#define EVL_TAP_RING_SIZE  4096
 
 struct evl_net_tap_data {
 	struct net_device *dev;
