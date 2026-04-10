@@ -38,17 +38,75 @@ static void ether_receive(struct sk_buff *skb)
 	evl_net_receive(skb, &evl_net_ether);
 }
 
-static bool pop_vlan_header(struct sk_buff *skb)
+/*
+ * Pop any VLAN header from the packet, checking for an IPv4 payload
+ * flowing through an out-of-band VLAN.  We handle 802.1Q and 802.1ad
+ * (QinQ) encapsulation.
+ *
+ * This routine expects the MAC header to be set in @skb.
+ *
+ * Returns an action code to the caller:
+ *
+ * - RX_ACCEPT if the packet may be accepted. The VLAN header is
+ *   stripped on return.
+ *
+ * - RX_SKIP if the packet does not flow on an out-of-band VLAN.
+ *
+ * - RX_DROP if the packet looks broken and should be dropped
+ *   (e.g. bad VLAN header).
+ */
+static enum evl_net_rx_action pop_vlan_header(struct sk_buff *skb)
 {
+	struct vlan_ethhdr *ehdr;
+	struct vlan_hdr *inner;
+	__be16 vlan_proto;
+	u16 vlan_tci;
 	int ret;
 
+	/* Try the accelerated way first. */
+	if (likely(!__vlan_hwaccel_get_tag(skb, &vlan_tci))) {
+		if (skb->protocol != htons(ETH_P_IP))
+			return EVL_RX_SKIP;
+
+		if (!test_bit(vlan_tci & VLAN_VID_MASK, vlan_map))
+			return EVL_RX_SKIP;
+
+		return EVL_RX_ACCEPT;
+	}
+
 	/*
-	 * Make sure the issuing netdev called eth_type_trans() on the
-	 * incoming packet, otherwise something is definitely wrong
-	 * there and we should leave inband deal with the mess.
+	 * Deal manually with input from adapters without hw
+	 * accelerated VLAN processing.
 	 */
-	if (unlikely(!skb_mac_header_was_set(skb)))
-		return false;
+
+	if (EVL_WARN_ON_ONCE(NET, !skb_mac_header_was_set(skb)))
+		return EVL_RX_DROP; /* Broken driver. */
+
+	if (!eth_type_vlan(skb->protocol))
+		return EVL_RX_SKIP;
+
+	if (skb->len < VLAN_ETH_HLEN)
+		return EVL_RX_DROP;
+
+	vlan_proto = skb->protocol;
+	ehdr = (struct vlan_ethhdr *)skb_mac_header(skb);
+
+	switch (ehdr->h_vlan_encapsulated_proto) {
+	case htons(ETH_P_IP):	/* simple 802.1Q encapsulation. */
+		vlan_tci = ntohs(ehdr->h_vlan_TCI);
+		break;
+	case htons(ETH_P_8021Q): /* nested QinQ encapsulation. */
+		if (skb->len < VLAN_ETH_HLEN + VLAN_HLEN)
+			return EVL_RX_DROP;
+		inner = (struct vlan_hdr *)(ehdr + 1);
+		if (inner->h_vlan_encapsulated_proto != htons(ETH_P_IP))
+			return EVL_RX_SKIP;
+		vlan_tci = ntohs(inner->h_vlan_TCI);
+		break;
+	}
+
+	if (!test_bit(vlan_tci & VLAN_VID_MASK, vlan_map))
+		return EVL_RX_SKIP;
 
 	/* Drivers should never send us cloned oob skbs. */
 	EVL_WARN_ON_ONCE(NET, skb_cloned(skb));
@@ -56,66 +114,12 @@ static bool pop_vlan_header(struct sk_buff *skb)
 	ret = skb_vlan_pop(skb);
 	skb_pull_rcsum(skb, ETH_HLEN);
 	if (EVL_WARN_ON_ONCE(NET, ret))
-		return false;
+		return EVL_RX_DROP;
 
-	return true;
-}
+	/* For ether_receive() to set skb->dev appropriately. */
+	__vlan_hwaccel_put_tag(skb, vlan_proto, vlan_tci);
 
-/**
- * evl_net_ether_accept - Accept an ethernet packet.
- *
- * Unlike evl_net_ether_accept_vlan(), this routine does not filter
- * the input on the VLAN tag. However, non-IPv4 packets are rejected,
- * so that other payload types we don't deal with always flow through
- * the inband stack (e.g. ETH_P_ARP).
- *
- * @skb the packet to deliver. May be linked to some upstream queue.
- */
-bool evl_net_ether_accept(struct sk_buff *skb)
-{
-	if (skb->protocol != htons(ETH_P_IP))
-		return false;
-
-	ether_receive(skb);
-
-	return true;
-}
-
-/*
- * Check whether the packet contains a VLAN-encapsulated IPv4 payload,
- * fetching the TCI if so. We handle IPv4 with 802.1Q or 802.1ad
- * (QinQ) encapsulation. In the latter case, the encapsulated protocol
- * and TCI data we look for are carried by the inner 802.1Q header.
- *
- * This routine does not alter @skb.
- */
-static bool has_vlan_encapsulation(struct sk_buff *skb,
-				__be16 *vlan_proto, u16 *vlan_tci)
-{
-	struct vlan_ethhdr *ehdr = (struct vlan_ethhdr *)skb_mac_header(skb);
-	struct vlan_hdr *inner;
-
-	if (!eth_type_vlan(skb->protocol))
-		return false;
-
-	if (skb->len < VLAN_ETH_HLEN)
-		return false;	/* Uhh?? */
-
-	*vlan_proto = skb->protocol;
-
-	switch (ehdr->h_vlan_encapsulated_proto) {
-	case htons(ETH_P_IP):	/* simple 802.1Q encapsulation. */
-		*vlan_tci = ntohs(ehdr->h_vlan_TCI);
-		return true;
-	case htons(ETH_P_8021Q): /* nested QinQ encapsulation. */
-		if (skb->len < VLAN_ETH_HLEN + VLAN_HLEN)
-			return false;
-		inner = (struct vlan_hdr *)(ehdr + 1);
-		*vlan_tci = ntohs(inner->h_vlan_TCI);
-		return inner->h_vlan_encapsulated_proto == htons(ETH_P_IP);
-	}
-
-	return false;
+	return EVL_RX_ACCEPT;
 }
 
 /**
@@ -134,51 +138,55 @@ static bool has_vlan_encapsulation(struct sk_buff *skb,
  *
  * @skb the packet to deliver. May be linked to some upstream queue.
  *
- * Returns true if the packet was queued for the out-of-band stack to
- * handle it.
+ * Returns an action code to the caller:
+ *
+ * - RX_ACCEPT if the packet was indeed queued for the out-of-band
+ *   stack to handle it.
+ *
+ * - RX_SKIP if the packet should be handed over to the in-band stack
+ *   eventually.
+ *
+ * - RX_DROP if the packet looks broken and should be dropped.
  */
-bool evl_net_ether_accept_vlan(struct sk_buff *skb)
+enum evl_net_rx_action evl_net_ether_accept_vlan(struct sk_buff *skb)
 {
-	__be16 vlan_proto;
-	u16 vlan_tci;
+	enum evl_net_rx_action ret = pop_vlan_header(skb);
 
-	/* Try the accelerated way first. */
-	if (likely(!__vlan_hwaccel_get_tag(skb, &vlan_tci))) {
-		if (skb->protocol != htons(ETH_P_IP))
-			return false;
+	if (likely(ret == EVL_RX_ACCEPT))
+		ether_receive(skb);
 
-		if (!test_bit(vlan_tci & VLAN_VID_MASK, vlan_map))
-			return false; /* Not an out-of-band channel. */
+	return ret;
+}
+
+/**
+ * evl_net_ether_accept - Accept an ethernet packet.
+ *
+ * A variant of evl_net_ether_accept_vlan() which conditionally
+ * filters the input on the VLAN tag only when the latter is present,
+ * in which case an out-of-band VLAN must be found.
+ *
+ * Non-IPv4 packets are never passed to the oob stack, so that other
+ * payload types we don't deal with always flow through the inband
+ * stack (e.g. ETH_P_ARP).
+ *
+ * @skb the packet to deliver. May be linked to some upstream queue.
+ */
+enum evl_net_rx_action evl_net_ether_accept(struct sk_buff *skb)
+{
+	enum evl_net_rx_action ret;
+
+	if (eth_type_vlan(skb->protocol)) {
+		ret = pop_vlan_header(skb);
+		if (ret != EVL_RX_ACCEPT)
+			return ret;
 	} else {
-		/*
-		 * Deal manually with input from adapters without hw
-		 * accelerated VLAN processing. We only peek at the
-		 * packet to figure out whether it may flow through an
-		 * out-of-band VLAN channel, in which case we pop the
-		 * VLAN header(s) before queuing it for processing.
-		 */
-		if (!has_vlan_encapsulation(skb, &vlan_proto, &vlan_tci))
-			return false;
-
-		/* Check the VLAN channel proper. */
-		if (!test_bit(vlan_tci & VLAN_VID_MASK, vlan_map))
-			return false;
-
-		/*
-		 * We are going to accept this packet for out-of-band
-		 * handling, pop the VLAN header(s) before queuing it
-		 * for RX.
-		 */
-		if (!pop_vlan_header(skb))
-			return false;
-
-		/* For ether_receive() to set skb->dev appropriately. */
-		__vlan_hwaccel_put_tag(skb, vlan_proto, vlan_tci);
+		if (skb->protocol != htons(ETH_P_IP))
+			return EVL_RX_SKIP;
 	}
 
 	ether_receive(skb);
 
-	return true;
+	return EVL_RX_ACCEPT;
 }
 
 /**
