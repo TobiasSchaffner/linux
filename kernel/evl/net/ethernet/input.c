@@ -25,7 +25,7 @@ static void ether_receive(struct sk_buff *skb)
 
 	if (skb_vlan_tag_present(skb)) {
 		vlan_dev = evl_net_find_vlan_dev(
-			dev_net(skb->dev),
+			skb->dev,
 			skb->vlan_proto, skb_vlan_tag_get_id(skb));
 		if (likely(vlan_dev)) {
 			skb->dev = vlan_dev;
