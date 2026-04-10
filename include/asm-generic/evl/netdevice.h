@@ -31,6 +31,7 @@ struct evl_net_ebpf_filter {
 #define EVL_NETDEV_RX_SCHED_BIT   0
 #define EVL_NETDEV_RX_FILTER_BIT  1
 
+/* Runtime state of a base device channelling oob traffic. */
 struct evl_netdev_state {
 	/* TX page pool (premapped if device is oob-capable). */
 	struct page_pool *tx_pages;
@@ -55,6 +56,8 @@ struct evl_netdev_state {
 	unsigned long flags;
 	/* Number of oob ports using this device. */
 	refcount_t users;
+	/* List of upper (VLAN) devices. */
+	struct list_head vlans;
 };
 
 struct evl_netdev_stats {
