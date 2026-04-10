@@ -274,14 +274,12 @@ void napi_schedule_oob(struct napi_struct *n) /* inband/oob */
 bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 {
 	struct net_device *real_dev = skb->dev;
-	bool picked;
+	enum evl_net_rx_action action;
 
 	/* We deal with Ethernet and loopback devices only. */
 	if (unlikely(real_dev->type != ARPHRD_ETHER &&
 			real_dev->type != ARPHRD_LOOPBACK))
 		return false;
-
-	rcu_read_lock();
 
 	/*
 	 * Filter the incoming packet through the eBPF RX program
@@ -290,30 +288,35 @@ bool netif_deliver_oob(struct sk_buff *skb) /* oob or in-band */
 	 * are not interested in it. If no filter is active,
 	 * EVL_RX_VLAN is applied.
 	 */
-	switch (evl_net_filter_rx(real_dev, skb)) {
+	rcu_read_lock();
+
+	action = evl_net_filter_rx(real_dev, skb);
+	switch (action) {
 	case EVL_RX_VLAN:
-		picked = evl_net_ether_accept_vlan(skb);
-		/* Apply our regular VLAN-based filter. */
+		/* Apply the VLAN-based rule. */
+		action = evl_net_ether_accept_vlan(skb);
 		break;
 	case EVL_RX_ACCEPT:
-		/* Try accepting the packet regardless of VLAN tagging. */
-		picked = evl_net_ether_accept(skb);
+		/*
+		 * Accept packet unconditionally if untagged,
+		 * otherwise apply the VLAN-based rule.
+		 */
+		action = evl_net_ether_accept(skb);
 		break;
-	case EVL_RX_DROP:
-		/* Blackhole. */
-		rcu_read_unlock();
-		evl_net_free_skb(skb);
-		return true;
-	case EVL_RX_SKIP:
 	default:
-		/* Leave the packet to inband. */
-		rcu_read_unlock();
-		return false;
+		break;
 	}
 
 	rcu_read_unlock();
 
-	return picked;
+	if (action == EVL_RX_DROP) {
+		evl_net_free_skb(skb);
+		return true;
+	}
+
+	EVL_WARN_ON(NET, action == EVL_RX_VLAN);
+
+	return action == EVL_RX_ACCEPT;
 }
 
 /*
