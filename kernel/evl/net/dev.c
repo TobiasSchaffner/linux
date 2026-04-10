@@ -140,6 +140,7 @@ static int setup_base_device(struct net_device *real_dev,
 	if (!(real_dev->flags & IFF_LOOPBACK) && p->bufsz < mtu)
 		p->bufsz = mtu;
 
+	INIT_LIST_HEAD(&est->vlans);
 	refcount_set(&est->users, 1);
 	est->pool_max = p->poolsz;
 	est->buf_size = p->bufsz;
@@ -331,7 +332,7 @@ static int enable_oob_port(struct net_device *dev,
 	INIT_LIST_HEAD(&nds->bindings);
 	evl_init_crossing(&nds->crossing);
 	nds->stats = stats;
-	list_add_rcu(&nds->next, &dev_net(dev)->oob.oob_vlans); /* Guarded by rtnl */
+	list_add_rcu(&nds->next, &real_dev->oob_state.estate->vlans); /* Guarded by rtnl */
 queue:
 	netif_enable_oob_port(dev);
 
@@ -490,25 +491,24 @@ struct net_device *evl_net_get_dev_by_name(struct net *net, const char *name)
  * Only VLAN devices with an active oob port are considered.  May be
  * called from any stage, RCU read-side required.
  */
-struct net_device *evl_net_find_vlan_dev(struct net *net,
+struct net_device *evl_net_find_vlan_dev(struct net_device *real_dev,
 					__be16 vlan_proto, __u16 vlan_id)
 {
-	struct net_device *dev, *vlan_dev = NULL;
 	struct oob_netdev_state *nds;
+	struct net_device *vlan_dev;
 
-	list_for_each_entry_rcu(nds, &net->oob.oob_vlans, next) {
-		dev = container_of(nds, struct net_device, oob_state);
-		if (dev_net(dev) != net || !is_vlan_dev(dev))
+	if (!real_dev->oob_state.estate)
+		return NULL;	/* Wow. Houston? */
+
+	list_for_each_entry_rcu(nds, &real_dev->oob_state.estate->vlans, next) {
+		vlan_dev = container_of(nds, struct net_device, oob_state);
+		if (vlan_dev_vlan_proto(vlan_dev) != vlan_proto)
 			continue;
-		if (vlan_dev_vlan_proto(dev) != vlan_proto)
-			continue;
-		if (vlan_dev_vlan_id(dev) == vlan_id) {
-			vlan_dev = dev;
-			break;
-		}
+		if (vlan_dev_vlan_id(vlan_dev) == vlan_id)
+			return vlan_dev;
 	}
 
-	return vlan_dev;
+	return NULL;
 }
 
 void evl_net_dev_bind(struct net_device *dev, struct evl_socket *esk)
