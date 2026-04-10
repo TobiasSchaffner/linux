@@ -89,7 +89,8 @@ bool evl_net_ether_accept(struct sk_buff *skb)
  *
  * This routine does not alter @skb.
  */
-static bool has_vlan_encapsulation(struct sk_buff *skb, u16 *vlan_tci)
+static bool has_vlan_encapsulation(struct sk_buff *skb,
+				__be16 *vlan_proto, u16 *vlan_tci)
 {
 	struct vlan_ethhdr *ehdr = (struct vlan_ethhdr *)skb_mac_header(skb);
 	struct vlan_hdr *inner;
@@ -99,6 +100,8 @@ static bool has_vlan_encapsulation(struct sk_buff *skb, u16 *vlan_tci)
 
 	if (skb->len < VLAN_ETH_HLEN)
 		return false;	/* Uhh?? */
+
+	*vlan_proto = skb->protocol;
 
 	switch (ehdr->h_vlan_encapsulated_proto) {
 	case htons(ETH_P_IP):	/* simple 802.1Q encapsulation. */
@@ -136,6 +139,7 @@ static bool has_vlan_encapsulation(struct sk_buff *skb, u16 *vlan_tci)
  */
 bool evl_net_ether_accept_vlan(struct sk_buff *skb)
 {
+	__be16 vlan_proto;
 	u16 vlan_tci;
 
 	/* Try the accelerated way first. */
@@ -153,7 +157,7 @@ bool evl_net_ether_accept_vlan(struct sk_buff *skb)
 		 * out-of-band VLAN channel, in which case we pop the
 		 * VLAN header(s) before queuing it for processing.
 		 */
-		if (!has_vlan_encapsulation(skb, &vlan_tci))
+		if (!has_vlan_encapsulation(skb, &vlan_proto, &vlan_tci))
 			return false;
 
 		/* Check the VLAN channel proper. */
@@ -169,8 +173,7 @@ bool evl_net_ether_accept_vlan(struct sk_buff *skb)
 			return false;
 
 		/* For ether_receive() to set skb->dev appropriately. */
-		if (!skb_vlan_tag_present(skb))
-			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), vlan_tci);
+		__vlan_hwaccel_put_tag(skb, vlan_proto, vlan_tci);
 	}
 
 	ether_receive(skb);
