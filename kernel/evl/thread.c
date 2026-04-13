@@ -18,6 +18,7 @@
 #include <linux/sched/types.h>
 #include <linux/sched/task.h>
 #include <linux/jiffies.h>
+#include <linux/compat.h>
 #include <linux/cred.h>
 #include <linux/err.h>
 #include <linux/ptrace.h>
