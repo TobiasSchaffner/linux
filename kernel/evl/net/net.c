@@ -122,44 +122,15 @@ void __init evl_net_cleanup(void)
 static long net_ioctl(struct file *filp, unsigned int cmd,
 		unsigned long arg)
 {
-	struct evl_net_devparams devp, __user *u_devp;
-	struct evl_net_devfd fdreq, __user *u_fdreq;
+	struct evl_net_devopen fdreq, __user *u_fdreq;
 	struct net *net = current->nsproxy->net_ns;
 	const char __user *u_name;
 	struct filename *devname;
-	struct net_device *dev;
 	long ret;
 	int ufd;
 
 	switch (cmd) {
-	case EVL_NET_OPENPORT: /* Turn oob port on. */
-		u_devp = (typeof(u_devp))arg;
-		ret = copy_from_user(&devp, u_devp, sizeof(devp));
-		if (ret)
-			return -EFAULT;
-		u_name = evl_valptr64(devp.name_ptr, const char);
-		devname = getname(u_name);
-		if (IS_ERR(devname))
-			return PTR_ERR(devname);
-		dev = dev_get_by_name(net, devname->name);
-		putname(devname);
-		if (!dev)
-			return -EINVAL;
-		ret = evl_net_switch_oob_port(dev, &devp);
-		if (ret)
-			break;
-		/* The port is left open on user-specific errors. */
-		ufd = __evl_net_dev_allocfd(dev);
-		if (ufd < 0) {
-			dev_put(dev);
-			ret = ufd;
-		} else {
-			ret = put_user((__u32)ufd, &u_devp->fd);
-			if (ret)
-				ret = -EFAULT;
-		}
-		break;
-	case EVL_NET_GETDEVFD:	/* Get a fildes on an oob-enabled device. */
+	case EVL_NETIOC_DEVOPEN:
 		u_fdreq = (typeof(u_fdreq))arg;
 		ret = copy_from_user(&fdreq, u_fdreq, sizeof(fdreq));
 		if (ret)
