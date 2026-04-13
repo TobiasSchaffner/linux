@@ -240,9 +240,6 @@ int evl_net_transmit(struct net_device *dev, struct sk_buff *skb) /* oob or in-b
 	unsigned long flags;
 	bool kick;
 
-	if (EVL_WARN_ON(NET, skb->dev != real_dev))
-		return -EINVAL;
-
 	if (EVL_WARN_ON(NET, skb->sk))
 		return -EINVAL;
 
