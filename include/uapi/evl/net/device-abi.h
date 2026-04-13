@@ -11,6 +11,12 @@
 
 #define EVL_NETDEV_IOCBASE  0xef
 
+/* Turn on the oob port on a device. */
+struct evl_net_devparams {
+	__u64 poolsz;
+	__u64 bufsz;
+};
+
 /* Obtain the status of an oob port. */
 struct evl_net_devstat {
 	__u64 rx_packets;
@@ -24,13 +30,16 @@ struct evl_net_devstat {
 	__u32 rx_nomem;
 	__u32 tx_nomem;
 	union {
-		__u32 oob_capable:1;	/* Driver is oob_capable */
+		struct {
+			__u32 oob_capable:1;	/* Driver is oob_capable */
+			__u32 oob_port:1;	/* Interface has oob port */
+		};
 		__u32 __flags;
 	};
 };
 
 #define EVL_NDEVIOC_SETRXEBPF	_IOW(EVL_NETDEV_IOCBASE, 0, __s32 /* fd */)
-#define EVL_NDEVIOC_SWITCHOFF	_IO(EVL_NETDEV_IOCBASE, 1)
+#define EVL_NDEVIOC_SETPORT	_IOW(EVL_NETDEV_IOCBASE, 1, struct evl_net_devparams)
 #define EVL_NDEVIOC_GETSTAT	_IOW(EVL_NETDEV_IOCBASE, 2, struct evl_net_devstat)
 
 #endif /* !_EVL_UAPI_NET_DEVICE_ABI_H */

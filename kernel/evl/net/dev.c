@@ -682,31 +682,38 @@ __set_rx_filter(struct evl_netdev_state *est,
  */
 static int set_rx_filter(struct net_device *dev, unsigned long arg)
 {
-	struct oob_netdev_state *nds = &dev->oob_state;
 	struct evl_net_ebpf_filter *old, *new = NULL;
+	struct oob_netdev_state *nds;
+	struct net_device *real_dev;
 	struct bpf_prog *prog;
 	int ret, fd;
+
+	real_dev = evl_net_real_dev(dev);
+	if (!netif_oob_diversion(real_dev))
+		return -EINVAL;
 
 	ret = raw_get_user(fd, (__s32 *)arg);
 	if (ret)
 		return -EFAULT;
 
+	nds = &real_dev->oob_state;
+
 	if (fd != -1) {
 		prog = bpf_prog_get_type(fd, BPF_PROG_TYPE_SOCKET_FILTER);
 		if (IS_ERR(prog)) {
-			netdev_warn(dev, "invalid out-of-band eBPF program\n");
+			netdev_warn(real_dev, "invalid out-of-band eBPF program\n");
 			return PTR_ERR(prog);
 		}
 		new = kmalloc(sizeof(*new), GFP_KERNEL);
 		if (!new)
 			return -ENOMEM;
 		new->prog = prog;
-		netdev_notice(dev, "out-of-band eBPF program installed\n");
+		netdev_notice(real_dev, "out-of-band eBPF program installed\n");
 	}
 
 	old = __set_rx_filter(nds->estate, new);
 	if (old && !new)
-		netdev_notice(dev, "out-of-band eBPF program removed\n");
+		netdev_notice(real_dev, "out-of-band eBPF program removed\n");
 
 	return 0;
 }
@@ -716,8 +723,12 @@ static int get_dev_stat(struct net_device *dev, struct evl_net_devstat *devs)
 	struct evl_netdev_stats *stats = evl_net_get_stats(dev);
 	struct evl_netdev_state *est = evl_net_get_state(dev);
 
-	devs->__flags = 0;	/* Clear this first. */
+	if (!(est && stats))
+		return -EINVAL;
+
+	memset(devs, 0, sizeof(*devs));
 	devs->oob_capable = netdev_is_oob_capable(evl_net_real_dev(dev));
+	devs->oob_port = netif_oob_port(dev);
 	devs->rx_packets = evl_counter_read_careful(&stats->rx_packets);
 	devs->rx_bytes = evl_counter_read_careful(&stats->rx_bytes);
 	devs->tx_packets = evl_counter_read_careful(&stats->tx_packets);
@@ -744,16 +755,23 @@ EXPORT_SYMBOL(netif_rx_nomem_oob);
 static long netdev_ioctl(struct file *filp, unsigned int cmd,
 			unsigned long arg)
 {
+	struct evl_net_devparams devp = { 0 }, __user *u_devp;
 	struct evl_net_devstat devs = { 0 }, __user *u_devs;
 	struct net_device *dev = filp->private_data;
 	int ret = -ENOTTY;
 
 	switch (cmd) {
-	case EVL_NDEVIOC_SETRXEBPF:
-		ret = set_rx_filter(evl_net_real_dev(dev), arg);
+	case EVL_NDEVIOC_SETPORT:
+		u_devp = (typeof(u_devp))arg;
+		if (u_devp) {
+			ret = copy_from_user(&devp, u_devp, sizeof(devp));
+			if (ret)
+				return -EFAULT;
+		}
+		ret = evl_net_switch_oob_port(dev, u_devp ? &devp : NULL);
 		break;
-	case EVL_NDEVIOC_SWITCHOFF:
-		ret = evl_net_switch_oob_port(dev, NULL);
+	case EVL_NDEVIOC_SETRXEBPF:
+		ret = set_rx_filter(dev, arg);
 		break;
 	case EVL_NDEVIOC_GETSTAT:
 		ret = get_dev_stat(dev, &devs);
@@ -787,7 +805,7 @@ static const struct file_operations netdev_fops = {
 #endif
 };
 
-int __evl_net_dev_allocfd(struct net_device *dev)
+static int dev_allocfd(struct net_device *dev)
 {
 	struct file *filp;
 	int ret, fd;
@@ -820,20 +838,15 @@ int evl_net_dev_allocfd(struct net *net, const char *devname)
 	struct net_device *dev;
 	int fd;
 
-	dev = evl_net_get_dev_by_name(net, devname);
+	dev = dev_get_by_name(net, devname);
 	if (!dev)
 		return -EINVAL;
 
-	dev_hold(dev);
-	fd = __evl_net_dev_allocfd(dev);
-	evl_net_put_dev(dev);
+	fd = dev_allocfd(dev);
 	if (fd < 0)
 		dev_put(dev);
 
-	/*
-	 * On success, the reference on @dev will be released by
-	 * netdev_release().
-	 */
+	/* Otherwise, netdev_release() will put the device back. */
 
 	return fd;
 }

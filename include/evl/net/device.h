@@ -49,8 +49,6 @@ evl_net_find_vlan_dev(struct net_device *real_dev,
 
 void evl_net_wake_rx(struct net_device *dev);
 
-int __evl_net_dev_allocfd(struct net_device *dev);
-
 int evl_net_dev_allocfd(struct net *net, const char *devname);
 
 void evl_net_dev_tx_nomem(struct net_device *dev);
