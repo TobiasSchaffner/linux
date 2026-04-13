@@ -9,6 +9,7 @@
 #include <linux/slab.h>
 #include <linux/wait.h>
 #include <linux/irq_work.h>
+#include <linux/compat.h>
 #include <evl/thread.h>
 #include <evl/mutex.h>
 #include <evl/thread.h>

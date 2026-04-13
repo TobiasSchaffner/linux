@@ -23,6 +23,7 @@
 #include <linux/ptrace.h>
 #include <linux/math64.h>
 #include <linux/cn_proc.h>
+#include <linux/compat.h>
 #include <evl/assert.h>
 #include <evl/thread.h>
 #include <evl/memory.h>
