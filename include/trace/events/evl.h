@@ -165,7 +165,7 @@ DECLARE_EVENT_CLASS(evl_sched_attrs,
 
 	TP_STRUCT__entry(
 		__field(int, policy)
-		__string(name, thread->name ?: "{ }")
+		__string(name, thread->name)
 		__dynamic_array(char, attrs, sizeof(struct evl_sched_attrs))
 	),
 
@@ -317,7 +317,6 @@ TRACE_EVENT(evl_init_thread,
 	TP_ARGS(thread, iattr, status),
 
 	TP_STRUCT__entry(
-		__field(struct evl_thread *, thread)
 		__string(thread_name, thread->name)
 		__string(class_name, iattr->sched_class->name)
 		__field(unsigned long, flags)
@@ -326,7 +325,6 @@ TRACE_EVENT(evl_init_thread,
 	),
 
 	TP_fast_assign(
-		__entry->thread = thread;
 		__assign_str(thread_name);
 		__entry->flags = iattr->flags | (iattr->observable ? EVL_T_OBSERV : 0);
 		__assign_str(class_name);
@@ -334,9 +332,9 @@ TRACE_EVENT(evl_init_thread,
 		__entry->status = status;
 	),
 
-	TP_printk("thread=%p name=%s flags=%#lx class=%s prio=%d status=%#x",
-		   __entry->thread, __get_str(thread_name), __entry->flags,
-		  __get_str(class_name), __entry->cprio, __entry->status)
+	TP_printk("thread=%s flags=%#lx class=%s prio=%d status=%#x",
+		__get_str(thread_name), __entry->flags,
+		__get_str(class_name), __entry->cprio, __entry->status)
 );
 
 TRACE_EVENT(evl_sleep_on,
@@ -349,26 +347,23 @@ TRACE_EVENT(evl_sleep_on,
 		__field(pid_t, pid)
 		__field(ktime_t, timeout)
 		__field(enum evl_tmode, timeout_mode)
-		__field(struct evl_wait_channel *, wchan)
-		__string(wchan_name, wchan ? wchan->name : "none")
-		__string(clock_name, clock ? clock->name : "none")
+		__string(wchan_name, wchan->name)
+		__string(clock_name, clock->name)
 	),
 
 	TP_fast_assign(
 		__entry->pid = evl_get_inband_pid(evl_current());
 		__entry->timeout = timeout;
 		__entry->timeout_mode = timeout_mode;
-		__entry->wchan = wchan;
 		__assign_str(clock_name);
 		__assign_str(wchan_name);
 	),
 
-	TP_printk("pid=%d timeout=%Lu timeout_mode=%d clock=%s wchan=%s(%p)",
-		  __entry->pid,
-		  ktime_to_ns(__entry->timeout), __entry->timeout_mode,
-		  __get_str(clock_name),
-		  __get_str(wchan_name),
-		  __entry->wchan)
+	TP_printk("pid=%d timeout=%Lu timeout_mode=%d clock=%s wchan=%s",
+		__entry->pid,
+		ktime_to_ns(__entry->timeout), __entry->timeout_mode,
+		__get_str(clock_name),
+		__get_str(wchan_name))
 );
 
 TRACE_EVENT(evl_wakeup_thread,
@@ -460,19 +455,19 @@ TRACE_EVENT(evl_thread_set_current_prio,
 	TP_ARGS(thread),
 
 	TP_STRUCT__entry(
-		__field(struct evl_thread *, thread)
+		__string(name, thread->name)
 		__field(pid_t, pid)
 		__field(int, cprio)
 	),
 
 	TP_fast_assign(
-		__entry->thread = thread;
+		__assign_str(name);
 		__entry->pid = evl_get_inband_pid(thread);
 		__entry->cprio = thread->cprio;
 	),
 
-	TP_printk("thread=%p pid=%d prio=%d",
-		  __entry->thread, __entry->pid, __entry->cprio)
+	TP_printk("thread=%s pid=%d prio=%d",
+		  __get_str(name), __entry->pid, __entry->cprio)
 );
 
 DEFINE_EVENT(thread_event, evl_thread_cancel,
@@ -505,19 +500,19 @@ TRACE_EVENT(evl_thread_migrate,
 	TP_ARGS(thread, cpu),
 
 	TP_STRUCT__entry(
-		__field(struct evl_thread *, thread)
+		__string(name, thread->name)
 		__field(pid_t, pid)
 		__field(unsigned int, cpu)
 	),
 
 	TP_fast_assign(
-		__entry->thread = thread;
+		__assign_str(name);
 		__entry->pid = evl_get_inband_pid(thread);
 		__entry->cpu = cpu;
 	),
 
-	TP_printk("thread=%p pid=%d cpu=%u",
-		  __entry->thread, __entry->pid, __entry->cpu)
+	TP_printk("thread=%s pid=%d cpu=%u",
+		  __get_str(name), __entry->pid, __entry->cpu)
 );
 
 DEFINE_EVENT(curr_thread_event, evl_watchdog_signal,
@@ -578,19 +573,19 @@ TRACE_EVENT(evl_thread_map,
 	TP_ARGS(thread),
 
 	TP_STRUCT__entry(
-		__field(struct evl_thread *, thread)
+		__string(name, thread->name)
 		__field(pid_t, pid)
 		__field(int, prio)
 	),
 
 	TP_fast_assign(
-		__entry->thread = thread;
+		__assign_str(name);
 		__entry->pid = evl_get_inband_pid(thread);
 		__entry->prio = thread->bprio;
 	),
 
-	TP_printk("thread=%p pid=%d prio=%d",
-		  __entry->thread, __entry->pid, __entry->prio)
+	TP_printk("thread=%s pid=%d prio=%d",
+		  __get_str(name), __entry->pid, __entry->prio)
 );
 
 DEFINE_EVENT(curr_thread_event, evl_thread_unmap,
