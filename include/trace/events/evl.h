@@ -101,14 +101,14 @@ DECLARE_EVENT_CLASS(timer_event,
 	TP_ARGS(timer),
 
 	TP_STRUCT__entry(
-		__field(struct evl_timer *, timer)
+		__string(name, timer->name)
 	),
 
 	TP_fast_assign(
-		__entry->timer = timer;
+		__assign_str(name);
 	),
 
-	TP_printk("timer=%s", evl_get_timer_name(__entry->timer))
+	TP_printk("timer=%s", __get_str(name))
 );
 
 #define evl_print_syscall(__nr)			\
@@ -164,20 +164,19 @@ DECLARE_EVENT_CLASS(evl_sched_attrs,
 	TP_ARGS(thread, attrs),
 
 	TP_STRUCT__entry(
-		__field(struct evl_thread *, thread)
 		__field(int, policy)
+		__string(name, thread->name ?: "{ }")
 		__dynamic_array(char, attrs, sizeof(struct evl_sched_attrs))
 	),
 
 	TP_fast_assign(
-		__entry->thread = thread;
 		__entry->policy = attrs->sched_policy;
+		__assign_str(name);
 		memcpy(__get_dynamic_array(attrs), attrs, sizeof(*attrs));
 	),
 
 	TP_printk("thread=%s policy=%s param={ %s }",
-		  evl_element_name(&__entry->thread->element)?
-		  evl_element_name(&__entry->thread->element):"{ }",
+		  __get_str(name),
 		  evl_print_sched_policy(__entry->policy),
 		  evl_trace_sched_attrs(p,
 					(struct evl_sched_attrs *)
@@ -622,21 +621,23 @@ TRACE_EVENT(evl_inband_signal,
 	TP_ARGS(thread, sig, sigval),
 
 	TP_STRUCT__entry(
-		__field(struct evl_thread *, thread)
+		__string(name, thread->name)
+		__field(pid_t, pid)
 		__field(int, sig)
 		__field(int, sigval)
 	),
 
 	TP_fast_assign(
-		__entry->thread = thread;
+		__assign_str(name);
+		__entry->pid = evl_get_inband_pid(thread);
 		__entry->sig = sig;
 		__entry->sigval = sigval;
 	),
 
 	/* Caller holds a reference on @thread, memory cannot be stale. */
 	TP_printk("thread=%s pid=%d sig=%d sigval=%d",
-		evl_element_name(&__entry->thread->element),
-		evl_get_inband_pid(__entry->thread),
+		__get_str(name),
+		__entry->pid,
 		__entry->sig, __entry->sigval)
 );
 
@@ -660,19 +661,19 @@ TRACE_EVENT(evl_timer_start,
 	TP_ARGS(timer, value, interval),
 
 	TP_STRUCT__entry(
-		__field(struct evl_timer *, timer)
+		__string(name, timer->name)
 		__field(ktime_t, value)
 		__field(ktime_t, interval)
 	),
 
 	TP_fast_assign(
-		__entry->timer = timer;
+		__assign_str(name);
 		__entry->value = value;
 		__entry->interval = interval;
 	),
 
 	TP_printk("timer=%s value=%Lu interval=%Lu",
-		evl_get_timer_name(__entry->timer),
+		__get_str(name),
 		ktime_to_ns(__entry->value),
 		ktime_to_ns(__entry->interval))
 );
@@ -831,17 +832,17 @@ TRACE_EVENT(evl_thread_update_mode,
 	TP_PROTO(struct evl_thread *thread, int mode, bool set),
 	TP_ARGS(thread, mode, set),
 	TP_STRUCT__entry(
-		__field(struct evl_thread *, thread)
+		__string(name, thread->name)
 		__field(int, mode)
 		__field(bool, set)
 	),
 	TP_fast_assign(
-		__entry->thread = thread;
+		__assign_str(name);
 		__entry->mode = mode;
 		__entry->set = set;
 	),
 	TP_printk("thread=%s %s %#x(%s)",
-		  evl_element_name(&__entry->thread->element),
+		__get_str(name),
 		  __entry->set ? "set" : "clear",
 		  __entry->mode, evl_print_thread_mode(__entry->mode))
 );
