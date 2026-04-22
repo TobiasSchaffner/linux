@@ -108,46 +108,6 @@ static ssize_t rng_read(struct file *filp, char __user *u_buf,
 	return rng_common_read(filp, u_buf, count);
 }
 
-static long rng_common_ioctl(struct file *filp, unsigned int cmd,
-			unsigned long arg)
-{
-	__u32 val32;
-	__u16 val16;
-	__u8 val8;
-	int ret;
-
-	switch (cmd) {
-	case EVL_RNGIOC_U8:
-		val8 = evl_read_rng_u8();
-		ret = raw_put_user(val8, (u8 __user *)arg);
-		break;
-	case EVL_RNGIOC_U16:
-		val16 = evl_read_rng_u16();
-		ret = raw_put_user(val16, (u16 __user *)arg);
-		break;
-	case EVL_RNGIOC_U32:
-		val32 = evl_read_rng_u32();
-		ret = raw_put_user(val32, (u32 __user *)arg);
-		break;
-	default:
-		ret = -ENOTTY;
-	}
-
-	return ret > 0 ? -EFAULT : ret;
-}
-
-static long rng_oob_ioctl(struct file *filp, unsigned int cmd,
-			unsigned long arg)
-{
-	return rng_common_ioctl(filp, cmd, arg);
-}
-
-static long rng_ioctl(struct file *filp, unsigned int cmd,
-			unsigned long arg)
-{
-	return rng_common_ioctl(filp, cmd, arg);
-}
-
 void evl_init_rng(void)
 {
 	u64 now = ktime_get();
@@ -158,14 +118,8 @@ void evl_init_rng(void)
 }
 
 static const struct file_operations rng_fops = {
-	.oob_ioctl	=	rng_oob_ioctl,
 	.oob_read	=	rng_oob_read,
-	.unlocked_ioctl	=	rng_ioctl,
 	.read		=	rng_read,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	=	compat_ptr_ioctl,
-	.compat_oob_ioctl =	compat_ptr_oob_ioctl,
-#endif
 };
 
 struct evl_factory evl_rng_factory = {
