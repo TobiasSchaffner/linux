@@ -15,6 +15,7 @@
 struct sk_buff;
 struct sockaddr;
 struct timespec64;
+struct notifier_block;
 
 struct evl_net_ipv4_cookie {
 	__be32 saddr;		/* Source IP */
@@ -22,6 +23,9 @@ struct evl_net_ipv4_cookie {
 	__u8 protocol;		/* Internet protocol identifier  */
 	int transhdrlen;	/* Transport header length */
 };
+
+int evl_net_ipv4_handle_event(struct notifier_block *nb,
+			unsigned long event, void *arg);
 
 int evl_net_ipv4_deliver(struct sk_buff *skb);
 

@@ -8,7 +8,10 @@
 #include <linux/in.h>
 #include <linux/units.h>
 #include <linux/jhash.h>
+#include <linux/notifier.h>
 #include <net/ip.h>
+#include <net/netevent.h>
+#include <net/neighbour.h>
 #include <evl/assert.h>
 #include <evl/mutex.h>
 #include <evl/memory.h>
@@ -75,6 +78,17 @@ void evl_net_cleanup_ipv4(struct net *net)
 	evl_net_cleanup_arp(net);
 	evl_net_cleanup_ipv4_routing(net);
 	EVL_WARN_ON(NET, !hlist_empty(&gc->queue));
+}
+
+int evl_net_ipv4_handle_event(struct notifier_block *nb,
+			unsigned long event, void *arg)
+{
+ 	struct neighbour *neigh = arg;
+
+	if (event == NETEVENT_NEIGH_UPDATE && neigh->tbl == &arp_tbl)
+		evl_net_arp_update_cache(neigh);
+
+	return NOTIFY_DONE;
 }
 
 /*
