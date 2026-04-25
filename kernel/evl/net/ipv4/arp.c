@@ -16,7 +16,6 @@
 #include <linux/notifier.h>
 #include <linux/wait.h>
 #include <linux/etherdevice.h>
-#include <net/netevent.h>
 #include <net/arp.h>
 #include <evl/net/ipv4/arp.h>
 
@@ -134,7 +133,7 @@ static void uncache_arp_entry(struct evl_cache *cache, struct neighbour *neigh) 
 /*
  * Handle an update notification from the in-band ARP cache.
  */
-static void update_arp_cache(struct neighbour *neigh) /* in-band */
+void evl_net_arp_update_cache(struct neighbour *neigh) /* in-band */
 {
 	struct net_device *dev = neigh->dev;
 	struct oob_net_state *nets = &dev_net(dev)->oob;
@@ -180,17 +179,6 @@ static void update_arp_cache(struct neighbour *neigh) /* in-band */
 	}
 
 	read_unlock_bh(&neigh->lock);
-}
-
-static int netevent_handler(struct notifier_block *nb,
-			unsigned long event, void *arg)
-{
- 	struct neighbour *neigh = arg;
-
-	if (event == NETEVENT_NEIGH_UPDATE && neigh->tbl == &arp_tbl)
-		update_arp_cache(neigh);
-
-	return NOTIFY_DONE;
 }
 
 struct evl_net_arp_entry *evl_net_get_arp_entry(struct net_device *dev, __be32 addr)
@@ -291,10 +279,6 @@ evl_net_get_arp_entry_or_pseudo(struct net_device *dev, __be32 ipaddr,
 	return evl_net_get_arp_entry(dev, ipaddr);
 }
 
-static struct notifier_block netevent_notifier __read_mostly = {
-	.notifier_call = netevent_handler,
-};
-
 static bool compare_arp_dev(struct evl_cache_entry *entry, void *arg)
 {
 	const struct evl_net_arp_entry *e =
@@ -324,7 +308,6 @@ int evl_net_init_arp(struct net *net)
 {
 	struct oob_net_state *nets = &net->oob;
 	struct evl_cache *cache;
-	int ret;
 
 	/* ARP resolution cache. */
 	cache = &nets->ipv4.arp;
@@ -332,17 +315,10 @@ int evl_net_init_arp(struct net *net)
 	cache->init_shift = EVL_NET_ARP_CACHE_SHIFT;
 	cache->name = "ARP";
 
-	ret = evl_init_cache(cache);
-	if (ret)
-		return ret;
-
-	register_netevent_notifier(&netevent_notifier);
-
-	return 0;
+	return evl_init_cache(cache);
 }
 
 void evl_net_cleanup_arp(struct net *net)
 {
-	unregister_netevent_notifier(&netevent_notifier);
 	evl_net_flush_arp(net, NULL);
 }
