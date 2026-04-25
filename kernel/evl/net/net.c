@@ -11,6 +11,7 @@
 #include <linux/slab.h>
 #include <linux/nsproxy.h>
 #include <net/net_namespace.h>
+#include <net/netevent.h>
 #include <evl/factory.h>
 #include <evl/uaccess.h>
 #include <evl/net/qdisc.h>
@@ -45,7 +46,17 @@ void net_cleanup_oob_state(struct net *net)
 	evl_net_cleanup_packet(net);
 }
 
-static struct notifier_block netdev_notifier = {
+static int net_event_handler(struct notifier_block *nb,
+			unsigned long event, void *arg)
+{
+	return evl_net_ipv4_handle_event(nb, event, arg);
+}
+
+static struct notifier_block netevent_notifier __read_mostly = {
+	.notifier_call = net_event_handler,
+};
+
+static struct notifier_block netdev_notifier __read_mostly = {
 	.notifier_call = evl_netdev_event
 };
 
@@ -59,9 +70,13 @@ int __init evl_net_init(void)
 
 	evl_net_init_taps();
 
+	ret = register_netevent_notifier(&netevent_notifier);
+	if (ret)
+		goto fail_netnotifier;
+
 	ret = register_netdevice_notifier(&netdev_notifier);
 	if (ret)
-		goto fail_notifier;
+		goto fail_devnotifier;
 
 	ret = evl_register_socket_domain(&evl_net_packet);
 	if (ret)
@@ -86,7 +101,9 @@ fail_ipv4:
 	evl_unregister_socket_domain(&evl_net_packet);
 fail_packet:
 	unregister_netdevice_notifier(&netdev_notifier);
-fail_notifier:
+fail_devnotifier:
+	unregister_netdevice_notifier(&netevent_notifier);
+fail_netnotifier:
 	evl_net_cleanup_qdisc();
 
 	return ret;
@@ -98,6 +115,7 @@ void __init evl_net_cleanup(void)
 	proto_unregister(&evl_af_oob_proto);
 	evl_unregister_socket_domain(&evl_net_packet);
 	unregister_netdevice_notifier(&netdev_notifier);
+	unregister_netevent_notifier(&netevent_notifier);
 	evl_net_cleanup_qdisc();
 }
 
