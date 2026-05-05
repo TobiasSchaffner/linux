@@ -30,3 +30,24 @@ int evl_fetch_utimespec(struct __evl_timespec __user *u_ts,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(evl_fetch_utimespec);
+
+int evl_fetch_utimespec_to_jiffies(struct __evl_timespec __user *u_ts,
+			long *jiffies)
+{
+	struct __evl_timespec uts;
+	struct timespec64 ts64;
+	int ret;
+
+	ret = raw_copy_from_user(&uts, u_ts, sizeof(uts));
+	if (ret)
+		return -EFAULT;
+
+	if ((unsigned long)uts.tv_nsec >= ONE_BILLION)
+		return -EINVAL;
+
+	ts64 = u_timespec_to_timespec64(uts);
+	*jiffies = timespec64_to_jiffies(&ts64);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(evl_fetch_utimespec_to_jiffies);
