@@ -43,4 +43,6 @@ raw_copy_to_user_ptr64(u64 to, const void *from, unsigned long n)
 int evl_fetch_utimespec(struct __evl_timespec __user *u_ts,
 			ktime_t *timeout, enum evl_tmode *tmode);
 
+int evl_fetch_utimespec_to_jiffies(struct __evl_timespec __user *u_ts,
+				long *jiffies);
 #endif /* !_EVL_UACCESS_H */
