@@ -24,10 +24,7 @@ static struct evl_monitor *get_monitor_by_fundle(fundle_t fundle, int type)
 {
 	struct evl_monitor *mon = evl_lookup_ns(&evl_core_ns, fundle, monitor);
 
-	if (!mon)
-		return NULL;
-
-	if (mon->type != type) {
+	if (mon && mon->type != type) {
 		evl_put_element(&mon->element);
 		return NULL;
 	}
@@ -275,12 +272,12 @@ static int exit_monitor(struct evl_monitor *gate)
 	return 0;
 }
 
-static int trywait_count(struct evl_monitor *mon)
+static int __trywait_count(struct evl_monitor *mon)
 {
 	struct __evl_monitor_sstate *sstate = mon->sstate;
 	int ret = 0, val;
 
-	/* atomic_dec_unless_zero_or_negative */
+	/* atomic_dec_if_strictly_positive */
 	val = atomic_read(__ATOMIC32(&sstate->u.event.value));
 	do {
 		if (unlikely(val <= 0)) {
@@ -292,48 +289,62 @@ static int trywait_count(struct evl_monitor *mon)
 	return ret;
 }
 
-static int wait_count(struct evl_monitor *mon,
+/* mon->wait_queue.wchan.lock held, dropped on success, irqs off. */
+static int trywait_count_locked(struct evl_monitor *mon, unsigned long flags)
+{
+	int ret = __trywait_count(mon);
+
+	if (!ret)
+		raw_spin_unlock_irqrestore(&mon->wait_queue.wchan.lock, flags);
+
+	return ret;
+}
+
+static int wait_count_oob(struct evl_monitor *mon,
 		unsigned int f_flags,
 		struct __evl_timespec __user *u_timeout)
 {
 	struct __evl_monitor_sstate *sstate = mon->sstate;
-	enum evl_tmode tmode;
+	ktime_t timeout = EVL_INFINITE;
+	enum evl_tmode tmode = EVL_REL;
 	unsigned long flags;
-	ktime_t timeout;
 	int ret;
 
-	if (f_flags & O_NONBLOCK) {
-		ret = trywait_count(mon);
-	} else {
+	ret = __trywait_count(mon);
+	if (!ret || f_flags & O_NONBLOCK)
+		return ret;
+
+	if (u_timeout) {
 		ret = evl_fetch_utimespec(u_timeout, &timeout, &tmode);
 		if (ret)
 			return ret;
+	}
+
+	/*
+	 * CAUTION: we must fully serialize with post_count(). Since
+	 * user-space is expected to trywait first before branching
+	 * here, we are most likely going to wait anyway.
+	 */
+	raw_spin_lock_irqsave(&mon->wait_queue.wchan.lock, flags);
+	if (atomic_dec_return(__ATOMIC32(&sstate->u.event.value)) >= 0) {
+		raw_spin_unlock_irqrestore(&mon->wait_queue.wchan.lock,	flags);
+		return 0;
+	}
+
+	evl_add_wait_queue(&mon->wait_queue, timeout, tmode);
+	raw_spin_unlock_irqrestore(&mon->wait_queue.wchan.lock,	flags);
+
+	ret = evl_wait_schedule(&mon->wait_queue);
+	if (ret) { /* Rollback decrement if failed. */
+		atomic_inc(__ATOMIC32(&sstate->u.event.value));
+	} else {
 		/*
-		 * CAUTION: we must fully serialize with
-		 * post_count(). Since user-space is expected to
-		 * trywait first before branching here, we are most
-		 * likely going to wait anyway.
+		 * If waking up on a broadcast, we did not actually
+		 * receive a free pass, make the caller notice by
+		 * returning -EAGAIN.
 		 */
-		raw_spin_lock_irqsave(&mon->wait_queue.wchan.lock, flags);
-		if (atomic_dec_return(__ATOMIC32(&sstate->u.event.value)) < 0) {
-			evl_add_wait_queue(&mon->wait_queue, timeout, tmode);
-			raw_spin_unlock_irqrestore(&mon->wait_queue.wchan.lock,	flags);
-			ret = evl_wait_schedule(&mon->wait_queue);
-			if (ret) { /* Rollback decrement if failed. */
-				atomic_inc(__ATOMIC32(&sstate->u.event.value));
-			} else {
-				/*
-				 * If waking up on a broadcast, we did
-				 * not actually receive a free pass,
-				 * make the caller notice by returning
-				 * -EAGAIN.
-				 */
-				if (evl_current()->info & EVL_T_BCAST)
-					ret = -EAGAIN;
-			}
-		} else {
-			raw_spin_unlock_irqrestore(&mon->wait_queue.wchan.lock,	flags);
-		}
+		if (evl_current()->info & EVL_T_BCAST)
+			ret = -EAGAIN;
 	}
 
 	return ret;
@@ -345,7 +356,7 @@ static int post_count(struct evl_monitor *mon, s32 sigval,
 	struct __evl_monitor_sstate *sstate = mon->sstate;
 	bool pollable = true;
 	unsigned long flags;
-	int ret = 0, val;
+	int val;
 
 	/*
 	 * We may receive a null sigval for the purpose of triggering
@@ -386,7 +397,19 @@ static int post_count(struct evl_monitor *mon, s32 sigval,
 
 	evl_schedule();
 
-	return ret;
+	/* Wake up an in-band waiter last. */
+	smp_mb();
+	if (waitqueue_active(&mon->inband_wait_r)) {
+		if (running_inband()) {
+			wake_up(&mon->inband_wait_r);
+		} else {
+			evl_get_element(&mon->element);
+			if (!irq_work_queue(&mon->inband_wake_r))
+				evl_put_element(&mon->element);
+		}
+	}
+
+	return 0;
 }
 
 static void inband_wake_r_irqwork(struct irq_work *work) /* in-band */
@@ -407,7 +430,7 @@ static void inband_wake_w_irqwork(struct irq_work *work) /* in-band */
 	evl_put_element(&mon->element);
 }
 
-/* event->wait_queue.wchan.lock held, dropped on success, irqs off. */
+/* mon->wait_queue.wchan.lock held, dropped on success, irqs off. */
 static bool __trywait_mask(struct evl_monitor *mon,
 			s32 match_value,
 			bool exact_match,
@@ -433,7 +456,7 @@ static bool __trywait_mask(struct evl_monitor *mon,
 	return false;
 }
 
-static int trywait_mask_oob(struct evl_monitor *mon,
+static int trywait_mask(struct evl_monitor *mon,
 			s32 match_value,
 			bool exact_match,
 			s32 *r_value)
@@ -674,7 +697,7 @@ put:
 	return ret;
 }
 
-static int wait_monitor(struct evl_monitor *mon,
+static int wait_monitor_oob(struct evl_monitor *mon,
 			unsigned int f_flags,
 			struct evl_monitor_waitreq *req,
 			struct __evl_timespec __user *u_timeout,
@@ -689,7 +712,7 @@ static int wait_monitor(struct evl_monitor *mon,
 	if (req->gatefun == EVL_NO_HANDLE) {
 		switch (mon->protocol) {
 		case EVL_EVENT_COUNT:
-			ret = wait_count(mon, f_flags, u_timeout);
+			ret = wait_count_oob(mon, f_flags, u_timeout);
 			break;
 		case EVL_EVENT_MASK:
 			ret = wait_mask_oob(mon, f_flags, u_timeout, req->value,
@@ -704,7 +727,7 @@ static int wait_monitor(struct evl_monitor *mon,
 	return wait_gated_event(mon, req, u_timeout);
 }
 
-static int unwait_monitor(struct evl_monitor *mon,
+static int unwait_monitor_oob(struct evl_monitor *mon,
 			struct evl_monitor_unwaitreq *req)
 {
 	struct evl_monitor *gate;
@@ -725,11 +748,125 @@ static int unwait_monitor(struct evl_monitor *mon,
 	return ret;
 }
 
-static long __monitor_common_ioctl(struct evl_monitor *mon, unsigned int cmd,
-				unsigned long arg)
+#define __wait_monitor_inband(__mon, __trywait_ok)					\
+	({										\
+		__label__ __out;							\
+		struct evl_wait_channel *wchan = &(__mon)->wait_queue.wchan; 		\
+		wait_queue_head_t *wq = &(__mon)->inband_wait_r;			\
+		struct wait_queue_entry wq_entry;					\
+		unsigned long flags, ib_flags;						\
+		long jiffies = 0;							\
+		int ret = 0;								\
+											\
+		init_wait_entry(&wq_entry, 0);						\
+											\
+		for (;;) {								\
+			spin_lock_irqsave(&wq->lock, ib_flags); 			\
+											\
+			raw_spin_lock_irqsave(&wchan->lock, flags); 			\
+											\
+			if (__trywait_ok)						\
+				goto __out;						\
+											\
+			if (f_flags & O_NONBLOCK) {					\
+				raw_spin_unlock_irqrestore(&wchan->lock, flags); 	\
+				ret = -EAGAIN;						\
+				goto __out;						\
+			}								\
+											\
+			/* Wchan locked to serialize with post_{mask, count}(). */ 	\
+			if (list_empty(&wq_entry.entry))				\
+				__add_wait_queue(&(__mon)->inband_wait_r, &wq_entry);	\
+											\
+			raw_spin_unlock_irqrestore(&wchan->lock, flags); 		\
+											\
+			spin_unlock_irqrestore(&wq->lock, ib_flags); 			\
+											\
+			/* If we need to sleep, try fetching the (absolute) timeout. */	\
+			if (u_timeout) {						\
+				ret = evl_fetch_utimespec_to_jiffies(u_timeout, &jiffies); \
+				if (ret)						\
+					break;						\
+				u_timeout = NULL;					\
+			}								\
+											\
+			set_current_state(TASK_INTERRUPTIBLE);				\
+											\
+			if (jiffies) {							\
+				jiffies = schedule_timeout(jiffies);			\
+				if (!jiffies) {						\
+					ret = -ETIMEDOUT;				\
+					break;						\
+				}							\
+			} else {							\
+				schedule();						\
+			}								\
+											\
+			if (signal_pending(current)) {					\
+				ret = -ERESTARTSYS;					\
+				break;							\
+			}								\
+		}									\
+											\
+		spin_lock_irqsave(&wq->lock, ib_flags);					\
+	__out:										\
+		if (!list_empty(&wq_entry.entry))					\
+			list_del(&wq_entry.entry);					\
+											\
+		spin_unlock_irqrestore(&wq->lock, ib_flags);				\
+		ret;									\
+	})
+
+static int wait_monitor_inband(struct evl_monitor *mon,
+			unsigned int f_flags,
+			struct __evl_timespec __user *u_timeout,
+			s32 *r_value, /* I/O parameter */
+			bool exact_match)
+{
+	s32 match_value = *r_value;
+	int ret;
+
+	if (mon->type != EVL_MONITOR_EVENT)
+		return -EINVAL;
+
+	switch (mon->protocol) {
+	case EVL_EVENT_MASK:
+		ret = __wait_monitor_inband(mon, __trywait_mask(mon, match_value, false, r_value, flags));
+		/*
+		 * If we have successfully collected all the bits,
+		 * send a POLLOUT wakeup.
+		 */
+		smp_mb();	/* Matches mb in set_current_state() */
+		if (!ret && waitqueue_active(&mon->inband_wait_w))
+			wake_up(&mon->inband_wait_w);
+		break;
+	case EVL_EVENT_COUNT:
+		/*
+		 * We are going to run a polling loop with a sleeping
+		 * point. Bumping pollrefs forces userland to jump to
+		 * the kernel for signaling the semaphore so that we
+		 * won't miss any wakeup.
+		 */
+		atomic_inc(__ATOMIC32(&mon->sstate->u.event.pollrefs));
+		ret = __wait_monitor_inband(mon, !trywait_count_locked(mon, flags));
+		atomic_dec(__ATOMIC32(&mon->sstate->u.event.pollrefs));
+		if (!ret)
+			*r_value = 1;
+		break;
+	default:
+		ret = -EINVAL;
+	}
+
+	return ret;
+}
+
+static long __monitor_common_ioctl(struct evl_monitor *mon, unsigned int f_flags,
+				unsigned int cmd, unsigned long arg)
 {
 	struct evl_monitor_trywaitreq twreq, __user *u_twreq;
+	struct evl_monitor_waitreq wreq, __user *u_wreq;
 	bool bcast = false, exact_match = false;
+	struct __evl_timespec __user *u_uts;
 	__s32 value;
 	int ret;
 
@@ -737,6 +874,47 @@ static long __monitor_common_ioctl(struct evl_monitor *mon, unsigned int cmd,
 		return -EINVAL;
 
 	switch (cmd) {
+	case EVL_MONIOC_WAIT_EXACT:
+		exact_match = true;
+		fallthrough;
+	case EVL_MONIOC_WAIT:
+		u_wreq = (typeof(u_wreq))arg;
+		ret = raw_copy_from_user(&wreq, u_wreq, sizeof(wreq));
+		if (ret)
+			return -EFAULT;
+		u_uts = evl_valptr64(wreq.timeout_ptr, struct __evl_timespec);
+		if (running_inband()) {
+			if (wreq.gatefun != EVL_NO_HANDLE)
+				return -EINVAL;
+			value = wreq.value; /* match value. */
+			ret = wait_monitor_inband(mon, f_flags, u_uts, &value, exact_match);
+		} else {
+			ret = wait_monitor_oob(mon, f_flags, &wreq, u_uts, &value, exact_match);
+		}
+		if (!ret)
+			raw_put_user(value, &u_wreq->value);
+		break;
+	case EVL_MONIOC_TRYWAIT_EXACT:
+		exact_match = true;
+		fallthrough;
+	case EVL_MONIOC_TRYWAIT:
+		u_twreq = (typeof(u_twreq))arg;
+		ret = raw_copy_from_user(&twreq, u_twreq, sizeof(twreq));
+		if (ret)
+			return -EFAULT;
+		switch (mon->protocol) {
+		case EVL_EVENT_COUNT:
+			ret = __trywait_count(mon);
+			break;
+		case EVL_EVENT_MASK:
+			ret = trywait_mask(mon, twreq.value, exact_match, &value);
+			if (!ret)
+				raw_put_user(value, &u_twreq->value);
+			break;
+		default:
+			ret = -EINVAL;
+		}
+		break;
 	case EVL_MONIOC_BROADCAST:
 		bcast = true;
 		fallthrough;
@@ -754,27 +932,6 @@ static long __monitor_common_ioctl(struct evl_monitor *mon, unsigned int cmd,
 			ret = -EINVAL;
 		}
 		break;
-	case EVL_MONIOC_TRYWAIT_EXACT:
-		exact_match = true;
-		fallthrough;
-	case EVL_MONIOC_TRYWAIT:
-		u_twreq = (typeof(u_twreq))arg;
-		ret = raw_copy_from_user(&twreq, u_twreq, sizeof(twreq));
-		if (ret)
-			return -EFAULT;
-		switch (mon->protocol) {
-		case EVL_EVENT_COUNT:
-			ret = trywait_count(mon);
-			break;
-		case EVL_EVENT_MASK:
-			ret = trywait_mask_oob(mon, twreq.value, exact_match, &value);
-			if (!ret)
-				raw_put_user(value, &u_twreq->value);
-			break;
-		default:
-			ret = -EINVAL;
-		}
-		break;
 	default:
 		ret = -ENOTTY;
 	}
@@ -782,22 +939,28 @@ static long __monitor_common_ioctl(struct evl_monitor *mon, unsigned int cmd,
 	return ret;
 }
 
-static long __monitor_ioctl(struct evl_monitor *mon, unsigned int cmd,
-			unsigned long arg)
+static long __monitor_ioctl(struct evl_monitor *mon, unsigned int f_flags,
+			unsigned int cmd, unsigned long arg)
 {
 	struct evl_monitor_binding bind, __user *u_bind;
+	long ret;
 
-	if (cmd != EVL_MONIOC_BIND)
-		return __monitor_common_ioctl(mon, cmd, arg);
+	switch (cmd) {
+	case EVL_MONIOC_BIND:
+		bind.type = mon->type;
+		bind.protocol = mon->protocol;
+		bind.eids.minor = mon->element.minor;
+		bind.eids.sstate_offset = evl_shared_offset(mon->sstate);
+		bind.eids.fundle = fundle_of(mon);
+		u_bind = (typeof(u_bind))arg;
+		ret = copy_to_user(u_bind, &bind, sizeof(bind)) ? -EFAULT : 0;
+		break;
+	default:
+		ret = __monitor_common_ioctl(mon, f_flags, cmd, arg);
+		break;
+	}
 
-	bind.type = mon->type;
-	bind.protocol = mon->protocol;
-	bind.eids.minor = mon->element.minor;
-	bind.eids.sstate_offset = evl_shared_offset(mon->sstate);
-	bind.eids.fundle = fundle_of(mon);
-	u_bind = (typeof(u_bind))arg;
-
-	return copy_to_user(u_bind, &bind, sizeof(bind)) ? -EFAULT : 0;
+	return ret;
 }
 
 static long monitor_ioctl(struct file *filp, unsigned int cmd,
@@ -805,39 +968,23 @@ static long monitor_ioctl(struct file *filp, unsigned int cmd,
 {
 	struct evl_monitor *mon = element_of(filp, struct evl_monitor);
 
-	return __monitor_ioctl(mon, cmd, arg);
+	return __monitor_ioctl(mon, filp->f_flags, cmd, arg);
 }
 
 static long __monitor_oob_ioctl(struct evl_monitor *mon, unsigned int f_flags,
 				unsigned int cmd, unsigned long arg)
 {
 	struct evl_monitor_unwaitreq uwreq, __user *u_uwreq;
-	struct evl_monitor_waitreq wreq, __user *u_wreq;
 	struct __evl_timespec __user *u_uts;
-	bool exact_match = false;
-	s32 value = 0;
 	long ret;
 
 	switch (cmd) {
-	case EVL_MONIOC_WAIT_EXACT:
-		exact_match = true;
-		fallthrough;
-	case EVL_MONIOC_WAIT:
-		u_wreq = (typeof(u_wreq))arg;
-		ret = raw_copy_from_user(&wreq, u_wreq, sizeof(wreq));
-		if (ret)
-			return -EFAULT;
-		u_uts = evl_valptr64(wreq.timeout_ptr, struct __evl_timespec);
-		ret = wait_monitor(mon, f_flags, &wreq, u_uts, &value, exact_match);
-		if (!ret)
-			raw_put_user(value, &u_wreq->value);
-		break;
 	case EVL_MONIOC_UNWAIT:
 		u_uwreq = (typeof(u_uwreq))arg;
 		ret = raw_copy_from_user(&uwreq, u_uwreq, sizeof(uwreq));
 		if (ret)
 			return -EFAULT;
-		ret = unwait_monitor(mon, &uwreq);
+		ret = unwait_monitor_oob(mon, &uwreq);
 		break;
 	case EVL_MONIOC_ENTER:
 		u_uts = (typeof(u_uts))arg;
@@ -850,7 +997,7 @@ static long __monitor_oob_ioctl(struct evl_monitor *mon, unsigned int f_flags,
 		ret = exit_monitor(mon);
 		break;
 	default:
-		ret = __monitor_common_ioctl(mon, cmd, arg);
+		ret = __monitor_common_ioctl(mon, f_flags, cmd, arg);
 	}
 
 	return ret;
@@ -959,82 +1106,53 @@ static ssize_t monitor_read(struct file *filp, char __user *u_buf,
 			size_t count, loff_t *ppos)
 {
 	struct evl_monitor *mon = element_of(filp, struct evl_monitor);
-	struct wait_queue_entry wq_entry;
-	unsigned long flags, ib_flags;
-	int ret = 0;
-	s32 val;
-
-	if (mon->type != EVL_MONITOR_EVENT || mon->protocol != EVL_EVENT_MASK)
-		return -EINVAL;
+	s32 val = -1;		/* Collect any pending event. */
 
 	if (count != sizeof(s32))
 		return -EINVAL;
 
-	init_wait_entry(&wq_entry, 0);
-
-	for (;;) {
-		spin_lock_irqsave(&mon->inband_wait_r.lock, ib_flags);
-		raw_spin_lock_irqsave(&mon->wait_queue.wchan.lock, flags);
-
-		if (signal_pending(current)) {
-			ret = -ERESTARTSYS;
-			break;
-		}
-
-		if (list_empty(&wq_entry.entry))
-			__add_wait_queue(&mon->inband_wait_r, &wq_entry);
-
-		/* Disjunctive operation. */
-		if (__trywait_mask(mon, -1, false, &val, flags))
-			goto unlocked;
-
-		if (filp->f_flags & O_NONBLOCK) {
-			ret = -EAGAIN;
-			break;
-		}
-
-		set_current_state(TASK_INTERRUPTIBLE);
-		raw_spin_unlock_irqrestore(&mon->wait_queue.wchan.lock, flags);
-		spin_unlock_irqrestore(&mon->inband_wait_r.lock, ib_flags);
-		schedule();
-	}
-
-	raw_spin_unlock_irqrestore(&mon->wait_queue.wchan.lock, flags);
-unlocked:
-	list_del(&wq_entry.entry);
-
-	spin_unlock_irqrestore(&mon->inband_wait_r.lock, ib_flags);
-
-	/*
-	 * If we have successfully collected all the bits, send a
-	 * POLLOUT wakeup.
-	 */
-	smp_mb();	/* Matches mb in set_current_state() */
-	if (!ret && waitqueue_active(&mon->inband_wait_w))
-		wake_up(&mon->inband_wait_w);
-
-	return copy_to_user(u_buf, &val, sizeof(val)) ? -EFAULT : sizeof(val);
+	return wait_monitor_inband(mon, filp->f_flags, NULL, &val, false) ?:
+		copy_to_user(u_buf, &val, sizeof(val)) ? -EFAULT : sizeof(val);
 }
 
-static ssize_t monitor_write(struct file *filp, const char __user *u_buf,
-			size_t count, loff_t *ppos)
+static ssize_t monitor_common_write(struct file *filp, const char __user *u_buf,
+			size_t count)
 {
 	struct evl_monitor *mon = element_of(filp, struct evl_monitor);
 	s32 val;
 	int ret;
 
-	if (mon->type != EVL_MONITOR_EVENT || mon->protocol != EVL_EVENT_MASK)
+	if (count != sizeof(s32))
 		return -EINVAL;
 
-	if (count != sizeof(s32))
+	if (mon->type != EVL_MONITOR_EVENT)
 		return -EINVAL;
 
 	ret = copy_from_user(&val, u_buf, sizeof(val));
 	if (ret)
 		return -EFAULT;
 
-	/* Unicast operation. */
-	return post_mask(mon, val, false) ?: sizeof(val);
+	switch (mon->protocol) {
+	case EVL_EVENT_MASK:
+		/* Unicast operation. */
+		ret = post_mask(mon, val, false) ?: sizeof(val);
+		break;
+	case EVL_EVENT_COUNT:
+		/* Broadcast if val is zero. */
+		ret = post_count(mon, 1, !val);
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+static ssize_t monitor_write(struct file *filp, const char __user *u_buf,
+			size_t count, loff_t *ppos)
+{
+	return monitor_common_write(filp, u_buf, count);
 }
 
 static ssize_t monitor_oob_read(struct file *filp,
@@ -1044,39 +1162,29 @@ static ssize_t monitor_oob_read(struct file *filp,
 	s32 val;
 	int ret;
 
-	if (mon->type != EVL_MONITOR_EVENT || mon->protocol != EVL_EVENT_MASK)
-		return -EINVAL;
 
-	if (count != sizeof(s32))
-		return -EINVAL;
+	switch (mon->protocol) {
+	case EVL_EVENT_MASK:
+		/* Disjunctive operation. */
+	        ret = wait_mask_oob(mon, filp->f_flags, NULL, -1, false, &val);
+		if (ret)
+			return ret;
+		break;
+	case EVL_EVENT_COUNT:
+		val = 1;
+		ret = wait_count_oob(mon, filp->f_flags, NULL);
+		break;
+	default:
+		ret = -EINVAL;
+	}
 
-	/* Disjunctive operation. */
-	ret = wait_mask_oob(mon, filp->f_flags, NULL, -1, false, &val);
-	if (ret)
-		return ret;
-
-	return copy_to_user(u_buf, &val, sizeof(val)) ? -EFAULT : sizeof(val);
+	return ret ?: copy_to_user(u_buf, &val, sizeof(val)) ? -EFAULT : sizeof(val);
 }
 
 static ssize_t monitor_oob_write(struct file *filp,
 				const char __user *u_buf, size_t count)
 {
-	struct evl_monitor *mon = element_of(filp, struct evl_monitor);
-	s32 val;
-	int ret;
-
-	if (mon->type != EVL_MONITOR_EVENT || mon->protocol != EVL_EVENT_MASK)
-		return -EINVAL;
-
-	if (count != sizeof(s32))
-		return -EINVAL;
-
-	ret = copy_from_user(&val, u_buf, sizeof(val));
-	if (ret)
-		return -EFAULT;
-
-	/* Unicast operation. */
-	return post_mask(mon, val, false) ?: sizeof(val);
+	return monitor_common_write(filp, u_buf, count);
 }
 
 static __poll_t monitor_poll(struct file *filp, poll_table *wait)
@@ -1121,7 +1229,7 @@ long evl_functl_monitor(struct evl_monitor *mon,
 		unsigned int cmd, unsigned long arg)
 {
 	if (running_inband())
-		return __monitor_ioctl(mon, cmd,
+		return __monitor_ioctl(mon, 0, cmd,
 				(unsigned long)compat_ptr(arg));
 
 	return __monitor_oob_ioctl(mon, 0, cmd,
