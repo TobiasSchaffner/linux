@@ -27,6 +27,9 @@ static int proxy_set_next_ktime(ktime_t expires,
 	/*
 	 * Negative delta have been observed. evl_start_timer()
 	 * will trigger an immediate shot in such an event.
+	 *
+	 * Note: in-band tick events are programmed on the
+	 * CLOCK_MONOTONIC timeline, so ktime_get() applies here.
 	 */
 	delta = ktime_sub(expires, ktime_get());
 
