@@ -450,6 +450,10 @@ struct evl_clock *evl_get_clock_by_fd(int efd)
 		clock = &evl_mono_clock;
 		evl_get_element(&clock->element);
 		break;
+	case EVL_CLOCK_MONOTONIC_RAW:
+		clock = &evl_mono_raw_clock;
+		evl_get_element(&clock->element);
+		break;
 	case EVL_CLOCK_REALTIME:
 		clock = &evl_realtime_clock;
 		evl_get_element(&clock->element);
@@ -1072,6 +1076,11 @@ static ktime_t read_mono_clock(struct evl_clock *clock)
 	return evl_ktime_monotonic();
 }
 
+static ktime_t read_mono_raw_clock(struct evl_clock *clock)
+{
+	return ns_to_ktime(ktime_get_raw_fast_ns());
+}
+
 static ktime_t read_realtime_clock(struct evl_clock *clock)
 {
 	return ns_to_ktime(ktime_get_real_fast_ns());
@@ -1103,6 +1112,22 @@ struct evl_clock evl_mono_clock = {
 };
 EXPORT_SYMBOL_GPL(evl_mono_clock);
 
+struct evl_clock evl_mono_raw_clock = {
+	.name = EVL_CLOCK_MONOTONIC_RAW_DEV,
+	.resolution = 1,	/* nanosecond. */
+	.flags = EVL_CLONE_PUBLIC,
+	.ops = {
+		.read = read_mono_raw_clock,
+		.program_local_shot = evl_program_proxy_tick,
+#ifdef CONFIG_SMP
+		.program_remote_shot = evl_send_timer_ipi,
+#endif
+		.set_gravity = set_coreclk_gravity,
+		.reset_gravity = reset_coreclk_gravity,
+	},
+};
+EXPORT_SYMBOL_GPL(evl_mono_raw_clock);
+
 struct evl_clock evl_realtime_clock = {
 	.name = EVL_CLOCK_REALTIME_DEV,
 	.resolution = 1,	/* nanosecond. */
@@ -1121,16 +1146,34 @@ int __init evl_clock_init(void)
 	int ret;
 
 	evl_reset_clock_gravity(&evl_mono_clock);
+	evl_reset_clock_gravity(&evl_mono_raw_clock);
 	evl_reset_clock_gravity(&evl_realtime_clock);
 
 	ret = evl_init_clock(&evl_mono_clock, &evl_oob_cpus);
 	if (ret)
 		return ret;
 
+	/*
+	 * Although evl_mono_raw_clock delivers raw timestamps, its
+	 * timers are driven by the monotonic clock device based on
+	 * adjusted timeouts.
+	 */
+	ret = evl_init_slave_clock(&evl_mono_raw_clock, &evl_mono_clock,
+		get_base_offset);
+	if (ret)
+		goto fail_raw;
+
 	ret = evl_init_slave_clock(&evl_realtime_clock,	&evl_mono_clock,
 				   last_base_offset);
 	if (ret)
-		evl_put_element(&evl_mono_clock.element);
+		goto fail_realtime;
+
+	return 0;
+
+fail_realtime:
+	evl_put_element(&evl_mono_raw_clock.element);
+fail_raw:
+	evl_put_element(&evl_mono_clock.element);
 
 	return ret;
 }
@@ -1138,5 +1181,6 @@ int __init evl_clock_init(void)
 void __init evl_clock_cleanup(void)
 {
 	evl_put_element(&evl_realtime_clock.element);
+	evl_put_element(&evl_mono_raw_clock.element);
 	evl_put_element(&evl_mono_clock.element);
 }
