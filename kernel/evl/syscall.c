@@ -221,6 +221,9 @@ static bool handle_vdso_fallback(struct pt_regs *regs, unsigned int nr,
 	case CLOCK_MONOTONIC:
 		clock = &evl_mono_clock;
 		break;
+	case CLOCK_MONOTONIC_RAW:
+		clock = &evl_mono_raw_clock;
+		break;
 	case CLOCK_REALTIME:
 		clock = &evl_realtime_clock;
 		break;

@@ -10,11 +10,13 @@
 #include <linux/types.h>
 
 #define EVL_CLOCK_MONOTONIC_DEV		"monotonic"
+#define EVL_CLOCK_MONOTONIC_RAW_DEV	"monotonic_raw"
 #define EVL_CLOCK_REALTIME_DEV		"realtime"
 #define EVL_CLOCK_DEV			"clock"
 
-#define EVL_CLOCK_MONOTONIC  (-CLOCK_MONOTONIC)
-#define EVL_CLOCK_REALTIME   (-CLOCK_REALTIME)
+#define EVL_CLOCK_MONOTONIC		(-CLOCK_MONOTONIC)
+#define EVL_CLOCK_MONOTONIC_RAW		(-CLOCK_MONOTONIC_RAW)
+#define EVL_CLOCK_REALTIME		(-CLOCK_REALTIME)
 
 #define EVL_CLOCK_IOCBASE	'c'
 
