@@ -46,6 +46,8 @@ struct __evl_timespec;
  */
 extern struct evl_clock evl_mono_clock;
 
+extern struct evl_clock evl_mono_raw_clock;
+
 extern struct evl_clock evl_realtime_clock;
 
 #endif /* !_EVL_TIMEOUT_H */
