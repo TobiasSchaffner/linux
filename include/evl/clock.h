@@ -37,7 +37,6 @@ struct evl_clock {
 	int flags;
 	struct {
 		ktime_t (*read)(struct evl_clock *clock);
-		u64 (*read_cycles)(struct evl_clock *clock);
 		int (*set)(struct evl_clock *clock, ktime_t date);
 		void (*program_local_shot)(struct evl_clock *clock);
 		void (*program_remote_shot)(struct evl_clock *clock,
@@ -77,12 +76,7 @@ void evl_adjust_timers(struct evl_clock *clock,
 
 void evl_stop_timers(struct evl_clock *clock);
 
-static inline u64 evl_read_clock_cycles(struct evl_clock *clock)
-{
-	return clock->ops.read_cycles(clock);
-}
-
-static ktime_t evl_ktime_monotonic(void)
+static inline ktime_t evl_ktime_monotonic(void)
 {
 	return ktime_get_mono_fast_ns();
 }
