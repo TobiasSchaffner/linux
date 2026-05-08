@@ -1060,19 +1060,9 @@ static ktime_t read_mono_clock(struct evl_clock *clock)
 	return evl_ktime_monotonic();
 }
 
-static u64 read_mono_clock_cycles(struct evl_clock *clock)
-{
-	return read_mono_clock(clock);
-}
-
 static ktime_t read_realtime_clock(struct evl_clock *clock)
 {
 	return ns_to_ktime(ktime_get_real_fast_ns());
-}
-
-static u64 read_realtime_clock_cycles(struct evl_clock *clock)
-{
-	return read_realtime_clock(clock);
 }
 
 static void adjust_realtime_clock(struct evl_clock *clock)
@@ -1091,7 +1081,6 @@ struct evl_clock evl_mono_clock = {
 	.flags = EVL_CLONE_PUBLIC,
 	.ops = {
 		.read = read_mono_clock,
-		.read_cycles = read_mono_clock_cycles,
 		.program_local_shot = evl_program_proxy_tick,
 #ifdef CONFIG_SMP
 		.program_remote_shot = evl_send_timer_ipi,
@@ -1108,7 +1097,6 @@ struct evl_clock evl_realtime_clock = {
 	.flags = EVL_CLONE_PUBLIC,
 	.ops = {
 		.read = read_realtime_clock,
-		.read_cycles = read_realtime_clock_cycles,
 		.set_gravity = set_coreclk_gravity,
 		.reset_gravity = reset_coreclk_gravity,
 		.adjust = adjust_realtime_clock,
