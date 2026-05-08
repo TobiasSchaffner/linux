@@ -1052,12 +1052,8 @@ static long latmus_ioctl(struct file *filp, unsigned int cmd,
 	    setup_data.period > ONE_BILLION)
 		return -EINVAL;
 
-	if (setup_data.priority < 1 ||
-	    setup_data.priority > EVL_FIFO_MAX_PRIO)
-		return -EINVAL;
-
 	if (setup_data.cpu >= num_possible_cpus() ||
-		!is_evl_cpu(setup_data.cpu))
+	    !is_evl_cpu(setup_data.cpu))
 		return -EINVAL;
 
 	/* Clear previous runner. */
@@ -1072,6 +1068,10 @@ static long latmus_ioctl(struct file *filp, unsigned int cmd,
 		runner = create_irq_runner(setup_data.cpu);
 		break;
 	case EVL_LAT_KERN:
+		if (setup_data.priority < 1 ||
+			setup_data.priority > EVL_FIFO_MAX_PRIO) {
+			return -EINVAL;
+		}
 		runner = create_kthread_runner(setup_data.priority,
 					       setup_data.cpu);
 		break;
