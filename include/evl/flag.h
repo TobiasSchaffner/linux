@@ -15,9 +15,9 @@ struct evl_flag {
 	bool raised;
 };
 
-#define EVL_FLAG_INITIALIZER(__name) {				\
-		.wait = EVL_WAIT_INITIALIZER((__name).wait),	\
-		.raised = false,				\
+#define EVL_FLAG_INITIALIZER(__name) {						\
+		.wait = EVL_WAIT_INITIALIZER((__name).wait, &evl_mono_clock),	\
+		.raised = false,						\
 	}
 
 #define DEFINE_EVL_FLAG(__name)					\
