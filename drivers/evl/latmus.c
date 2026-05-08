@@ -322,7 +322,8 @@ static struct latmus_runner *create_irq_runner(int cpu)
 	};
 
 	init_runner_base(&irq_runner->runner);
-	evl_init_timer_on_cpu(&irq_runner->timer, cpu, latmus_irq_handler);
+	evl_init_timer_on_cpu(&irq_runner->timer,
+			cpu, &evl_mono_clock, latmus_irq_handler);
 
 	return &irq_runner->runner;
 }
@@ -420,7 +421,7 @@ static struct latmus_runner *create_sirq_runner(int cpu)
 	sirq_runner->sirq_percpu = sirq_percpu;
 	init_runner_base(&sirq_runner->runner);
 	evl_init_timer_on_cpu(&sirq_runner->timer, cpu,
-			latmus_sirq_timer_handler);
+			&evl_mono_clock, latmus_sirq_timer_handler);
 
 	for_each_possible_cpu(_cpu)
 		*per_cpu_ptr(sirq_percpu, _cpu) = sirq_runner;
@@ -651,7 +652,8 @@ static struct latmus_runner *create_uthread_runner(int cpu)
 	};
 
 	init_runner_base(&u_runner->runner);
-	evl_init_timer_on_cpu(&u_runner->timer, cpu, latmus_pulse_handler);
+	evl_init_timer_on_cpu(&u_runner->timer, cpu,
+			&evl_mono_clock, latmus_pulse_handler);
 	evl_set_timer_gravity(&u_runner->timer, EVL_TIMER_UGRAVITY);
 	evl_init_flag(&u_runner->pulse);
 

@@ -66,7 +66,7 @@ alloc_frag_tree(struct evl_net_frag_tdir *ftdir,
 	ft->gc_dev = dev;
 	INIT_HLIST_NODE(&ft->gc);
 	ft->key.ipv4 = *key;
-	evl_init_timer(&ft->timer, frag_expired);
+	evl_init_timer(&ft->timer, &evl_mono_clock, frag_expired);
 	evl_spin_lock_init(&ft->lock);
 	netdev_dbg(dev, "allocated frag tree %px\n", ft);
 

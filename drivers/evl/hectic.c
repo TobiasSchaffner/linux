@@ -611,7 +611,7 @@ static int hectic_open(struct inode *inode, struct file *filp)
 	ctx->pause_us = 0;
 
 	init_irq_work(&ctx->wake_utask, rtswitch_utask_waker);
-	evl_init_timer(&ctx->wake_up_delay, timed_wake_up);
+	evl_init_timer(&ctx->wake_up_delay, &evl_mono_clock, timed_wake_up);
 	evl_init_stax(&ctx->stax, 0);
 
 	filp->private_data = ctx;
