@@ -294,15 +294,15 @@ void evl_set_timer_gravity(struct evl_timer *timer,
 	__evl_init_timer(__timer, __clock, __handler,			\
 			__rq, #__handler, __flags)
 
-#define evl_init_timer_on_cpu(__timer, __cpu, __handler)		\
+#define evl_init_timer_on_cpu(__timer, __cpu, __clock, __handler)	\
 	do {								\
 		struct evl_rq *__rq = evl_cpu_rq(__cpu);		\
-		evl_init_timer_on_rq(__timer, &evl_mono_clock, __handler, \
+		evl_init_timer_on_rq(__timer, __clock, __handler,	\
 				__rq, EVL_TIMER_IGRAVITY);		\
 	} while (0)
 
-#define evl_init_timer(__timer, __handler)				\
-	evl_init_timer_on_rq(__timer, &evl_mono_clock, __handler, NULL,	\
+#define evl_init_timer(__timer, __clock, __handler)			\
+	evl_init_timer_on_rq(__timer, __clock, __handler, NULL,		\
 			EVL_TIMER_IGRAVITY)
 
 static inline
