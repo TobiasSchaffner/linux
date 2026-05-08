@@ -15,9 +15,9 @@ struct evl_ksem {
 	unsigned int value;
 };
 
-#define EVL_KSEM_INITIALIZER(__name, __value) {			\
-		.wait = EVL_WAIT_INITIALIZER((__name).wait),	\
-		.value = (__value),				\
+#define EVL_KSEM_INITIALIZER(__name, __value) {					\
+		.wait = EVL_WAIT_INITIALIZER((__name).wait, &evl_mono_clock),	\
+		.value = (__value),						\
 	}
 
 #define DEFINE_EVL_KSEM(__name, __value)			\
