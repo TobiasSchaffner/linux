@@ -33,9 +33,9 @@ struct evl_wait_queue {
 	struct evl_wait_channel wchan;
 };
 
-#define EVL_WAIT_INITIALIZER(__name) {					\
+#define EVL_WAIT_INITIALIZER(__name, __clock) {				\
 		.flags = EVL_WAIT_PRIO,					\
-		.clock = &evl_mono_clock,				\
+		.clock = __clock,					\
 		.wchan = {						\
 			.lock = __HARD_SPIN_LOCK_INITIALIZER((__name).wchan.lock), \
 			.owner = NULL,					\
