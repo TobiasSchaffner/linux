@@ -22,6 +22,7 @@ struct latmus_setup {
 	__u64 period;
 	__s32 priority;
 	__u32 cpu;
+	__s32 clockid;
 	union {
 		struct {
 			__u32 verbosity;
@@ -61,7 +62,7 @@ struct latmus_result {
 #define EVL_LATIOC_TUNE		_IOWR(EVL_LATMUS_IOCBASE, 0, struct latmus_setup)
 #define EVL_LATIOC_MEASURE	_IOWR(EVL_LATMUS_IOCBASE, 1, struct latmus_setup)
 #define EVL_LATIOC_RUN		_IOR(EVL_LATMUS_IOCBASE, 2, struct latmus_result)
-#define EVL_LATIOC_PULSE	_IOW(EVL_LATMUS_IOCBASE, 3, __u64)
-#define EVL_LATIOC_RESET	_IO(EVL_LATMUS_IOCBASE, 4)
+#define EVL_LATIOC_PULSE	_IOW(EVL_LATMUS_IOCBASE, 3, __u64) /* timestamp */
+#define EVL_LATIOC_RESET	_IOW(EVL_LATMUS_IOCBASE, 4, __s32) /* clockid_t */
 
 #endif /* !_EVL_UAPI_DEVICES_LATMUS_ABI_H */
