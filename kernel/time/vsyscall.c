@@ -75,10 +75,9 @@ static inline void update_vdso_time_data(struct vdso_time_data *vdata, struct ti
 }
 
 static void update_generic_mmio(struct vdso_time_data *vdata,
-				struct timekeeper *tk)
+				struct clocksource *cs)
 {
 #ifdef CONFIG_GENERIC_VDSO_CLOCKSOURCE
-	const struct clocksource *cs = tk->tkr_mono.clock;
 	struct vdso_clock *vc = vdata->clock_data;
 	u16 seq;
 
@@ -111,7 +110,8 @@ void update_vsyscall(struct timekeeper *tk)
 	/* copy vsyscall data */
 	vdso_write_begin(vdata);
 
-	update_generic_mmio(vdata, tk);
+	update_generic_mmio(&vdata[CS_HRES_COARSE], tk->tkr_mono.clock);
+	update_generic_mmio(&vdata[CS_RAW], tk->tkr_raw.clock);
 
 	clock_mode = tk->tkr_mono.clock->vdso_clock_mode;
 	vc[CS_HRES_COARSE].clock_mode	= clock_mode;
