@@ -73,6 +73,7 @@ struct latmus_runner {
 	int status;
 	int verbosity;
 	ktime_t period;
+	struct evl_clock *clock;
 	union {
 		struct {
 			struct tuning_score scores[TUNER_RESULT_STEPS];
@@ -252,7 +253,7 @@ static void latmus_irq_handler(struct evl_timer *timer) /* hard irqs off */
 	ktime_t now;
 
 	irq_runner = container_of(timer, struct irq_runner, timer);
-	now = evl_read_clock(&evl_mono_clock);
+	now = evl_read_clock(irq_runner->runner.clock);
 	if (irq_runner->runner.add_sample(&irq_runner->runner, now))
 		evl_stop_timer(timer);
 }
@@ -269,17 +270,17 @@ static void destroy_irq_runner(struct latmus_runner *runner)
 
 static unsigned int get_irq_gravity(struct latmus_runner *runner)
 {
-	return evl_mono_clock.gravity.irq;
+	return runner->clock->gravity.irq;
 }
 
 static void set_irq_gravity(struct latmus_runner *runner, unsigned int gravity)
 {
-	evl_mono_clock.gravity.irq = gravity;
+	runner->clock->gravity.irq = gravity;
 }
 
 static unsigned int adjust_irq_gravity(struct latmus_runner *runner, int adjust)
 {
-	return evl_mono_clock.gravity.irq += adjust;
+	return runner->clock->gravity.irq += adjust;
 }
 
 static int start_irq_runner(struct latmus_runner *runner,
@@ -303,7 +304,7 @@ static void stop_irq_runner(struct latmus_runner *runner)
 	evl_stop_timer(&irq_runner->timer);
 }
 
-static struct latmus_runner *create_irq_runner(int cpu)
+static struct latmus_runner *create_irq_runner(int cpu, struct evl_clock *clock)
 {
 	struct irq_runner *irq_runner;
 
@@ -319,11 +320,12 @@ static struct latmus_runner *create_irq_runner(int cpu)
 		.adjust_gravity = adjust_irq_gravity,
 		.start = start_irq_runner,
 		.stop = stop_irq_runner,
+		.clock = clock,
 	};
 
 	init_runner_base(&irq_runner->runner);
 	evl_init_timer_on_cpu(&irq_runner->timer,
-			cpu, &evl_mono_clock, latmus_irq_handler);
+			cpu, clock, latmus_irq_handler);
 
 	return &irq_runner->runner;
 }
@@ -334,7 +336,7 @@ static irqreturn_t latmus_sirq_handler(int sirq, void *dev_id)
 	struct sirq_runner *sirq_runner = *self_percpu;
 	ktime_t now;
 
-	now = evl_read_clock(&evl_mono_clock);
+	now = evl_read_clock(sirq_runner->runner.clock);
 	if (sirq_runner->runner.add_sample(&sirq_runner->runner, now))
 		evl_stop_timer(&sirq_runner->timer);
 
@@ -347,9 +349,9 @@ static void latmus_sirq_timer_handler(struct evl_timer *timer) /* hard irqs off 
 	struct runner_state *state;
 	ktime_t now;
 
-	now = evl_read_clock(&evl_mono_clock);
 	sirq_runner = container_of(timer, struct sirq_runner, timer);
 	state = &sirq_runner->runner.state;
+	now = evl_read_clock(sirq_runner->runner.clock);
 	state->offset = (int)ktime_to_ns(ktime_sub(now, state->ideal));
 	irq_post_inband(sirq_runner->sirq);
 }
@@ -388,7 +390,7 @@ static void stop_sirq_runner(struct latmus_runner *runner)
 	evl_stop_timer(&sirq_runner->timer);
 }
 
-static struct latmus_runner *create_sirq_runner(int cpu)
+static struct latmus_runner *create_sirq_runner(int cpu, struct evl_clock *clock)
 {
 	struct sirq_runner * __percpu *sirq_percpu;
 	struct sirq_runner *sirq_runner;
@@ -416,12 +418,13 @@ static struct latmus_runner *create_sirq_runner(int cpu)
 		.destroy = destroy_sirq_runner,
 		.start = start_sirq_runner,
 		.stop = stop_sirq_runner,
+		.clock = clock,
 	};
 	sirq_runner->sirq = sirq;
 	sirq_runner->sirq_percpu = sirq_percpu;
 	init_runner_base(&sirq_runner->runner);
 	evl_init_timer_on_cpu(&sirq_runner->timer, cpu,
-			&evl_mono_clock, latmus_sirq_timer_handler);
+			clock, latmus_sirq_timer_handler);
 
 	for_each_possible_cpu(_cpu)
 		*per_cpu_ptr(sirq_percpu, _cpu) = sirq_runner;
@@ -456,7 +459,7 @@ static void kthread_handler(void *arg)
 		if (ret)
 			break;
 
-		ret = evl_set_period(&evl_mono_clock,
+		ret = evl_set_period(k_runner->runner.clock,
 				k_runner->start_time,
 				k_runner->runner.period);
 		if (ret)
@@ -467,7 +470,7 @@ static void kthread_handler(void *arg)
 			if (ret && ret != -ETIMEDOUT)
 				goto out;
 
-			now = evl_read_clock(&evl_mono_clock);
+			now = evl_read_clock(k_runner->runner.clock);
 			if (k_runner->runner.add_sample(&k_runner->runner, now)) {
 				evl_set_period(NULL, 0, 0);
 				break;
@@ -492,19 +495,19 @@ static void destroy_kthread_runner(struct latmus_runner *runner)
 
 static unsigned int get_kthread_gravity(struct latmus_runner *runner)
 {
-	return evl_mono_clock.gravity.kernel;
+	return runner->clock->gravity.kernel;
 }
 
 static void
 set_kthread_gravity(struct latmus_runner *runner, unsigned int gravity)
 {
-	evl_mono_clock.gravity.kernel = gravity;
+	runner->clock->gravity.kernel = gravity;
 }
 
 static unsigned int
 adjust_kthread_gravity(struct latmus_runner *runner, int adjust)
 {
-	return evl_mono_clock.gravity.kernel += adjust;
+	return runner->clock->gravity.kernel += adjust;
 }
 
 static int start_kthread_runner(struct latmus_runner *runner,
@@ -521,7 +524,7 @@ static int start_kthread_runner(struct latmus_runner *runner,
 }
 
 static struct latmus_runner *
-create_kthread_runner(int priority, int cpu)
+create_kthread_runner(int priority, int cpu, struct evl_clock *clock)
 {
 	struct kthread_runner *k_runner;
 	int ret;
@@ -537,6 +540,7 @@ create_kthread_runner(int priority, int cpu)
 		.set_gravity = set_kthread_gravity,
 		.adjust_gravity = adjust_kthread_gravity,
 		.start = start_kthread_runner,
+		.clock = clock,
 	};
 
 	init_runner_base(&k_runner->runner);
@@ -577,19 +581,19 @@ static void destroy_uthread_runner(struct latmus_runner *runner)
 
 static unsigned int get_uthread_gravity(struct latmus_runner *runner)
 {
-	return evl_mono_clock.gravity.user;
+	return runner->clock->gravity.user;
 }
 
 static void set_uthread_gravity(struct latmus_runner *runner,
 				unsigned int gravity)
 {
-	evl_mono_clock.gravity.user = gravity;
+	runner->clock->gravity.user = gravity;
 }
 
 static unsigned int
 adjust_uthread_gravity(struct latmus_runner *runner, int adjust)
 {
-	return evl_mono_clock.gravity.user += adjust;
+	return runner->clock->gravity.user += adjust;
 }
 
 static int start_uthread_runner(struct latmus_runner *runner,
@@ -633,7 +637,7 @@ static int add_uthread_sample(struct latmus_runner *runner,
 	return ret;
 }
 
-static struct latmus_runner *create_uthread_runner(int cpu)
+static struct latmus_runner *create_uthread_runner(int cpu, struct evl_clock *clock)
 {
 	struct uthread_runner *u_runner;
 
@@ -649,11 +653,12 @@ static struct latmus_runner *create_uthread_runner(int cpu)
 		.adjust_gravity = adjust_uthread_gravity,
 		.start = start_uthread_runner,
 		.stop = stop_uthread_runner,
+		.clock = clock,
 	};
 
 	init_runner_base(&u_runner->runner);
 	evl_init_timer_on_cpu(&u_runner->timer, cpu,
-			&evl_mono_clock, latmus_pulse_handler);
+			clock, latmus_pulse_handler);
 	evl_set_timer_gravity(&u_runner->timer, EVL_TIMER_UGRAVITY);
 	evl_init_flag(&u_runner->pulse);
 
@@ -796,7 +801,7 @@ static int measure_continously(struct latmus_runner *runner)
 	state->overruns = 0;
 	state->cur_samples = 0;
 	state->offset = 0;	/* for SIRQ latency only. */
-	state->ideal = ktime_add(evl_read_clock(&evl_mono_clock), period);
+	state->ideal = ktime_add(evl_read_clock(runner->clock), period);
 
 	ret = runner->start(runner, state->ideal);
 	if (ret)
@@ -829,7 +834,7 @@ static int tune_gravity(struct latmus_runner *runner)
 	progress(runner, "warming up...");
 
 	for (step = 0; step < TUNER_WARMUP_STEPS + TUNER_RESULT_STEPS; step++) {
-		state->ideal = ktime_add_ns(evl_read_clock(&evl_mono_clock),
+		state->ideal = ktime_add_ns(evl_read_clock(runner->clock),
 			    ktime_to_ns(period) * TUNER_WARMUP_STEPS);
 		state->min_lat = INT_MAX;
 		state->max_lat = INT_MIN;
@@ -1008,6 +1013,18 @@ static void cleanup_measurement(struct latmus_runner *runner)
 		kfree(runner->histogram);
 }
 
+static struct evl_clock *fetch_core_clock(clockid_t clk)
+{
+	switch (clk) {
+	case CLOCK_MONOTONIC:
+		return &evl_mono_clock;
+	case CLOCK_MONOTONIC_RAW:
+		return &evl_mono_raw_clock;
+	default:
+		return NULL;
+	}
+}
+
 static long latmus_ioctl(struct file *filp, unsigned int cmd,
 			 unsigned long arg)
 {
@@ -1019,10 +1036,14 @@ static long latmus_ioctl(struct file *filp, unsigned int cmd,
 	void (*cleanup)(struct latmus_runner *runner);
 	struct latmus_setup setup_data;
 	struct latmus_runner *runner;
+	struct evl_clock *clock;
 	int ret;
 
 	if (cmd == EVL_LATIOC_RESET) {
-		evl_reset_clock_gravity(&evl_mono_clock);
+		clock = fetch_core_clock((clockid_t)arg);
+		if (!clock)
+			return -EINVAL;
+		evl_reset_clock_gravity(clock);
 		return 0;
 	}
 
@@ -1033,6 +1054,10 @@ static long latmus_ioctl(struct file *filp, unsigned int cmd,
 		return -EFAULT;
 
 	if (setup_data.type == EVL_LAT_SIRQ && cmd != EVL_LATIOC_MEASURE)
+		return -EINVAL;
+
+	clock = fetch_core_clock(setup_data.clockid);
+	if (!clock)
 		return -EINVAL;
 
 	switch (cmd) {
@@ -1067,7 +1092,7 @@ static long latmus_ioctl(struct file *filp, unsigned int cmd,
 
 	switch (setup_data.type) {
 	case EVL_LAT_IRQ:
-		runner = create_irq_runner(setup_data.cpu);
+		runner = create_irq_runner(setup_data.cpu, clock);
 		break;
 	case EVL_LAT_KERN:
 		if (setup_data.priority < 1 ||
@@ -1075,13 +1100,13 @@ static long latmus_ioctl(struct file *filp, unsigned int cmd,
 			return -EINVAL;
 		}
 		runner = create_kthread_runner(setup_data.priority,
-					       setup_data.cpu);
+					setup_data.cpu, clock);
 		break;
 	case EVL_LAT_USER:
-		runner = create_uthread_runner(setup_data.cpu);
+		runner = create_uthread_runner(setup_data.cpu, clock);
 		break;
 	case EVL_LAT_SIRQ:
-		runner = create_sirq_runner(setup_data.cpu);
+		runner = create_sirq_runner(setup_data.cpu, clock);
 		break;
 	default:
 		return -EINVAL;
