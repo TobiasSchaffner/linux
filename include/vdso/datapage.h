@@ -133,8 +133,10 @@ struct clksrc_info {
 };
 
 struct vdso_priv_data {
-	u32 current_cs_type_seq;
-	struct clksrc_info clksrc_info[CLOCKSOURCE_VDSO_MMIO + CLKSRC_USER_MMIO_MAX];
+	struct vdso_priv_cs {
+		u32 current_cs_type_seq;
+		struct clksrc_info clksrc_info[CLOCKSOURCE_VDSO_MMIO + CLKSRC_USER_MMIO_MAX];
+	} cs_bases[CS_BASES];
 };
 
 #endif	/* CONFIG_GENERIC_VDSO_CLOCKSOURCE && !ENABLE_COMPAT_VDSO */

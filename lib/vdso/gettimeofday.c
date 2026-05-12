@@ -122,8 +122,7 @@ static __always_inline u32 to_cs_type_seq(u16 type, u16 seq)
 
 static notrace noinline __cold
 void map_clocksource(const struct vdso_clock *vc,
-		const struct vdso_time_data *vd,
-		struct vdso_priv_data *vp,
+		const struct vdso_time_data *vd, struct vdso_priv_cs *vpcs,
 		u32 seq, u32 new_cs_type_seq)
 {
 	vdso_read_cycles_t *read_cycles = NULL;
@@ -133,7 +132,7 @@ void map_clocksource(const struct vdso_clock *vc,
 
 	new_cs_seq = to_seq(new_cs_type_seq);
 	new_cs_type = to_cs_type(new_cs_type_seq);
-	info = &vp->clksrc_info[new_cs_type];
+	info = &vpcs->clksrc_info[new_cs_type];
 
 	if (new_cs_type < CLOCKSOURCE_VDSO_MMIO)
 		goto done;
@@ -186,13 +185,13 @@ done:
 	info->read_cycles = read_cycles;
 	smp_wmb();
 	new_cs_type_seq = to_cs_type_seq(new_cs_type, new_cs_seq);
-	WRITE_ONCE(vp->current_cs_type_seq, new_cs_type_seq);
+	WRITE_ONCE(vpcs->current_cs_type_seq, new_cs_type_seq);
 
 	return;
 
 fallback_to_syscall:
 	new_cs_type = CLOCKSOURCE_VDSO_NONE;
-	info = &vp->clksrc_info[new_cs_type];
+	info = &vpcs->clksrc_info[new_cs_type];
 	goto done;
 }
 
@@ -203,20 +202,21 @@ static __always_inline bool get_hw_counter(const struct vdso_time_data *vd,
 {
 	const struct vdso_timestamp *vdso_ts = &vc->basetime[clkidx];
 	const struct clksrc_info *info;
-	struct vdso_priv_data *vp;
+	struct vdso_priv_cs *vpcs;
 	u32 seq, cs_type_seq;
 	unsigned int cs;
 	u64 cycles;
 
-	vp = __arch_get_vdso_u_priv_data();
+	vpcs = &__arch_get_vdso_u_priv_data()->cs_bases[
+		clkidx == CLOCK_MONOTONIC_RAW ? CS_RAW : CS_HRES_COARSE];
 
 	for (;;) {
 		seq = vdso_read_begin(vc);
-		cs_type_seq = READ_ONCE(vp->current_cs_type_seq);
+		cs_type_seq = READ_ONCE(vpcs->current_cs_type_seq);
 		if (likely(to_seq(cs_type_seq) == to_seq(vc->cs_type_seq)))
 			break;
 
-		map_clocksource(vc, vd, vp, seq, vc->cs_type_seq);
+		map_clocksource(vc, vd, vpcs, seq, vc->cs_type_seq);
 	}
 
 	switch (to_cs_type(cs_type_seq)) {
@@ -227,7 +227,7 @@ static __always_inline bool get_hw_counter(const struct vdso_time_data *vd,
 		break;
 	default:
 		cs = to_cs_type(READ_ONCE(cs_type_seq));
-		info = &vp->clksrc_info[cs];
+		info = &vpcs->clksrc_info[cs];
 		cycles = info->read_cycles(info);
 		*ns = vdso_calc_ns(vc, cycles, vdso_ts->nsec);
 		*sec = vdso_ts->sec;
