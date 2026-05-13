@@ -258,8 +258,7 @@ int evl_init_slave_clock(struct evl_clock *clock,
 	clock->affinity = master->affinity;
 #endif
 	clock->timerdata = master->timerdata;
-	clock->offset = evl_read_clock(clock) -
-		evl_read_clock(master);
+	clock->offset = evl_read_clock(clock) -	evl_read_clock(master);
 	init_clock(clock, master);
 
 	return 0;
@@ -911,18 +910,18 @@ static void destroy_clock(struct evl_clock *clock)
 	inband_context_only();
 
 	/*
-	 * Slave clocks use the timer queues from their master.
+	 * A slave clock uses the timer queue and timer data from
+	 * the master clock it depends on.
 	 */
-	if (clock->master != clock)
-		return;
-
-	for_each_online_cpu(cpu) {
-		tmb = evl_percpu_timers(clock, cpu);
-		EVL_WARN_ON(CORE, !evl_tqueue_is_empty(&tmb->q));
-		evl_destroy_tqueue(&tmb->q);
+	if (clock->master == clock) {
+		for_each_online_cpu(cpu) {
+			tmb = evl_percpu_timers(clock, cpu);
+			EVL_WARN_ON(CORE, !evl_tqueue_is_empty(&tmb->q));
+			evl_destroy_tqueue(&tmb->q);
+		}
+		free_percpu(clock->timerdata);
 	}
 
-	free_percpu(clock->timerdata);
 	mutex_lock(&clocklist_lock);
 	list_del(&clock->next);
 	mutex_unlock(&clocklist_lock);
