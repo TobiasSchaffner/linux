@@ -152,7 +152,7 @@ void inband_clock_was_set(void)
 	mutex_unlock(&clocklist_lock);
 }
 
-static int init_clock(struct evl_clock *clock, struct evl_clock *master)
+static int publish_clock(struct evl_clock *clock)
 {
 	int ret;
 
@@ -160,8 +160,6 @@ static int init_clock(struct evl_clock *clock, struct evl_clock *master)
 			clock->flags & EVL_CLONE_PUBLIC);
 	if (ret)
 		return ret;
-
-	clock->master = master;
 
 	/*
 	 * Once the device appears in the filesystem, it has to be
@@ -212,6 +210,7 @@ int evl_init_clock(struct evl_clock *clock,
 	}
 #endif
 
+	clock->master = clock;
 	clock->timerdata = alloc_percpu(struct evl_timerbase);
 	if (clock->timerdata == NULL)
 		return -ENOMEM;
@@ -228,9 +227,10 @@ int evl_init_clock(struct evl_clock *clock,
 		evl_init_timerbase(tmb);
 	}
 
-	clock->offset = 0;
+	clock->last_base_offset = 0;
+	clock->get_base_offset = NULL;
 
-	ret = init_clock(clock, clock);
+	ret = publish_clock(clock);
 	if (ret)
 		goto fail;
 
@@ -249,7 +249,8 @@ fail:
 EXPORT_SYMBOL_GPL(evl_init_clock);
 
 int evl_init_slave_clock(struct evl_clock *clock,
-			struct evl_clock *master)
+			struct evl_clock *master,
+			ktime_t (*get_base_offset)(struct evl_clock *clock))
 {
 	inband_context_only();
 
@@ -257,11 +258,12 @@ int evl_init_slave_clock(struct evl_clock *clock,
 #ifdef CONFIG_SMP
 	clock->affinity = master->affinity;
 #endif
+	clock->master = master;
 	clock->timerdata = master->timerdata;
-	clock->offset = evl_read_clock(clock) -	evl_read_clock(master);
-	init_clock(clock, master);
+	clock->last_base_offset = get_base_offset(clock);
+	clock->get_base_offset = get_base_offset;
 
-	return 0;
+	return publish_clock(clock);
 }
 EXPORT_SYMBOL_GPL(evl_init_slave_clock);
 
@@ -1055,6 +1057,11 @@ static void reset_coreclk_gravity(struct evl_clock *clock)
 	set_coreclk_gravity(clock, &gravity);
 }
 
+static ktime_t last_base_offset(struct evl_clock *clock)
+{
+	return clock->last_base_offset;
+}
+
 static ktime_t read_mono_clock(struct evl_clock *clock)
 {
 	return evl_ktime_monotonic();
@@ -1067,12 +1074,12 @@ static ktime_t read_realtime_clock(struct evl_clock *clock)
 
 static void adjust_realtime_clock(struct evl_clock *clock)
 {
-	ktime_t old_offset = clock->offset;
+	ktime_t old_offset = clock->last_base_offset;
 
-	clock->offset = evl_read_clock(clock) -
-		evl_read_clock(&evl_mono_clock);
+	clock->last_base_offset = evl_read_clock(clock) -
+		evl_read_clock(clock->master); /* (realtime - monotonic) offset */
 
-	evl_adjust_timers(clock, clock->offset - old_offset);
+	evl_adjust_timers(clock, clock->last_base_offset - old_offset);
 }
 
 struct evl_clock evl_mono_clock = {
@@ -1115,7 +1122,8 @@ int __init evl_clock_init(void)
 	if (ret)
 		return ret;
 
-	ret = evl_init_slave_clock(&evl_realtime_clock,	&evl_mono_clock);
+	ret = evl_init_slave_clock(&evl_realtime_clock,	&evl_mono_clock,
+				   last_base_offset);
 	if (ret)
 		evl_put_element(&evl_mono_clock.element);
 

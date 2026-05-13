@@ -48,7 +48,8 @@ struct evl_clock {
 	} ops;
 	struct evl_timerbase __percpu *timerdata;
 	struct evl_clock *master;
-	ktime_t offset;	/* from master clock. */
+	ktime_t last_base_offset; /* Saved offset from master clock. */
+	ktime_t (*get_base_offset)(struct evl_clock *clock);
 #ifdef CONFIG_SMP
 	struct cpumask affinity; /* which CPU this clock beats on. */
 #endif
@@ -65,7 +66,8 @@ int evl_init_clock(struct evl_clock *clock,
 		const struct cpumask *affinity);
 
 int evl_init_slave_clock(struct evl_clock *clock,
-			struct evl_clock *master);
+			struct evl_clock *master,
+			ktime_t (*get_base_offset)(struct evl_clock *clock));
 
 void evl_core_tick(struct clock_event_device *dummy);
 
