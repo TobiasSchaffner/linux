@@ -44,7 +44,7 @@ static void tp_schedule_next(struct evl_sched_tp *tp)
 	 * frame immediately.
 	 */
 	for (;;) {
-		now = evl_read_clock(&evl_mono_clock);
+		now = evl_ktime_monotonic();
 		if (ktime_compare(now, t) <= 0)
 			break;
 		t = ktime_add(tp->tf_start, tp->gps->tf_duration);
@@ -264,7 +264,7 @@ static void start_tp_schedule(struct evl_rq *rq)
 		return;
 
 	tp->wnext = 0;
-	tp->tf_start = evl_read_clock(&evl_mono_clock);
+	tp->tf_start = evl_ktime_monotonic();
 	tp_schedule_next(tp);
 }
 

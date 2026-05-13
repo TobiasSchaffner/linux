@@ -402,7 +402,7 @@ static struct evl_thread *quota_pick(struct evl_rq *rq)
 	struct evl_quota_group *otg, *tg;
 	ktime_t now, elapsed;
 
-	now = evl_read_clock(&evl_mono_clock);
+	now = evl_ktime_monotonic();
 	otg = curr->quota;
 	if (otg == NULL)
 		goto pick;
@@ -616,7 +616,7 @@ static void quota_set_limit(struct evl_quota_group *tg,
 	tg->quota_peak_percent = quota_peak_percent;
 
 	if (thread_on_quota(curr, tg)) {
-		now = evl_read_clock(&evl_mono_clock);
+		now = evl_ktime_monotonic();
 
 		elapsed = now - tg->run_start;
 		if (elapsed < tg->run_budget)

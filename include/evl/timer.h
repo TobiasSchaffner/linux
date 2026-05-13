@@ -194,8 +194,8 @@ struct evl_timer {
 	struct list_head adjlink;
 	int status;
 	ktime_t interval;	/* 0 == oneshot */
-	ktime_t start_date;
-	u64 consumed_ticks;	/* advanced by evl_get_timer_overruns() */
+	ktime_t start_date;	/* See evl_tdate(). */
+	u64 consumed_ticks;	/* Advanced by evl_get_timer_overruns() */
 	u64 periodic_ticks;
 #ifdef CONFIG_SMP
 	struct evl_rq *rq;
@@ -207,6 +207,12 @@ struct evl_timer {
 	struct evl_opt_counter fired;
 };
 
+/*
+ * CAUTION: the timeout date is expressed in the timeline of the base
+ * clock the timer is driven by (e.g. mono_clock for mono_raw_clock
+ * and realtime_clock which are both stacked on top of the former for
+ * timeout delivery).
+ */
 #define evl_tdate(__timer)	((__timer)->node.date)
 
 void evl_start_timer(struct evl_timer *timer,
@@ -233,12 +239,6 @@ static inline void evl_stop_timer(struct evl_timer *timer)
 
 void evl_destroy_timer(struct evl_timer *timer);
 
-static inline ktime_t evl_abs_timeout(struct evl_timer *timer,
-				ktime_t delta)
-{
-	return ktime_add(evl_read_clock(timer->clock), delta);
-}
-
 #ifdef CONFIG_SMP
 static inline struct evl_rq *evl_get_timer_rq(struct evl_timer *timer)
 {
@@ -248,9 +248,11 @@ static inline struct evl_rq *evl_get_timer_rq(struct evl_timer *timer)
 #define evl_get_timer_rq(t)	this_evl_rq()
 #endif /* !CONFIG_SMP */
 
-/*
- * timer base locked so that ->clock does not change under our
- * feet.
+/**
+ * evl_get_timer_gravity - Fetch the timer gravity value.
+ *
+ * This value depends on the tick delivery context.  The timer base is
+ * locked so that ->clock does not change under our feet.
  */
 static inline unsigned long evl_get_timer_gravity(struct evl_timer *timer)
 {
@@ -265,7 +267,28 @@ static inline unsigned long evl_get_timer_gravity(struct evl_timer *timer)
 	return clock->gravity.irq;
 }
 
-/* timer base locked. */
+/**
+ * evl_abs_timeout - Calculate now() + delay as a clock event date.
+ *
+ * CAUTION: this routine returns a timestamp in the timeline of the
+ * base clock driving the clock event device, which may be distinct
+ * from @clock.
+ */
+static inline ktime_t evl_abs_timeout(struct evl_timer *timer,
+				ktime_t delta)
+{
+	return ktime_add(evl_read_base_clock(timer->clock), delta);
+}
+
+/**
+ * evl_update_timer_date - Increment timer date to the next timeout.
+ *
+ * CAUTION: this routine computes a timestamp in the timeline of the
+ * base clock driving the clock event device, which may be distinct
+ * from @clock.
+ *
+ * The timerbase is locked on entry.
+ */
 static inline void evl_update_timer_date(struct evl_timer *timer)
 {
 	evl_tdate(timer) = ktime_add_ns(timer->start_date,
@@ -273,6 +296,13 @@ static inline void evl_update_timer_date(struct evl_timer *timer)
 			- evl_get_timer_gravity(timer));
 }
 
+/**
+ * evl_get_timer_next_date - Get next timeout date of timer.
+ *
+ * CAUTION: this routine computes a timestamp in the timeline of the
+ * base clock driving the clock event device, which may be distinct
+ * from @clock.
+ */
 static inline
 ktime_t evl_get_timer_next_date(struct evl_timer *timer)
 {
@@ -338,12 +368,13 @@ const char *evl_get_timer_name(struct evl_timer *timer)
 
 bool evl_timer_deactivate(struct evl_timer *timer);
 
-/* timer base locked. */
-static inline ktime_t evl_get_timer_expiry(struct evl_timer *timer)
+/*
+ * Retrieve the ideal expiry date without anticipation (no gravity),
+ * in the timeline of the _master_ clock of the timer clock.
+ */
+static inline ktime_t evl_get_timer_expiry(struct evl_timer *timer) /* timer base locked. */
 {
-	/* Ideal expiry date without anticipation (no gravity) */
-	return ktime_add(evl_tdate(timer),
-			evl_get_timer_gravity(timer));
+	return ktime_add(evl_tdate(timer), evl_get_timer_gravity(timer));
 }
 
 ktime_t evl_get_timer_date(struct evl_timer *timer);

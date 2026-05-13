@@ -58,7 +58,7 @@ struct evl_account {
  */
 static inline ktime_t evl_get_timestamp(void)
 {
-	return evl_read_clock(&evl_mono_clock);
+	return evl_ktime_monotonic();
 }
 
 static inline ktime_t evl_get_account_total(struct evl_account *account)
