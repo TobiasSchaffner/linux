@@ -58,7 +58,7 @@ static void adjust_timer(struct evl_clock *clock,
 
 	timer->start_date = ktime_sub(timer->start_date, delta);
 	period = timer->interval;
-	diff = ktime_sub(evl_read_clock(clock), evl_get_timer_expiry(timer));
+	diff = ktime_sub(evl_read_base_clock(clock), evl_get_timer_expiry(timer));
 
 	if (diff >= period) {
 		/*
@@ -1062,6 +1062,11 @@ static ktime_t last_base_offset(struct evl_clock *clock)
 	return clock->last_base_offset;
 }
 
+static ktime_t get_base_offset(struct evl_clock *clock)
+{
+	return evl_read_clock(clock) - evl_read_base_clock(clock);
+}
+
 static ktime_t read_mono_clock(struct evl_clock *clock)
 {
 	return evl_ktime_monotonic();
@@ -1076,8 +1081,8 @@ static void adjust_realtime_clock(struct evl_clock *clock)
 {
 	ktime_t old_offset = clock->last_base_offset;
 
-	clock->last_base_offset = evl_read_clock(clock) -
-		evl_read_clock(clock->master); /* (realtime - monotonic) offset */
+	/* base_offset = realtime.now() - monotonic.now() */
+	clock->last_base_offset = get_base_offset(clock);
 
 	evl_adjust_timers(clock, clock->last_base_offset - old_offset);
 }
