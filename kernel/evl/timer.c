@@ -99,6 +99,7 @@ void evl_start_timer(struct evl_timer *timer,
 		ktime_t value, ktime_t interval)
 {
 	struct evl_timerbase *base;
+	struct evl_clock *clock;
 	struct evl_tqueue *tq;
 	ktime_t date, gravity;
 	unsigned long flags;
@@ -113,7 +114,10 @@ void evl_start_timer(struct evl_timer *timer,
 
 	timer->status &= ~(EVL_TIMER_FIRED | EVL_TIMER_PERIODIC);
 
-	date = ktime_sub(value, timer->clock->offset);
+	date = value;
+	clock = timer->clock;
+	if (clock->get_base_offset)
+		date = ktime_sub(date, clock->get_base_offset(clock));
 
 	/*
 	 * To cope with the basic system latency, we apply a clock
