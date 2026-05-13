@@ -133,7 +133,7 @@ void evl_start_timer(struct evl_timer *timer,
 	timer->interval = EVL_INFINITE;
 	if (!timeout_infinite(interval)) {
 		timer->interval = interval;
-		timer->start_date = value;
+		timer->start_date = date;
 		timer->consumed_ticks = 0;
 		timer->periodic_ticks = 0;
 		timer->status |= EVL_TIMER_PERIODIC;
@@ -222,7 +222,7 @@ ktime_t __evl_get_timer_delta(struct evl_timer *timer)
 	base = lock_timer_base(timer, &flags);
 	expiry = evl_get_timer_expiry(timer);
 	unlock_timer_base(base, flags);
-	now = evl_read_clock(timer->clock);
+	now = evl_read_base_clock(timer->clock);
 	if (expiry <= now)
 		return ktime_set(0, 1);  /* Will elapse shortly. */
 
@@ -396,7 +396,7 @@ unsigned long evl_get_timer_overruns(struct evl_timer *timer)
 		return 0;
 
 	base = lock_timer_base(timer, &flags);
-	now = evl_read_clock(timer->clock);
+	now = evl_read_base_clock(timer->clock);
 
 	/*
 	 * Measure the lateness with respect to the expected expiry

@@ -83,18 +83,37 @@ static inline ktime_t evl_ktime_monotonic(void)
 	return ktime_get_mono_fast_ns();
 }
 
+/*
+ * evl_read_clock -	Read the clock value.
+ *
+ * Return the current value of @clock.
+ */
 static inline ktime_t evl_read_clock(struct evl_clock *clock)
 {
 	/*
-	 * In many occasions on the fast path, evl_read_clock() is
-	 * explicitly called with &evl_mono_clock which resolves as
-	 * a constant. Skip the clock trampoline handler, branching
-	 * immediately to the final code for such clock.
+	 * On most occasions, the following expression is comparing to
+	 * &evl_mono_clock, for which the optimizer will issue a
+	 * call to evl_ktime_monotonic() unconditionally.
 	 */
 	if (clock == &evl_mono_clock)
 		return evl_ktime_monotonic();
 
 	return clock->ops.read(clock);
+}
+
+/*
+ * evl_read_base_clock -	Read the base clock value.
+ *
+ * Return the current value of the master/base clock driving
+ * @clock. If @clock is a base clock, this routine is equivalent to
+ * calling evl_read_clock(@clock).
+ */
+static inline ktime_t evl_read_base_clock(struct evl_clock *clock)
+{
+	if (clock == &evl_mono_clock) /* See evl_read_clock(). */
+		return evl_ktime_monotonic();
+
+	return evl_read_clock(clock->master);
 }
 
 static inline int

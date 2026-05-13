@@ -876,7 +876,7 @@ EXPORT_SYMBOL_GPL(evl_sleep_until);
 
 int evl_sleep(ktime_t delay)
 {
-	ktime_t end = ktime_add(evl_read_clock(&evl_mono_clock), delay);
+	ktime_t end = ktime_add(evl_ktime_monotonic(), delay);
 	return evl_sleep_until(end);
 }
 EXPORT_SYMBOL_GPL(evl_sleep);
@@ -933,7 +933,7 @@ int evl_wait_period(unsigned long *overruns_r)
 	trace_evl_thread_wait_period(curr);
 
 	clock = curr->ptimer.clock;
-	now = evl_read_clock(clock);
+	now = evl_read_base_clock(clock);
 	if (likely(now < evl_get_timer_next_date(&curr->ptimer))) {
 		evl_sleep_on(EVL_INFINITE, EVL_REL, clock, NULL); /* EVL_T_WAIT */
 		ret = evl_sleep_schedule();
