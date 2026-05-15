@@ -192,11 +192,6 @@ static inline struct evl_rq *this_evl_rq(void)
 	return raw_cpu_ptr(&evl_runqueues);
 }
 
-static inline struct evl_thread *this_evl_rq_thread(void)
-{
-	return this_evl_rq()->curr;
-}
-
 /* Test resched flag of given rq. */
 static inline int evl_need_resched(struct evl_rq *rq)
 {
@@ -390,7 +385,7 @@ static inline bool evl_in_irq(void)
 
 static inline bool evl_is_inband(void)
 {
-	return !!(this_evl_rq_thread()->state & EVL_T_ROOT);
+	return !!(this_evl_rq()->curr->state & EVL_T_ROOT);
 }
 
 static inline bool evl_cannot_block(void)
