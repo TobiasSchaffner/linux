@@ -1270,12 +1270,12 @@ void evl_kick_thread(struct evl_thread *thread, int info)
 	/*
 	 * We may send mayday signals to userland threads only.
 	 * However, no need to run a mayday trap if the current thread
-	 * kicks itself out of OOB context: it will switch to in-band
-	 * context on its way back to userland via the current syscall
-	 * epilogue. Otherwise, we want that thread to enter the
-	 * mayday trap asap.
+	 * kicks itself out of out-of-band context: it will switch to
+	 * in-band context on its way back to userland via the current
+	 * syscall epilogue. Otherwise, we want that thread to enter
+	 * the mayday trap asap.
 	 */
-	if ((thread->state & EVL_T_USER) && thread != this_evl_rq_thread())
+	if ((thread->state & EVL_T_USER) && rq->curr != thread)
 		dovetail_send_mayday(p);
 
 	/*
