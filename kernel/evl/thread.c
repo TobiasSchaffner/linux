@@ -352,7 +352,7 @@ static void do_cleanup_current(struct evl_thread *curr)
 	rq = evl_get_thread_rq(curr, flags);
 
 	if (curr->state & EVL_T_READY) {
-		EVL_WARN_ON(CORE, (curr->state & EVL_THREAD_BLOCK_BITS));
+		EVL_WARN_ON(CORE, (curr->state & EVL_THREAD_BLOCK_MASK));
 		evl_dequeue_thread(curr);
 		curr->state &= ~EVL_T_READY;
 	}
@@ -433,7 +433,7 @@ static int map_kthread_self(struct evl_kthread *kthread)
 	dovetail_init_altsched(&curr->altsched);
 	set_oob_threadinfo(curr);
 	dovetail_start_altsched();
-	evl_release_thread(curr, EVL_T_DORMANT, 0);
+	evl_release_thread(curr, EVL_T_DORMANT);
 
 	trace_evl_thread_map(curr);
 
@@ -445,12 +445,12 @@ static int map_kthread_self(struct evl_kthread *kthread)
 	kthread->status = evl_switch_oob();
 
 	/*
-	 * We are now running OOB, therefore __evl_run_kthread() can't
-	 * start us before we enter the dormant state because
-	 * irq_work_queue() schedules the in-band wakeup request on
-	 * the current CPU. If we fail switching to OOB context,
-	 * kthread->status tells __evl_run_kthread() not to start but
-	 * cancel us instead.
+	 * We are now running out-of-band, therefore
+	 * __evl_run_kthread() can't start us before we enter the
+	 * dormant state because irq_work_queue() schedules the
+	 * in-band wakeup request on the current CPU. If we fail
+	 * switching to the out-of-band stage, kthread->status tells
+	 * __evl_run_kthread() not to start but cancel us instead.
 	 */
 	init_irq_work(&kthread->irq_work, wakeup_kthread_parent);
 	irq_work_queue(&kthread->irq_work);
@@ -490,6 +490,7 @@ static int kthread_trampoline(void *arg)
 
 	ret = map_kthread_self(kthread);
 	if (!ret) {
+		evl_test_cancel();
 		trace_evl_kthread_entry(curr);
 		kthread->threadfn(kthread->arg);
 	}
@@ -528,7 +529,7 @@ int __evl_run_kthread(struct evl_kthread *kthread, int clone_flags)
 	if (kthread->status)
 		return kthread->status;
 
-	evl_release_thread(thread, EVL_T_DORMANT, 0);
+	evl_release_thread(thread, EVL_T_DORMANT);
 	evl_schedule();
 
 	return 0;
@@ -551,8 +552,7 @@ void evl_sleep_on_locked(ktime_t timeout, enum evl_tmode timeout_mode,
 {
 	struct evl_thread *curr = evl_current();
 	struct evl_rq *rq = curr->rq;
-	unsigned long oldstate;
-	int oldinfo;
+	u32 oldstate, oldinfo;
 
 	/* Sleeping while preemption is disabled is a bug. */
 	EVL_WARN_ON(CORE, evl_preempt_count() != 0);
@@ -566,13 +566,14 @@ void evl_sleep_on_locked(ktime_t timeout, enum evl_tmode timeout_mode,
 	curr->info &= ~EVL_THREAD_INFO_MASK;
 
 	/*
-	 * If a request to switch to in-band context is pending
-	 * (EVL_T_KICKED) for the caller, raise EVL_T_BREAK then
-	 * return immediately.
+	 * If a request to switch in-band is pending (EVL_T_KICKED)
+	 * for the caller, raise EVL_T_BREAK then return immediately,
+	 * expecting evl_exit_to_user() to switch us in-band on the
+	 * syscall return path.
 	 */
-	if (oldinfo & EVL_T_KICKED && !(oldstate & EVL_THREAD_BLOCK_BITS)) {
+	if (oldinfo & EVL_T_KICKED) {
 		curr->info |= EVL_T_BREAK;
-		return;
+		goto dequeue;
 	}
 
 	/*
@@ -598,17 +599,17 @@ void evl_sleep_on_locked(ktime_t timeout, enum evl_tmode timeout_mode,
 		curr->state |= EVL_T_WAIT;
 	}
 
-	if (oldstate & EVL_T_READY) {
-		evl_dequeue_thread(curr);
-		curr->state &= ~EVL_T_READY;
-	}
-
 	if (wchan) {
 		curr->wchan = wchan;
 		curr->state |= EVL_T_PEND;
 	}
 
 	evl_set_resched(rq);
+dequeue:
+	if (oldstate & EVL_T_READY) {
+		evl_dequeue_thread(curr);
+		curr->state &= ~EVL_T_READY;
+	}
 }
 
 void evl_sleep_on(ktime_t timeout, enum evl_tmode timeout_mode,
@@ -631,7 +632,7 @@ static void evl_wakeup_thread_locked(struct evl_thread *thread,
 				int mask, int info)
 {
 	struct evl_rq *rq = thread->rq;
-	unsigned long oldstate;
+	u32 oldstate;
 
 	assert_thread_pinned(thread);
 
@@ -654,9 +655,18 @@ static void evl_wakeup_thread_locked(struct evl_thread *thread,
 		if (mask & EVL_T_PEND & oldstate)
 			thread->wchan = NULL;
 
+		/*
+		 * The information bits are set only if we are
+		 * actually lifting a blocking condition. See
+		 * rationale in evl_unblock_thread().
+		 */
 		thread->info |= info;
 
-		if (!(thread->state & EVL_THREAD_BLOCK_BITS)) {
+		/*
+		 * A kicked thread which is being unblocked is already
+		 * linked to the runqueue.
+		 */
+		if (!(thread->state & (EVL_THREAD_BLOCK_MASK|EVL_T_READY))) {
 			evl_enqueue_thread(thread);
 			thread->state |= EVL_T_READY;
 			evl_set_resched(rq);
@@ -678,12 +688,11 @@ void evl_wakeup_thread(struct evl_thread *thread, int mask, int info)
 
 void evl_hold_thread(struct evl_thread *thread, int mask)
 {
-	unsigned long oldstate, flags;
+	u32 oldstate, oldinfo;
+	unsigned long flags;
 	struct evl_rq *rq;
-	int oldinfo;
 
-	if (EVL_WARN_ON(CORE,
-		mask & ~(EVL_T_SUSP|EVL_T_HALT|EVL_T_DORMANT|EVL_T_FREEZE)))
+	if (EVL_WARN_ON(CORE, mask & ~EVL_THREAD_HOLD_MASK))
 		return;
 
 	trace_evl_hold_thread(thread, mask);
@@ -695,13 +704,24 @@ void evl_hold_thread(struct evl_thread *thread, int mask)
 	if (thread == rq->curr)
 		thread->info &= ~EVL_THREAD_INFO_MASK;
 
+	if ((oldstate & mask) == mask) /* Nothing to do. */
+		goto out;
+
+	thread->state |= mask;
+
 	/*
-	 * If a request to switch to in-band context is pending for
-	 * the target thread (EVL_T_KICKED), raise EVL_T_BREAK for it then
-	 * return immediately.
+	 * If we are adding a lazily enforced suspend condition and a
+	 * request to switch in-band is pending for the target thread
+	 * (EVL_T_KICKED), make sure to link it to the runqueue until
+	 * that switch happens. Note: the rescheduling bit was already
+	 * set for the target runqueue along with EVL_T_KICKED.
 	 */
-	if (oldinfo & EVL_T_KICKED && !(oldstate & EVL_THREAD_BLOCK_BITS)) {
-		thread->info |= EVL_T_BREAK;
+	if (oldinfo & EVL_T_KICKED) {
+		if (mask & EVL_THREAD_LAZY_MASK &&
+		    !(oldstate & EVL_T_READY)) {
+			evl_enqueue_thread(thread);
+			thread->state |= EVL_T_READY;
+		}
 		goto out;
 	}
 
@@ -710,54 +730,58 @@ void evl_hold_thread(struct evl_thread *thread, int mask)
 		thread->state &= ~EVL_T_READY;
 	}
 
-	thread->state |= mask;
-
 	/*
-	 * If the thread is current on its CPU, we need to raise
-	 * RQ_SCHED on the target runqueue.
-	 *
-	 * If the target thread runs in-band in userland on a remote
-	 * CPU, request it to call us back next time it transitions
-	 * from kernel to user mode.
+	 * If the target thread is busy running out-of-band on its
+	 * CPU, we only need to raise RQ_SCHED on the target runqueue,
+	 * expecting the caller to reschedule. Otherwise, if it is
+	 * running in-band in userland, request it to call back the
+	 * core next time it transitions from kernel to user mode.
 	 */
 	if (likely(thread == rq->curr))
 		evl_set_resched(rq);
-	else if (((oldstate & (EVL_THREAD_BLOCK_BITS|EVL_T_USER)) == (EVL_T_INBAND|EVL_T_USER)))
+	else if (((oldstate & (EVL_THREAD_BLOCK_MASK|EVL_T_USER)) ==
+		  (EVL_T_INBAND|EVL_T_USER)))
 		dovetail_request_ucall(thread->altsched.task);
 out:
 	evl_put_thread_rq(thread, rq, flags);
 }
 
 /* thread->lock + thread->rq->lock held, irqs off */
-static void evl_release_thread_locked(struct evl_thread *thread,
-				int mask, int info)
+static void evl_release_thread_locked(struct evl_thread *thread, int mask)
 {
 	struct evl_rq *rq = thread->rq;
-	unsigned long oldstate;
+	u32 oldstate;
 
 	assert_thread_pinned(thread);
 
 	if (EVL_WARN_ON(CORE,
-		mask & ~(EVL_T_SUSP|EVL_T_HALT|
-			EVL_T_INBAND|EVL_T_DORMANT|EVL_T_FREEZE)))
+		mask & ~(EVL_THREAD_HOLD_MASK|EVL_T_INBAND)))
 		return;
 
-	trace_evl_release_thread(thread, mask, info);
+	trace_evl_release_thread(thread, mask);
 
 	oldstate = thread->state;
 	if (oldstate & mask) {
 		thread->state &= ~mask;
-		thread->info |= info;
 
-		if (thread->state & EVL_THREAD_BLOCK_BITS)
+		if (thread->state & EVL_THREAD_BLOCK_MASK)
 			return;
 
-		if (unlikely((oldstate & mask) & (EVL_T_HALT|EVL_T_FREEZE))) {
+		/*
+		 * A kicked thread which is being released may be
+		 * linked to the runqueue. Fix it up before requeuing.
+		 */
+		if (thread->info & EVL_T_READY) {
+			EVL_WARN_ON(CORE, !(thread->info & EVL_T_KICKED));
+			evl_dequeue_thread(thread);
+		}
+
+		if (unlikely((oldstate & mask) & EVL_T_FREEZE)) {
 			/* Requeue at head of priority group. */
 			evl_requeue_thread(thread);
 			goto ready;
 		}
-	} else if (oldstate & EVL_THREAD_BLOCK_BITS) {
+	} else if (oldstate & EVL_THREAD_BLOCK_MASK) {
 		return;
 	} else if (oldstate & EVL_T_READY) {
 		/* Ends up in round-robin (group rotation). */
@@ -773,13 +797,13 @@ ready:
 		evl_opt_counter_inc(&thread->stat.rwa);
 }
 
-void evl_release_thread(struct evl_thread *thread, int mask, int info)
+void evl_release_thread(struct evl_thread *thread, int mask)
 {
 	unsigned long flags;
 	struct evl_rq *rq;
 
 	rq = evl_get_thread_rq(thread, flags);
-	evl_release_thread_locked(thread, mask, info);
+	evl_release_thread_locked(thread, mask);
 	evl_put_thread_rq(thread, rq, flags);
 }
 
@@ -976,16 +1000,15 @@ void evl_cancel_thread(struct evl_thread *thread)
 	thread->info |= EVL_T_CANCELD;
 
 	/*
-	 * If @thread is not started yet, fake a start request,
-	 * raising the kicked condition bit to make sure it reaches
-	 * evl_test_cancel() on its wakeup path.
+	 * If @thread is not started yet, fake a start request.
 	 *
-	 * NOTE: if EVL_T_DORMANT and !EVL_T_INBAND, then some not-yet-mapped
-	 * emerging thread is self-cancelling due to an early error in
-	 * the prep work.
+	 * Note: if EVL_T_DORMANT and !EVL_T_INBAND, then some
+	 * not-yet-mapped emerging thread is self-cancelling due to an
+	 * early error in the prep work.
 	 */
-	if ((thread->state & (EVL_T_DORMANT|EVL_T_INBAND)) == (EVL_T_DORMANT|EVL_T_INBAND)) {
-		evl_release_thread_locked(thread, EVL_T_DORMANT, EVL_T_KICKED);
+	if ((thread->state & (EVL_T_DORMANT|EVL_T_INBAND)) ==
+	    (EVL_T_DORMANT|EVL_T_INBAND)) {
+		evl_release_thread_locked(thread, EVL_T_DORMANT);
 		evl_put_thread_rq(thread, rq, flags);
 		goto out;
 	}
@@ -1015,7 +1038,7 @@ check_self_cancel:
 		evl_demote_thread(thread);
 		evl_signal_thread(thread, SIGTERM, 0);
 	} else {
-		evl_kick_thread(thread, 0);
+		evl_kick_thread(thread);
 	}
 out:
 	evl_schedule();
@@ -1144,7 +1167,8 @@ int evl_set_thread_schedparam_locked(struct evl_thread *thread,
 
 	thread->info |= EVL_T_SCHEDP;
 	/* Ask the target thread to call back if in-band. */
-	if ((thread->state & (EVL_T_INBAND|EVL_T_USER)) == (EVL_T_INBAND|EVL_T_USER))
+	if ((thread->state & (EVL_T_INBAND|EVL_T_USER)) ==
+		(EVL_T_INBAND|EVL_T_USER))
 		dovetail_request_ucall(thread->altsched.task);
 
 	return ret;
@@ -1224,11 +1248,27 @@ void evl_unblock_thread(struct evl_thread *thread, int reason)
 	 * evl_wakeup_thread() guarantees this by updating the info
 	 * bits only if any of the mask bits is set.
 	 */
-	evl_wakeup_thread(thread, EVL_T_DELAY|EVL_T_PEND|EVL_T_WAIT, reason|EVL_T_BREAK);
+	evl_wakeup_thread(thread, EVL_THREAD_WAIT_MASK, reason|EVL_T_BREAK);
 }
 EXPORT_SYMBOL_GPL(evl_unblock_thread);
 
-void evl_kick_thread(struct evl_thread *thread, int info)
+/**
+ *	evl_kick_thread - mark a thread for temporary stage demotion
+ *	@thread:	thread to demote to the in-band stage
+ *
+ *	Schedules a call to evl_switch_inband() for @thread at the
+ *	first opportunity, usually on the syscall return path via
+ *	evl_exit_to_user(). This demotion is temporary, in that
+ *	@thread is allowed to switch back to the out-of-band stage
+ *	anytime after the first stage migration.
+ *
+ *	A kicked thread stays runnable until it crosses the stage
+ * 	migration point. Until then, it cannot pend on any resource
+ * 	(EVL_T_BREAK), but forcible suspension flags can accumulate
+ * 	and linger into its state mask. Suspension will apply once the
+ * 	thread migrates back to the out-of-band stage.
+ */
+void evl_kick_thread(struct evl_thread *thread)
 {
 	struct task_struct *p = thread->altsched.task;
 	unsigned long flags;
@@ -1236,85 +1276,63 @@ void evl_kick_thread(struct evl_thread *thread, int info)
 
 	rq = evl_get_thread_rq(thread, flags);
 
-	/*
-	 * CAUTION: we must NOT raise EVL_T_BREAK when clearing a forcible
-	 * block state, such as EVL_T_SUSP, EVL_T_HALT. The caller of
-	 * evl_sleep_on() we unblock shall proceed as for a normal
-	 * return, until it traverses a cancellation point if
-	 * EVL_T_CANCELD was raised earlier, or calls evl_sleep_on() again
-	 * which will detect EVL_T_KICKED and act accordingly.
-	 *
-	 * Rationale: callers of evl_sleep_on() may assume that
-	 * receiving EVL_T_BREAK implicitly means that the awaited event
-	 * was NOT received in the meantime. Therefore, in case only
-	 * EVL_T_SUSP remains set for the thread on entry to
-	 * evl_kick_thread(), after EVL_T_PEND was lifted earlier when the
-	 * wait went to successful completion (i.e. no timeout), then
-	 * we want the kicked thread to know that it did receive the
-	 * requested resource, not finding EVL_T_BREAK in its state word.
-	 *
-	 * Callers of evl_sleep_on() may inquire for EVL_T_KICKED
-	 * locally to detect forcible unblocks if they should act upon
-	 * this case specifically.
-	 */
-	evl_release_thread_locked(thread, EVL_T_SUSP|EVL_T_HALT|EVL_T_FREEZE,
-				EVL_T_KICKED);
+	if (thread->info & EVL_T_KICKED)
+		goto out;
 
 	if (thread->state & EVL_T_INBAND)
 		goto out;
 
 	/* See comment in evl_unblock_thread(). */
-	evl_wakeup_thread_locked(thread, EVL_T_DELAY|EVL_T_PEND|EVL_T_WAIT,
-				EVL_T_KICKED|EVL_T_BREAK);
+	evl_wakeup_thread_locked(thread, EVL_THREAD_WAIT_MASK, EVL_T_BREAK);
 
 	/*
-	 * We may send mayday signals to userland threads only.
-	 * However, no need to run a mayday trap if the current thread
-	 * kicks itself out of out-of-band context: it will switch to
-	 * in-band context on its way back to userland via the current
-	 * syscall epilogue. Otherwise, we want that thread to enter
-	 * the mayday trap asap.
+	 * We may send mayday notices to userland threads only.  No
+	 * need to run a mayday trap if the current thread kicks
+	 * itself out of out-of-band context: it will switch to the
+	 * in-band stage on its way back to userland via the current
+	 * syscall epilogue.
 	 */
 	if ((thread->state & EVL_T_USER) && rq->curr != thread)
 		dovetail_send_mayday(p);
 
 	/*
-	 * Tricky cases:
+	 * A thread which was ready on entry to this routine may be
+	 * currently prevented from running by the scheduling policy
+	 * it undergoes. For instance, a policy enforcing a runtime
+	 * budget may keep a thread with no budget out of its
+	 * runqueue. evl_force_thread() tells the policy handler to
+	 * override the policy rules in order to keep the thread
+	 * runnable.
 	 *
-	 * - a thread which was ready on entry wasn't actually
-	 * running, but nevertheless waits for the CPU in OOB context,
-	 * so we have to make sure that it will be notified of the
-	 * pending break condition as soon as it enters a blocking EVL
-	 * call.
-	 *
-	 * - a ready/readied thread on exit may be prevented from
-	 * running by the scheduling policy module it belongs
- 	 * to. Typically, policies enforcing a runtime budget do not
-	 * block threads with no budget, but rather keep them out of
-	 * their run queue, so that ->sched_pick() won't elect
-	 * them. We tell the policy handler about the fact that we do
-	 * want such thread to run until it switches to in-band
-	 * context, whatever this entails internally for the
-	 * implementation.
-	 *
-	 * - if the thread is running on the CPU, raising EVL_T_KICKED is
-	 * enough to force a switch to in-band context on the next
-	 * return to user.
+	 * At any point in time, a kicked thread should be either
+	 * running or linked to a runqueue if a forcible suspend
+	 * condition from the lazy set is pending.
 	 */
-	thread->info |= EVL_T_KICKED;
-
 	if (thread->state & EVL_T_READY) {
 		evl_force_thread(thread);
-		evl_set_resched(thread->rq);
+	} else if (thread->state & EVL_THREAD_LAZY_MASK) {
+		evl_enqueue_thread(thread);
+		thread->state |= EVL_T_READY;
 	}
 
-	if (info)
-		thread->info |= info;
+	thread->info |= EVL_T_KICKED;
+
+	evl_set_resched(thread->rq);
 out:
 	evl_put_thread_rq(thread, rq, flags);
 }
 EXPORT_SYMBOL_GPL(evl_kick_thread);
 
+/**
+ *	evl_demote_thread - permanently force a thread to the in-band stage
+ *	@thread:	thread to demote to the in-band stage
+ *
+ *	
+ * 	
+ * 	
+ * 	
+ * 	The caller must call evl_schedule() to complete the operation.
+ */
 void evl_demote_thread(struct evl_thread *thread)
 {
 	struct evl_sched_class *sched_class;
@@ -1337,8 +1355,15 @@ void evl_demote_thread(struct evl_thread *thread)
 
 	evl_put_thread_rq_check(thread, rq, flags);
 
-	/* Then unblock it from any wait state. */
-	evl_kick_thread(thread, 0);
+	/*
+	 * Then switch it to runnable state until it reaches the
+	 * migration point. Since evl_demote_thread() is expected to
+	 * remove any condition which may keep the target thread on
+	 * the out-of-band stage, we release the latter from any
+	 * lingering forcible suspend condition.
+	 */
+	evl_release_thread(thread, EVL_THREAD_LAZY_MASK);
+	evl_kick_thread(thread);
 }
 EXPORT_SYMBOL_GPL(evl_demote_thread);
 
@@ -1576,7 +1601,7 @@ static void thaw_siblings(struct evl_thread *curr)
 
 	for_each_evl_sibling_thread(sibling, p) {
 		if (sibling != curr)
-			evl_release_thread(sibling, EVL_T_FREEZE, 0);
+			evl_release_thread(sibling, EVL_T_FREEZE);
 	}
 
 	raw_spin_unlock_irqrestore(&p->lock, flags);
@@ -1735,10 +1760,10 @@ static void handle_migration_event(struct dovetail_migration_data *d)
 	 * expedite such transition for user threads by requesting
 	 * them to call back asap via the RETUSER event.
 	 */
-	if (thread->state & (EVL_THREAD_BLOCK_BITS & ~EVL_T_INBAND)) {
+	if (thread->state & (EVL_THREAD_BLOCK_MASK & ~EVL_T_INBAND)) {
 		if (thread->state & EVL_T_USER)
 			dovetail_request_ucall(thread->altsched.task);
-		evl_kick_thread(thread, 0);
+		evl_kick_thread(thread);
 		evl_schedule();
 	}
 #endif
@@ -1753,15 +1778,17 @@ static void handle_sigwake_event(struct task_struct *p)
 		return;
 
 	/*
-	 * A thread running on the oob stage may not be picked by the
-	 * in-band scheduler as it bears the _TLF_OFFSTAGE flag. We
-	 * need to force that thread to switch to in-band context,
-	 * which will clear that flag.  Kicking a thread also lifts
-	 * the ptrace frozen state (EVL_T_FREEZE) since the current
-	 * thread would have to handle SIGSTOP/SIGTRAP from the
-	 * in-band stage.
+	 * A thread running on the out-of-band stage may not be picked
+	 * by the in-band scheduler as it bears the _TLF_OFFSTAGE
+	 * flag. We need to force that thread to switch to in-band
+	 * context, which will clear that flag.
+	 *
+	 * Our ptrace handling logic expects the EVL_T_FREEZE
+	 * condition to be lifted as a result of receiving
+	 * SIGSTOP/SIGTRAP, so we do this manually here.
 	 */
-	evl_kick_thread(thread, 0);
+	evl_release_thread(thread, EVL_T_FREEZE);
+	evl_kick_thread(thread);
 	evl_schedule();
 }
 
@@ -2086,7 +2113,7 @@ static int update_mode(struct evl_thread *thread, __u32 mask,
 
 	trace_evl_thread_update_mode(thread, mask, set);
 
-	if (mask & ~EVL_THREAD_MODE_BITS)
+	if (mask & ~EVL_THREAD_MODE_MASK)
 		return -EINVAL;
 
 	if (set) {
@@ -2100,7 +2127,7 @@ static int update_mode(struct evl_thread *thread, __u32 mask,
 
 	rq = evl_get_thread_rq(thread, flags);
 
-	*oldmask = thread->state & EVL_THREAD_MODE_BITS;
+	*oldmask = thread->state & EVL_THREAD_MODE_MASK;
 
 	if (likely(mask)) {
 		if (set) {
@@ -2205,7 +2232,7 @@ static long __thread_oob_ioctl(struct evl_thread *thread, unsigned int cmd,
 		ret = evl_signal_monitor_targeted(thread, eventfun);
 		break;
 	case EVL_THRIOC_YIELD:
-		evl_release_thread(curr, 0, 0);
+		evl_release_thread(curr, 0);
 		evl_schedule();
 		ret = 0;
 		break;
@@ -2420,7 +2447,7 @@ static int map_uthread_self(struct evl_thread *thread)
 	 * enqueue it now.
 	 */
 	enqueue_new_thread(thread);
-	evl_release_thread(thread, EVL_T_DORMANT, 0);
+	evl_release_thread(thread, EVL_T_DORMANT);
 	evl_sync_sstate(thread);
 
 	return 0;
