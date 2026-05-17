@@ -431,8 +431,8 @@ static inline bool evl_cannot_block(void)
 
 /*
  * Unpin the thread, checking for a pending requeue operation in a
- * wait channel. See comment in drop_boosters() for details about the
- * requirements to achieve correctness in this case.
+ * wait channel. See comment in evl_set_thread_schedparam_locked() for
+ * details about the requirements to achieve correctness in this case.
  *
  * CAUTION: we should hold NO lock on entry to this macro, at the very
  * least we must not hold any wchan or thread lock, otherwise an ABBA
@@ -501,7 +501,7 @@ static inline void evl_sched_yield(struct evl_rq *rq)
 	 * enabled.
 	 */
 	if (sched_class->sched_yield &&
-	    !(curr->state & EVL_THREAD_BLOCK_BITS) &&
+	    !(curr->state & EVL_THREAD_BLOCK_MASK) &&
 	    sched_class == curr->base_class &&
 	    evl_preempt_count() == 0)
 		sched_class->sched_yield(curr);

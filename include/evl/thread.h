@@ -27,15 +27,19 @@
 #include <uapi/evl/signal-abi.h>
 #include <asm/evl/thread.h>
 
-/* All bits which may cause an EVL thread to block in oob context. */
-#define EVL_THREAD_BLOCK_BITS	(EVL_T_SUSP|EVL_T_PEND|EVL_T_DELAY|	\
-				EVL_T_WAIT|EVL_T_DORMANT|		\
-				EVL_T_INBAND|EVL_T_HALT|EVL_T_FREEZE)
-/* Information bits an EVL thread may receive from a blocking op. */
+/* Flags denoting a wait state. */
+#define EVL_THREAD_WAIT_MASK	(EVL_T_PEND|EVL_T_DELAY|EVL_T_WAIT)
+/* Flags denoting a forcible suspend conditions with lazy handling. */
+#define EVL_THREAD_LAZY_MASK	 EVL_T_SUSP
+/* Flags denoting all forcible suspend conditions. */
+#define EVL_THREAD_HOLD_MASK	(EVL_T_DORMANT|EVL_T_FREEZE|EVL_THREAD_LAZY_MASK)
+/* Combined flags denoting a blocked state (->state set). */
+#define EVL_THREAD_BLOCK_MASK	(EVL_T_INBAND|EVL_THREAD_WAIT_MASK|EVL_THREAD_HOLD_MASK)
+/* Reasons for an aborted blocking operation (->info set) */
 #define EVL_THREAD_INFO_MASK	(EVL_T_RMID|EVL_T_TIMEO|EVL_T_BREAK|	\
-				EVL_T_KICKED|EVL_T_BCAST|EVL_T_NOMEM)
+				EVL_T_BCAST|EVL_T_NOMEM)
 /* Mode bits configurable via EVL_THRIOC_SET/CLEAR_MODE. */
-#define EVL_THREAD_MODE_BITS	(EVL_T_WOSS|EVL_T_WOLI|EVL_T_WOSX|	\
+#define EVL_THREAD_MODE_MASK	(EVL_T_WOSS|EVL_T_WOLI|EVL_T_WOSX|	\
 				EVL_T_WOSO|EVL_T_HMSIG|EVL_T_HMOBS)
 
 /*
@@ -168,7 +172,7 @@ struct evl_thread {
 	char *name;
 };
 
-static inline void evl_sync_sstate(struct evl_thread *curr)
+static __always_inline void evl_sync_sstate(struct evl_thread *curr)
 {
 	if (curr->sstate) {
 		curr->sstate->state = curr->state;
@@ -176,7 +180,7 @@ static inline void evl_sync_sstate(struct evl_thread *curr)
 	}
 }
 
-static inline
+static __always_inline
 void evl_clear_sync_sstate(struct evl_thread *curr, int state_bits)
 {
 	if (curr->sstate) {
@@ -185,7 +189,7 @@ void evl_clear_sync_sstate(struct evl_thread *curr, int state_bits)
 	}
 }
 
-static inline
+static __always_inline
 void evl_set_sync_sstate(struct evl_thread *curr, int state_bits)
 {
 	if (curr->sstate) {
@@ -221,23 +225,23 @@ void evl_discard_thread(struct evl_thread *thread);
  * Might differ from this_evl_rq() if @current is running inband, and
  * evl_migrate_thread() is pending until it switches back to oob.
  */
-static inline struct evl_thread *evl_current(void)
+static __always_inline struct evl_thread *evl_current(void)
 {
 	return dovetail_current_state()->thread;
 }
 
-static inline
+static __always_inline
 struct evl_rq *evl_thread_rq(struct evl_thread *thread)
 {
 	return thread->rq;
 }
 
-static inline struct evl_rq *evl_current_rq(void)
+static __always_inline struct evl_rq *evl_current_rq(void)
 {
 	return evl_thread_rq(evl_current());
 }
 
-static inline
+static __always_inline
 struct evl_thread *evl_thread_from_task(struct task_struct *p)
 {
 	return dovetail_task_state(p)->thread;
@@ -251,12 +255,12 @@ static __always_inline void evl_test_cancel(void)
 		__evl_test_cancel(curr);
 }
 
-static inline struct evl_subscriber *evl_get_subscriber(void)
+static __always_inline struct evl_subscriber *evl_get_subscriber(void)
 {
 	return dovetail_current_state()->subscriber;
 }
 
-static inline void evl_set_subscriber(struct evl_subscriber *sbr)
+static __always_inline void evl_set_subscriber(struct evl_subscriber *sbr)
 {
 	dovetail_current_state()->subscriber = sbr;
 }
@@ -281,14 +285,11 @@ void evl_sleep_on(ktime_t timeout, enum evl_tmode timeout_mode,
 void evl_wakeup_thread(struct evl_thread *thread,
 		int mask, int info);
 
-void evl_hold_thread(struct evl_thread *thread,
-		int mask);
+void evl_hold_thread(struct evl_thread *thread, int mask);
 
-void evl_release_thread(struct evl_thread *thread,
-			int mask, int info);
+void evl_release_thread(struct evl_thread *thread, int mask);
 
-void evl_unblock_thread(struct evl_thread *thread,
-			int reason);
+void evl_unblock_thread(struct evl_thread *thread, int reason);
 
 ktime_t evl_delay(ktime_t timeout,
 		enum evl_tmode timeout_mode,
@@ -317,8 +318,7 @@ void evl_get_thread_state(struct evl_thread *thread,
 
 int evl_detach_self(void);
 
-void evl_kick_thread(struct evl_thread *thread,
-		int info);
+void evl_kick_thread(struct evl_thread *thread);
 
 void evl_demote_thread(struct evl_thread *thread);
 
@@ -402,19 +402,19 @@ static inline void evl_stop_kthread(struct evl_kthread *kthread)
 	evl_join_thread(&kthread->thread, true);
 }
 
-static inline bool evl_kthread_should_stop(void)
+static __always_inline bool evl_kthread_should_stop(void)
 {
 	return !!(evl_current()->info & EVL_T_CANCELD);
 }
 
-static inline
+static __always_inline
 void evl_unblock_kthread(struct evl_kthread *kthread,
 			int reason)
 {
 	evl_unblock_thread(&kthread->thread, reason);
 }
 
-static inline
+static __always_inline
 int evl_join_kthread(struct evl_kthread *kthread,
 		bool uninterruptible)
 {
