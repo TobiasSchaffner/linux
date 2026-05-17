@@ -69,7 +69,7 @@ static inline bool thread_on_quota(struct evl_thread *thread,
 	 * to quota group @tg.
 	 */
 	return thread->quota == tg &&
-		!(thread->state & (EVL_T_READY|EVL_THREAD_BLOCK_BITS));
+		!(thread->state & (EVL_T_READY|EVL_THREAD_BLOCK_MASK));
 }
 
 static inline bool group_is_active(struct evl_quota_group *tg)

@@ -22,7 +22,7 @@
 #define EVL_T_DORMANT 0x00000020 /* Not started yet */
 #define EVL_T_ZOMBIE  0x00000040 /* Dead, waiting for disposal */
 #define EVL_T_INBAND  0x00000080 /* Running in-band */
-#define EVL_T_HALT    0x00000100 /* Halted */
+/* free: 0x00000100 */
 #define EVL_T_BOOST   0x00000200 /* PI/PP boost undergoing */
 #define EVL_T_FREEZE  0x00000400 /* Frozen on ptrace() synchronization */
 #define EVL_T_RRB     0x00000800 /* Undergoes round-robin scheduling */
@@ -36,14 +36,14 @@
 #define EVL_T_OBSERV  0x00080000 /* Observable (only for export to userland) */
 #define EVL_T_HMSIG   0x00100000 /* Notify HM events via SIGDEBUG */
 #define EVL_T_HMOBS   0x00200000 /* Notify HM events via observable */
-#define EVL_T_WOSO    0x00400000 /* Schedule overrun */
+#define EVL_T_WOSO    0x00400000 /* Warn on scheduling overrun */
 
 /* Information flags (shared) */
 
 #define EVL_T_TIMEO   0x00000001 /* Woken up due to a timeout condition */
 #define EVL_T_RMID    0x00000002 /* Pending on a removed resource */
 #define EVL_T_BREAK   0x00000004 /* Forcibly awaken from a wait state */
-#define EVL_T_KICKED  0x00000008 /* Forced out of OOB context */
+#define EVL_T_KICKED  0x00000008 /* Forced out of out-of-band context */
 #define EVL_T_WCHAN   0x00000010 /* Need to requeue in wait channel */
 /* free: 0x00000020 */
 #define EVL_T_CANCELD 0x00000040 /* Cancellation request is pending */

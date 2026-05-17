@@ -275,9 +275,9 @@ static void migrate_rq(struct evl_thread *thread, struct evl_rq *dst_rq)
 
 	/*
 	 * check_cpu_affinity() might ask us to move @thread to a CPU
-	 * which is not part of the oob set due to a spurious
-	 * migration, this is ok. The offending thread would exit
-	 * shortly after resuming.
+	 * which is not part of the out-of-band capable set due to a
+	 * spurious migration, this is ok. The offending thread would
+	 * exit shortly after resuming.
 	 */
 	evl_double_rq_lock(src_rq, dst_rq);
 
@@ -294,7 +294,7 @@ static void migrate_rq(struct evl_thread *thread, struct evl_rq *dst_rq)
 	 */
 	thread->rq = dst_rq;
 
-	if (!(thread->state & EVL_THREAD_BLOCK_BITS)) {
+	if (!(thread->state & EVL_THREAD_BLOCK_MASK)) {
 		evl_requeue_thread(thread);
 		thread->state |= EVL_T_READY;
 		evl_set_resched(dst_rq);
@@ -784,16 +784,12 @@ static struct evl_thread *__pick_next_thread(struct evl_rq *rq)
 	 * condition is raised for it. Otherwise, check whether
 	 * preemption is allowed.
 	 */
-	if (!(curr->state & (EVL_THREAD_BLOCK_BITS | EVL_T_ZOMBIE))) {
+	if (!(curr->state & (EVL_THREAD_BLOCK_MASK | EVL_T_ZOMBIE))) {
 		if (evl_preempt_count() > 0) {
 			evl_set_self_resched(rq);
 			return curr;
 		}
-		/*
-		 * Push the current thread back to the run queue of
-		 * the scheduling class it belongs to, if not yet
-		 * linked to it (EVL_T_READY tells us if it is).
-		 */
+		/* Push the current thread back to the runqueue. */
 		if (!(curr->state & EVL_T_READY)) {
 			evl_requeue_thread(curr);
 			curr->state |= EVL_T_READY;
@@ -851,7 +847,8 @@ void finish_rq_switch(bool inband_tail, unsigned long flags)
 
 	trace_evl_switch_tail(this_rq->curr);
 
-	EVL_WARN_ON(CORE, this_rq->curr->state & EVL_THREAD_BLOCK_BITS);
+	EVL_WARN_ON(CORE, this_rq->curr->state &
+		(EVL_THREAD_BLOCK_MASK & ~EVL_THREAD_LAZY_MASK));
 
 	/*
 	 * Check whether we are completing a transition to the inband
@@ -927,8 +924,8 @@ void __evl_schedule(void) /* oob or/and hard irqs off (CPU migration-safe) */
 	 * Check whether we have a pending priority ceiling request to
 	 * commit before putting the current thread to sleep.
 	 * evl_current() may differ from rq->curr only if rq->curr ==
-	 * &rq->root_thread. Testing EVL_T_USER eliminates this case since
-	 * a root thread never bears this bit.
+	 * &rq->root_thread. Testing EVL_T_USER eliminates this case
+	 * since this bit is never set for the root thread.
 	 */
 	curr = this_rq->curr;
 	/*
@@ -1030,11 +1027,7 @@ void resume_oob_task(struct task_struct *p) /* inband, oob stage stalled */
 	 */
 	unstall_oob();
 	check_cpu_affinity(p);
-	evl_release_thread(thread, EVL_T_INBAND, 0);
-	/*
-	 * If EVL_T_PTSTOP is set, pick_next_thread() is not allowed to
-	 * freeze @thread while in flight to the out-of-band stage.
-	 */
+	evl_release_thread(thread, EVL_T_INBAND);
 	evl_schedule();
 	stall_oob();
 }
@@ -1043,7 +1036,6 @@ int evl_switch_oob(void)
 {
 	struct evl_thread *curr = evl_current();
 	struct task_struct *p = current;
-	unsigned long flags;
 	int ret;
 
 	inband_context_only();
@@ -1093,17 +1085,14 @@ int evl_switch_oob(void)
 		evl_test_cancel();
 
 	/*
-	 * Since handle_sigwake_event()->evl_kick_thread() won't set
-	 * EVL_T_KICKED unless EVL_T_INBAND is cleared, a signal received
-	 * during the stage transition process might have gone
-	 * unnoticed. Recheck for signals here and raise EVL_T_KICKED if
-	 * some are pending, so that we switch back in-band asap for
-	 * handling them.
+	 * Since evl_kick_thread() may ignore the call if EVL_T_INBAND
+	 * is set for the target thread, a signal received during the
+	 * stage transition process might have gone unnoticed. Recheck
+	 * once we have fully switched to the out-of-band stage.
 	 */
 	if (signal_pending(p)) {
-		raw_spin_lock_irqsave(&curr->rq->lock, flags);
-		curr->info |= EVL_T_KICKED;
-		raw_spin_unlock_irqrestore(&curr->rq->lock, flags);
+		evl_kick_thread(curr);
+		evl_schedule();
 	}
 
 	return 0;
@@ -1143,7 +1132,7 @@ void evl_switch_inband_details(int cause, union evl_value details)
 	curr->state |= EVL_T_INBAND;
 	curr->local_info &= ~EVL_T_SYSRST;
 	notify = curr->state & EVL_T_USER && cause > EVL_HMDIAG_NONE;
-	curr->info &= ~EVL_THREAD_INFO_MASK;
+	curr->info &= ~(EVL_THREAD_INFO_MASK|EVL_T_KICKED);
 
 	evl_set_resched(this_rq);
 

@@ -104,7 +104,7 @@ out:
 
 	if (notify) {
 		evl_notify_thread(curr, EVL_HMDIAG_STAGEX, evl_nil);
-		evl_kick_thread(curr, 0);
+		evl_kick_thread(curr);
 	}
 
 	return ret;
