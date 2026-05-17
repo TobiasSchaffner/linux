@@ -410,26 +410,23 @@ TRACE_EVENT(evl_hold_thread,
 );
 
 TRACE_EVENT(evl_release_thread,
-	TP_PROTO(struct evl_thread *thread, int mask, int info),
-	TP_ARGS(thread, mask, info),
+	TP_PROTO(struct evl_thread *thread, int mask),
+	TP_ARGS(thread, mask),
 
 	TP_STRUCT__entry(
 		__string(name, thread->name)
 		__field(pid_t, pid)
 		__field(int, mask)
-		__field(int, info)
 	),
 
 	TP_fast_assign(
 		__assign_str(name);
 		__entry->pid = evl_get_inband_pid(thread);
 		__entry->mask = mask;
-		__entry->info = info;
 	),
 
-	TP_printk("name=%s pid=%d mask=%#x info=%#x",
-		__get_str(name), __entry->pid,
-		__entry->mask, __entry->info)
+	TP_printk("name=%s pid=%d mask=%#x",
+		__get_str(name), __entry->pid, __entry->mask)
 );
 
 TRACE_EVENT(evl_thread_fault,
