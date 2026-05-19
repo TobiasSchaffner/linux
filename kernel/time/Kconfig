@@ -56,7 +56,7 @@ config GENERIC_CMOS_UPDATE
 
 # Deferred rearming of the hrtimer interrupt
 config HRTIMER_REARM_DEFERRED
-       def_bool y
+       def_bool y if !IRQ_PIPELINE
        depends on GENERIC_ENTRY && HAVE_GENERIC_TIF_BITS
        depends on HIGH_RES_TIMERS && SCHED_HRTICK
 
