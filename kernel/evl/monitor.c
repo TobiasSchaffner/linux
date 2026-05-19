@@ -290,11 +290,11 @@ static int __trywait_count(struct evl_monitor *mon)
 }
 
 /* mon->wait_queue.wchan.lock held, dropped on success, irqs off. */
-static int trywait_count_locked(struct evl_monitor *mon, unsigned long flags)
+static bool trywait_count_locked(struct evl_monitor *mon, unsigned long flags)
 {
-	int ret = __trywait_count(mon);
+	bool ret = !__trywait_count(mon);
 
-	if (!ret)
+	if (ret)
 		raw_spin_unlock_irqrestore(&mon->wait_queue.wchan.lock, flags);
 
 	return ret;
@@ -431,7 +431,7 @@ static void inband_wake_w_irqwork(struct irq_work *work) /* in-band */
 }
 
 /* mon->wait_queue.wchan.lock held, dropped on success, irqs off. */
-static bool __trywait_mask(struct evl_monitor *mon,
+static bool trywait_mask_locked(struct evl_monitor *mon,
 			s32 match_value,
 			bool exact_match,
 			s32 *r_value,
@@ -471,7 +471,7 @@ static int trywait_mask(struct evl_monitor *mon,
 		match_value = -1;
 
 	raw_spin_lock_irqsave(&mon->wait_queue.wchan.lock, flags);
-	if (!__trywait_mask(mon, match_value, exact_match, r_value, flags)) {
+	if (!trywait_mask_locked(mon, match_value, exact_match, r_value, flags)) {
 		raw_spin_unlock_irqrestore(&mon->wait_queue.wchan.lock, flags);
 		return -EAGAIN;
 	}
@@ -505,7 +505,7 @@ static int wait_mask_oob(struct evl_monitor *mon,
 again:
 	raw_spin_lock_irqsave(&mon->wait_queue.wchan.lock, flags);
 
-	if (__trywait_mask(mon, match_value, exact_match, r_value, flags))
+	if (trywait_mask_locked(mon, match_value, exact_match, r_value, flags))
 		return 0;	/* oob lock already dropped on success. */
 
 	if (f_flags & O_NONBLOCK) {
@@ -748,15 +748,34 @@ static int unwait_monitor_oob(struct evl_monitor *mon,
 	return ret;
 }
 
-#define __wait_monitor_inband(__mon, __trywait_ok)					\
+#define __wait_monitor_inband(__mon, __trywait_locked, __f_flags, __u_timeout) 		\
 	({										\
-		__label__ __out;							\
+		__label__ __done, __out;						\
 		struct evl_wait_channel *wchan = &(__mon)->wait_queue.wchan; 		\
 		wait_queue_head_t *wq = &(__mon)->inband_wait_r;			\
 		struct wait_queue_entry wq_entry;					\
 		unsigned long flags, ib_flags;						\
 		long jiffies = 0;							\
 		int ret = 0;								\
+											\
+		raw_spin_lock_irqsave(&wchan->lock, flags);				\
+											\
+		if (__trywait_locked)							\
+			goto __out;							\
+											\
+		raw_spin_unlock_irqrestore(&wchan->lock, flags);			\
+											\
+		if (__f_flags & O_NONBLOCK) {						\
+			ret = -EAGAIN;							\
+			goto __out;							\
+		}									\
+											\
+		/* If we need to sleep, try fetching the (absolute) timeout. */		\
+		if (__u_timeout) {							\
+			ret = evl_fetch_utimespec_to_jiffies(__u_timeout, &jiffies); 	\
+			if (ret)							\
+				goto __out;						\
+		}									\
 											\
 		init_wait_entry(&wq_entry, 0);						\
 											\
@@ -765,32 +784,18 @@ static int unwait_monitor_oob(struct evl_monitor *mon,
 											\
 			raw_spin_lock_irqsave(&wchan->lock, flags); 			\
 											\
-			if (__trywait_ok)						\
-				goto __out;						\
-											\
-			if (f_flags & O_NONBLOCK) {					\
-				raw_spin_unlock_irqrestore(&wchan->lock, flags); 	\
-				ret = -EAGAIN;						\
-				goto __out;						\
-			}								\
+			if (__trywait_locked)						\
+				goto __done;						\
 											\
 			/* Wchan locked to serialize with post_{mask, count}(). */ 	\
 			if (list_empty(&wq_entry.entry))				\
 				__add_wait_queue(&(__mon)->inband_wait_r, &wq_entry);	\
 											\
+			__set_current_state(TASK_INTERRUPTIBLE);			\
+											\
 			raw_spin_unlock_irqrestore(&wchan->lock, flags); 		\
 											\
 			spin_unlock_irqrestore(&wq->lock, ib_flags); 			\
-											\
-			/* If we need to sleep, try fetching the (absolute) timeout. */	\
-			if (u_timeout) {						\
-				ret = evl_fetch_utimespec_to_jiffies(u_timeout, &jiffies); \
-				if (ret)						\
-					break;						\
-				u_timeout = NULL;					\
-			}								\
-											\
-			set_current_state(TASK_INTERRUPTIBLE);				\
 											\
 			if (jiffies) {							\
 				jiffies = schedule_timeout(jiffies);			\
@@ -809,11 +814,12 @@ static int unwait_monitor_oob(struct evl_monitor *mon,
 		}									\
 											\
 		spin_lock_irqsave(&wq->lock, ib_flags);					\
-	__out:										\
+	__done:										\
 		if (!list_empty(&wq_entry.entry))					\
 			list_del(&wq_entry.entry);					\
 											\
 		spin_unlock_irqrestore(&wq->lock, ib_flags);				\
+	__out:										\
 		ret;									\
 	})
 
@@ -823,7 +829,7 @@ static int wait_monitor_inband(struct evl_monitor *mon,
 			s32 *r_value, /* I/O parameter */
 			bool exact_match)
 {
-	s32 match_value = *r_value;
+	s32 match_value;
 	int ret;
 
 	if (mon->type != EVL_MONITOR_EVENT)
@@ -831,7 +837,10 @@ static int wait_monitor_inband(struct evl_monitor *mon,
 
 	switch (mon->protocol) {
 	case EVL_EVENT_MASK:
-		ret = __wait_monitor_inband(mon, __trywait_mask(mon, match_value, false, r_value, flags));
+		match_value = *r_value ?: -1; /* See trywait_mask(). */
+		ret = __wait_monitor_inband(mon,
+					trywait_mask_locked(mon, match_value, false, r_value, flags),
+					f_flags, u_timeout);
 		/*
 		 * If we have successfully collected all the bits,
 		 * send a POLLOUT wakeup.
@@ -848,7 +857,9 @@ static int wait_monitor_inband(struct evl_monitor *mon,
 		 * won't miss any wakeup.
 		 */
 		atomic_inc(__ATOMIC32(&mon->sstate->u.event.pollrefs));
-		ret = __wait_monitor_inband(mon, !trywait_count_locked(mon, flags));
+		ret = __wait_monitor_inband(mon,
+					trywait_count_locked(mon, flags),
+					f_flags, u_timeout);
 		atomic_dec(__ATOMIC32(&mon->sstate->u.event.pollrefs));
 		if (!ret)
 			*r_value = 1;
