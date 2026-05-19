@@ -782,9 +782,11 @@ static struct evl_thread *__pick_next_thread(struct evl_rq *rq)
 	/*
 	 * We have to switch the current thread out if a blocking
 	 * condition is raised for it. Otherwise, check whether
-	 * preemption is allowed.
+	 * preemption is allowed. Note: kicked threads are moved
+	 * back to the runqueue when preempted.
 	 */
-	if (!(curr->state & (EVL_THREAD_BLOCK_MASK | EVL_T_ZOMBIE))) {
+	if (!(curr->state & (EVL_THREAD_BLOCK_MASK | EVL_T_ZOMBIE)) ||
+	    curr->info & EVL_T_KICKED) {
 		if (evl_preempt_count() > 0) {
 			evl_set_self_resched(rq);
 			return curr;
