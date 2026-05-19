@@ -2214,6 +2214,12 @@ static long thread_common_ioctl(struct evl_thread *thread,
 	case EVL_THRIOC_DEMOTE:
 		evl_demote_thread(thread);
 		break;
+	case EVL_THRIOC_SUSPEND:
+		evl_hold_thread(thread, EVL_T_SUSP);
+		break;
+	case EVL_THRIOC_RESUME:
+		evl_release_thread(thread, EVL_T_SUSP);
+		break;
 	default:
 		ret = -ENOTTY;
 	}
