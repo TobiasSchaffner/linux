@@ -740,7 +740,7 @@ void evl_hold_thread(struct evl_thread *thread, int mask)
 	if (likely(thread == rq->curr))
 		evl_set_resched(rq);
 	else if (((oldstate & (EVL_THREAD_BLOCK_MASK|EVL_T_USER)) ==
-		  (EVL_T_INBAND|EVL_T_USER)))
+			(EVL_T_INBAND|EVL_T_USER)))
 		dovetail_request_ucall(thread->altsched.task);
 out:
 	evl_put_thread_rq(thread, rq, flags);
@@ -1166,7 +1166,7 @@ int evl_set_thread_schedparam_locked(struct evl_thread *thread,
 		thread->info |= EVL_T_WCHAN;
 
 	thread->info |= EVL_T_SCHEDP;
-	/* Ask the target thread to call back if in-band. */
+	/* Tell the target thread to call back if in-band. */
 	if ((thread->state & (EVL_T_INBAND|EVL_T_USER)) ==
 		(EVL_T_INBAND|EVL_T_USER))
 		dovetail_request_ucall(thread->altsched.task);
@@ -1257,15 +1257,16 @@ EXPORT_SYMBOL_GPL(evl_unblock_thread);
  *	@thread:	thread to demote to the in-band stage
  *
  *	Schedules a call to evl_switch_inband() for @thread at the
- *	first opportunity, usually on the syscall return path via
- *	evl_exit_to_user(). This demotion is temporary, in that
- *	@thread is allowed to switch back to the out-of-band stage
- *	anytime after the first stage migration.
+ *	first opportunity. This demotion is temporary, in that @thread
+ *	may switch back to the out-of-band stage anytime after
+ *	demotion. A typical use of this call is to allow for an
+ *	in-band signal pending for @thread to be handled (see
+ *	handle_sigwake_event()).
  *
  *	A kicked thread stays runnable until it crosses the stage
  * 	migration point. Until then, it cannot pend on any resource
- * 	(EVL_T_BREAK), but forcible suspension flags can accumulate
- * 	and linger into its state mask. Suspension will apply once the
+ * 	(EVL_T_BREAK), but forcible suspend flags can accumulate and
+ * 	linger into its state mask. Suspension will apply once the
  * 	thread migrates back to the out-of-band stage.
  */
 void evl_kick_thread(struct evl_thread *thread)
@@ -1288,9 +1289,9 @@ void evl_kick_thread(struct evl_thread *thread)
 	/*
 	 * We may send mayday notices to userland threads only.  No
 	 * need to run a mayday trap if the current thread kicks
-	 * itself out of out-of-band context: it will switch to the
-	 * in-band stage on its way back to userland via the current
-	 * syscall epilogue.
+	 * itself out of out-of-band context though, it would switch
+	 * to the in-band stage on its way back to userland via the
+	 * syscall epilogue when crossing evl_exit_to_user().
 	 */
 	if ((thread->state & EVL_T_USER) && rq->curr != thread)
 		dovetail_send_mayday(p);
@@ -1327,10 +1328,10 @@ EXPORT_SYMBOL_GPL(evl_kick_thread);
  *	evl_demote_thread - permanently force a thread to the in-band stage
  *	@thread:	thread to demote to the in-band stage
  *
- *	
- * 	
- * 	
- * 	
+ *	Full demotion causes the thread to downgrade to the SCHED_WEAK
+ * 	class, kicking it out of the out-of-band stage in the same
+ * 	move.
+ *
  * 	The caller must call evl_schedule() to complete the operation.
  */
 void evl_demote_thread(struct evl_thread *thread)
@@ -1790,6 +1791,14 @@ static void handle_sigwake_event(struct task_struct *p)
 	evl_release_thread(thread, EVL_T_FREEZE);
 	evl_kick_thread(thread);
 	evl_schedule();
+
+	/*
+	 * Make sure the thread calls back for switching out-of-band
+	 * in order to apply any lazy suspend condition which would
+	 * (still) be in effect on return from the in-band signal
+	 * handler.
+	 */
+	dovetail_request_ucall(thread->altsched.task);
 }
 
 static void handle_ptstop_event(void)
