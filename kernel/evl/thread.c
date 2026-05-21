@@ -1287,14 +1287,27 @@ void evl_kick_thread(struct evl_thread *thread)
 	evl_wakeup_thread_locked(thread, EVL_THREAD_WAIT_MASK, EVL_T_BREAK);
 
 	/*
-	 * We may send mayday notices to userland threads only.  No
-	 * need to run a mayday trap if the current thread kicks
-	 * itself out of out-of-band context though, it would switch
-	 * to the in-band stage on its way back to userland via the
-	 * syscall epilogue when crossing evl_exit_to_user().
+	 * Userland threads kicked out of the out-of-band stage need
+	 * specific notifications.
+	 *
+	 * First, we send then a mayday notice to force the target
+	 * thread running out-of-band to call us back, unless the kick
+	 * is self-targeted, in which case that thread would migrate
+	 * on its way back to userland when crossing
+	 * evl_exit_to_user().
+	 *
+	 * Conversely, if a lazy blocking condition is pending, tell
+	 * the thread to call us via RETUSER in order to apply it by
+	 * bouncing back on the out-of-band stage, once the initial
+	 * stage demotion took place.
 	 */
-	if ((thread->state & EVL_T_USER) && rq->curr != thread)
-		dovetail_send_mayday(p);
+	if (thread->state & EVL_T_USER) {
+		if (rq->curr != thread)
+			dovetail_send_mayday(p);
+
+		if (thread->state & EVL_THREAD_LAZY_MASK)
+			dovetail_request_ucall(p);
+	}
 
 	/*
 	 * A thread which was ready on entry to this routine may be
@@ -1791,14 +1804,6 @@ static void handle_sigwake_event(struct task_struct *p)
 	evl_release_thread(thread, EVL_T_FREEZE);
 	evl_kick_thread(thread);
 	evl_schedule();
-
-	/*
-	 * Make sure the thread calls back for switching out-of-band
-	 * in order to apply any lazy suspend condition which would
-	 * (still) be in effect on return from the in-band signal
-	 * handler.
-	 */
-	dovetail_request_ucall(thread->altsched.task);
 }
 
 static void handle_ptstop_event(void)
