@@ -1876,8 +1876,17 @@ static void handle_retuser_event(void) /* in-band */
 	 * is no point for us in switching out-of-band anyway.
 	 */
 	if (likely(!(curr->state & EVL_T_PTRACE))) {
-		if (evl_switch_oob())
+		ret = evl_switch_oob();
+		if (ret) {
+			/*
+			 * If we were denied the out-of-band switch
+			 * due to a pending signal, ask for another
+			 * call once the signal is handled.
+			 */
+			if (ret == -ERESTARTSYS)
+				dovetail_request_ucall(current);
 			return;
+		}
 		goto out;
 	}
 
