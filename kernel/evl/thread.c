@@ -1876,7 +1876,8 @@ static void handle_retuser_event(void) /* in-band */
 	 * is no point for us in switching out-of-band anyway.
 	 */
 	if (likely(!(curr->state & EVL_T_PTRACE))) {
-		evl_switch_oob();
+		if (evl_switch_oob())
+			return;
 		goto out;
 	}
 
