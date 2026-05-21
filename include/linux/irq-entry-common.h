@@ -226,11 +226,11 @@ again:
 			ti_work = exit_to_user_mode_loop(regs, ti_work);
 	}
 
-	arch_exit_to_user_mode_prepare(regs, ti_work);
-	
 	/* Dovetail: Fire pending RETUSER request. */
 	if (do_retuser(ti_work))
 		goto again;
+
+	arch_exit_to_user_mode_prepare(regs, ti_work);
 }
 
 static __always_inline void __exit_to_user_mode_validate(void)
