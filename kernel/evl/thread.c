@@ -827,6 +827,14 @@ void evl_set_kthread_priority(struct evl_kthread *kthread, int priority)
 }
 EXPORT_SYMBOL_GPL(evl_set_kthread_priority);
 
+void evl_unblock_kthread(struct evl_kthread *kthread,
+			int reason)
+{
+	evl_unblock_thread(&kthread->thread, reason);
+	evl_schedule();
+}
+EXPORT_SYMBOL_GPL(evl_unblock_kthread);
+
 ktime_t evl_get_thread_timeout(struct evl_thread *thread)
 {
 	struct evl_timer *timer;
@@ -1232,6 +1240,19 @@ void __evl_propagate_schedparam_change(struct evl_thread *curr)
 	}
 }
 
+/**
+ *	evl_unblock_thread - unblock a thread from all wait conditions
+ *	@thread:	thread to unblock
+ *
+ *	Removes all wait condition flags (EVL_THREAD_WAIT_MASK) from
+ *	the @thread state, merging the @reason flags into its
+ *	information word. If no other reason to prevent @thread from
+ *	running exists - such as a condition from the
+ *	EVL_THREAD_HOLD_MASK set - the thread is moved to the runqueue
+ *	of the CPU it is affine to, deemed ready to run.
+ *
+ * 	The caller must call evl_schedule() to complete the operation.
+ */
 void evl_unblock_thread(struct evl_thread *thread, int reason)
 {
 	trace_evl_unblock_thread(thread);
