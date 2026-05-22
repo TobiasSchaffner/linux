@@ -41,9 +41,9 @@ static int attach_udp_socket(struct evl_socket *esk,
 
 /*
  * set_receive_slot - install/update a receive slot for the socket to
- * collect input. We are called whenever bind() is issued on an UDP
- * socket from the inband stack: this enables our generic cache
- * mechanism to deal with this information since it supports
+ * collect input. We are called whenever bind() or connect() is issued
+ * on an UDP socket from the inband stack: this enables our generic
+ * cache mechanism to deal with this information since it supports
  * inband-only updates, inband/oob lookups.
  *
  * @esk->sk is locked on entry.
@@ -69,8 +69,8 @@ static int add_receive_slot(struct evl_socket *esk) /* inband */
 		return -ENOMEM;
 
 	/*
-	 * Binding for oob[-extended] protocols always and only
-	 * happens after the inband-side binding operation was
+	 * Binding/connection of oob[-extended] protocols always and
+	 * only happens after the matching inband-side operation was
 	 * successful, so we may use the port and receive address the
 	 * inband stack already parsed and checked, dealing with the
 	 * hairy reuseport logic as well. Yummie.
@@ -103,12 +103,10 @@ static int add_receive_slot(struct evl_socket *esk) /* inband */
 
 	raw_spin_lock_irqsave(&new->lock, flags);
 
-	if (EVL_WARN_ON(NET, !list_empty(&esk->u.ip.udp.next)))
-		list_del(&esk->u.ip.udp.next); /* Bad news ahead anyway. */
-
-	list_add(&esk->u.ip.udp.next, &new->receivers);
-
-	WRITE_ONCE(esk->u.ip.udp.rcv_slot, new);
+	if (list_empty(&esk->u.ip.udp.next)) {
+		list_add(&esk->u.ip.udp.next, &new->receivers);
+		WRITE_ONCE(esk->u.ip.udp.rcv_slot, new);
+	}
 
 	raw_spin_unlock_irqrestore(&new->lock, flags);
 
@@ -159,10 +157,26 @@ static void destroy_udp_socket(struct evl_socket *esk) /* inband */
 }
 
 /*
- * Bind a new UDP socket for oob usage. @esk->sk is locked by the
- * inband stack on entry. Unbinding happens when the socket is either
- * shut down or destroyed on the inband side, which is paired with our
- * shutdown() and destroy() handlers.
+ * Connect an oob UDP socket which triggers autobinding. @esk->sk is
+ * locked by the inband stack on entry. This handler is called once
+ * the in-band side is successfully connected.
+ */
+static int connect_udp_socket(struct evl_socket *esk,
+			struct sockaddr *addr, int len, int flags)
+{
+	if (addr->sa_family == AF_UNSPEC) { /* Disconnect. */
+		drop_receive_slot(esk);
+		return 0;
+	}
+
+	return add_receive_slot(esk); /* auto-bind */
+}
+
+/*
+ * Bind an UDP oob socket. @esk->sk is locked by the inband stack on
+ * entry. Unbinding happens when the socket is either shut down or
+ * destroyed on the inband side, which is paired with our shutdown()
+ * and destroy() handlers.
  */
 static int bind_udp_socket(struct evl_socket *esk,
 			struct sockaddr_unsized *addr,
@@ -936,6 +950,7 @@ void evl_net_cleanup_udp(struct net *net)
 struct evl_net_proto evl_net_udp_proto = {
 	.attach	= attach_udp_socket,
 	.destroy = destroy_udp_socket,
+	.connect = connect_udp_socket,
 	.bind = bind_udp_socket,
 	/* We need no force_unbind() handler. */
 	.shutdown = shutdown_udp_socket,
