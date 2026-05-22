@@ -587,8 +587,10 @@ int inet_dgram_connect(struct socket *sock, struct sockaddr_unsized *uaddr,
 	/* IPV6_ADDRFORM can change sk->sk_prot under us. */
 	prot = READ_ONCE(sk->sk_prot);
 
-	if (uaddr->sa_family == AF_UNSPEC)
-		return prot->disconnect(sk, flags);
+	if (uaddr->sa_family == AF_UNSPEC) {
+		err = prot->disconnect(sk, flags);
+		goto out;
+	}
 
 	if (BPF_CGROUP_PRE_CONNECT_ENABLED(sk)) {
 		err = prot->pre_connect(sk, uaddr, addr_len);
@@ -598,7 +600,13 @@ int inet_dgram_connect(struct socket *sock, struct sockaddr_unsized *uaddr,
 
 	if (data_race(!inet_sk(sk)->inet_num) && inet_autobind(sk))
 		return -EAGAIN;
-	return prot->connect(sk, uaddr, addr_len);
+
+	err = prot->connect(sk, uaddr, addr_len);
+out:
+	if (!err && sock_oob_capable(sk->sk_socket))
+		err = sock_oob_connect(sk, uaddr, addr_len, flags);
+
+	return err;
 }
 EXPORT_SYMBOL(inet_dgram_connect);
 
@@ -755,6 +763,8 @@ int inet_stream_connect(struct socket *sock, struct sockaddr_unsized *uaddr,
 
 	lock_sock(sock->sk);
 	err = __inet_stream_connect(sock, uaddr, addr_len, flags, 0);
+	if (!err && sock_oob_capable(sock->sk->sk_socket))
+		err = sock_oob_connect(sock->sk, uaddr, addr_len, flags);
 	release_sock(sock->sk);
 	return err;
 }
