@@ -396,6 +396,9 @@ int __evl_run_kthread(struct evl_kthread *kthread, int clone_flags);
 void evl_set_kthread_priority(struct evl_kthread *kthread,
 			int priority);
 
+void evl_unblock_kthread(struct evl_kthread *kthread,
+			int reason);
+
 static inline void evl_stop_kthread(struct evl_kthread *kthread)
 {
 	evl_cancel_thread(&kthread->thread);
@@ -405,13 +408,6 @@ static inline void evl_stop_kthread(struct evl_kthread *kthread)
 static __always_inline bool evl_kthread_should_stop(void)
 {
 	return !!(evl_current()->info & EVL_T_CANCELD);
-}
-
-static __always_inline
-void evl_unblock_kthread(struct evl_kthread *kthread,
-			int reason)
-{
-	evl_unblock_thread(&kthread->thread, reason);
 }
 
 static __always_inline
