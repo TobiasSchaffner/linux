@@ -23,6 +23,7 @@
 #include <evl/net/ipv4/route.h>
 #include <evl/net/ipv4/arp.h>
 #include <evl/net/ipv4/udp.h>
+#include <evl/net/ipv4/icmp.h>
 
 int evl_net_ipv4_solicit_timeout = 5; /* Seconds */
 
@@ -49,6 +50,10 @@ int evl_net_init_ipv4(struct net *net)
 	if (ret)
 		goto fail_udp;
 
+	ret = evl_net_init_icmp(net);
+	if (ret)
+		goto fail_icmp;
+
 	/* Fragment directory and friends. */
 	ftdir = &nets->ipv4.ftdir;
 	hash_init(ftdir->ht);
@@ -61,6 +66,8 @@ int evl_net_init_ipv4(struct net *net)
 
 	return 0;
 
+fail_icmp:
+	evl_net_cleanup_udp(net);
 fail_udp:
 	evl_net_cleanup_arp(net);
 fail_arp:
@@ -204,17 +211,22 @@ int evl_net_ipv4_deliver(struct sk_buff *skb)
 	switch (iph->protocol) {
 	case IPPROTO_UDP:
 		ret = evl_net_deliver_udp(skb);
-		/*
-		 * Our caller does not know about fragmentation. On
-		 * error, care for releasing the heading buffer by
-		 * ourselves.
-		 */
-		if (ret)
-			evl_net_free_skb(skb);
-		return 0;
+		break;
+	case IPPROTO_ICMP:
+		ret = evl_net_deliver_icmp(skb);
+		break;
 	default:
 		ret = -ENOTSUPP;
 	}
+
+	/*
+	 * Our caller does not know about fragmentation, and skb might
+	 * have changed to point to the heading buffer after the
+	 * reassembly went to completion. On error, care for releasing
+	 * such buffer by ourselves.
+	 */
+	if (ret)
+		evl_net_free_skb(skb);
 
 	return 0;
 }
@@ -406,6 +418,11 @@ static struct evl_net_proto *match_ipv4_domain(int type, int protocol)
 			return ERR_PTR(-ESOCKTNOSUPPORT);
 
 		return &evl_net_udp_proto;
+	case IPPROTO_ICMP:
+		if (type != SOCK_DGRAM)
+			return ERR_PTR(-ESOCKTNOSUPPORT);
+
+		return &evl_net_icmp_proto;
 	default:
 		return NULL;
 	}
