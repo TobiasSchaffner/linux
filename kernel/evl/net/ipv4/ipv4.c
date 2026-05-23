@@ -213,7 +213,7 @@ int evl_net_ipv4_deliver(struct sk_buff *skb)
 			evl_net_free_skb(skb);
 		return 0;
 	default:
-		return -ENOTSUPP;
+		ret = -ENOTSUPP;
 	}
 
 	return 0;
