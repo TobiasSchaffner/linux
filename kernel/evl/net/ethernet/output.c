@@ -53,8 +53,17 @@ static int ether_transmit_one(struct net_device *dev, struct sk_buff *skb,
 	eth = skb_push(skb, ETH_HLEN);
 	skb_reset_mac_header(skb);
 	eth->h_proto = skb->protocol;
-	ether_addr_copy(eth->h_source, evl_net_real_dev(dev)->dev_addr);
+	/*
+	 * Ugly hack alert: the caller might reply to a peer using a
+	 * the original skb modified in-place (e.g. ICMP_ECHOREPLY),
+	 * with hw_dst pointing at the source hardware address in the
+	 * original MAC header. For this to work while saving the
+	 * caller the need for passing us a temp copy of the original
+	 * source address, we first set the destination address in the
+	 * MAC header _then_ the source address.
+	 */
 	ether_addr_copy(eth->h_dest, hw_dst);
+	ether_addr_copy(eth->h_source, evl_net_real_dev(dev)->dev_addr);
 
 	return evl_net_ether_transmit_raw(dev, skb);
 }
