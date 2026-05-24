@@ -49,7 +49,7 @@ void evl_net_ipv4_remove_device(struct net_device *dev);
 
 int evl_net_ipv4_solicit(struct net *net,
 			struct net_device *dev,
-			struct sockaddr *addr, int flags);
+			struct sockaddr_unsized *addr, int flags);
 
 extern int evl_net_ipv4_solicit_timeout;
 

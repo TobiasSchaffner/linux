@@ -586,13 +586,18 @@ static __poll_t poll_packet(struct evl_socket *esk,
 }
 
 static struct evl_net_proto ether_packet_proto = {
-	.attach	= attach_packet_socket,
-	.destroy = destroy_packet_socket,
-	.bind = bind_packet_socket,
-	.force_unbind = force_unbind_packet_socket,
-	.oob_send = send_packet,
-	.oob_poll = poll_packet,
-	.oob_receive = receive_packet,
+	.attach		= attach_packet_socket,
+	.destroy	= destroy_packet_socket,
+	.bind		= bind_packet_socket,
+	.force_unbind	= force_unbind_packet_socket,
+	.connect	= evl_socket_no_connect,
+	.shutdown	= evl_socket_no_shutdown,
+	.ioctl		= evl_socket_no_ioctl,
+	.solicit	= evl_socket_no_solicit,
+	.oob_send	= send_packet,
+	.oob_receive	= receive_packet,
+	.oob_poll	= poll_packet,
+	.handle_offload	= evl_socket_no_offload,
 };
 
 static struct evl_net_proto *
