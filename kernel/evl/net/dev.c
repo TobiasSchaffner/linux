@@ -353,7 +353,8 @@ static void drop_bindings(struct oob_netdev_state *nds)
 
 	list_for_each_entry_safe(esk, n, &nds->bindings, next_binding) {
 		list_del_init(&n->next_binding);
-		esk->proto->force_unbind(esk);
+		if (esk->proto->force_unbind)
+			esk->proto->force_unbind(esk);
 	}
 
 	mutex_unlock(&nds->bind_lock);
