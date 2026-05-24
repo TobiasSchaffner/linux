@@ -299,7 +299,7 @@ static int check_probe_neighbour(struct neighbour *neigh)
  */
 int evl_net_ipv4_solicit(struct net *net,
 			struct net_device *dev,
-			struct sockaddr *addr, int flags) /* inband */
+			struct sockaddr_unsized *addr, int flags) /* inband */
 {
 	struct evl_net_arp_entry *e = NULL;
 	struct neighbour *neigh;

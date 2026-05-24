@@ -162,7 +162,7 @@ static void destroy_udp_socket(struct evl_socket *esk) /* inband */
  * the in-band side is successfully connected.
  */
 static int connect_udp_socket(struct evl_socket *esk,
-			struct sockaddr *addr, int len, int flags)
+			struct sockaddr_unsized *addr, int len, int flags)
 {
 	if (addr->sa_family == AF_UNSPEC) { /* Disconnect. */
 		drop_receive_slot(esk);
@@ -948,15 +948,15 @@ void evl_net_cleanup_udp(struct net *net)
 }
 
 struct evl_net_proto evl_net_udp_proto = {
-	.attach	= attach_udp_socket,
-	.destroy = destroy_udp_socket,
-	.connect = connect_udp_socket,
-	.bind = bind_udp_socket,
-	/* We need no force_unbind() handler. */
-	.shutdown = shutdown_udp_socket,
-	.solicit = evl_net_ipv4_solicit,
-	.oob_send = send_udp,
-	.oob_poll = poll_udp,
-	.oob_receive = receive_udp,
-	.handle_offload = handle_udp_inband,
+	.attach		= attach_udp_socket,
+	.destroy	= destroy_udp_socket,
+	.bind		= bind_udp_socket,
+	.connect	= connect_udp_socket,
+	.shutdown	= shutdown_udp_socket,
+	.ioctl		= evl_socket_no_ioctl,
+	.solicit	= evl_net_ipv4_solicit,
+	.oob_send	= send_udp,
+	.oob_receive	= receive_udp,
+	.oob_poll	= poll_udp,
+	.handle_offload	= handle_udp_inband,
 };
