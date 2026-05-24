@@ -25,8 +25,6 @@ struct iovec;
  * for its own purpose.
  */
 struct evl_net_cb {
-	/* Cached source/destination device. */
-	struct net_device *dev;
 	union {
 		/* Low-level handler at ingress. */
 		struct evl_net_handler *handler;
