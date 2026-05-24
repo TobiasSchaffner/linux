@@ -477,7 +477,7 @@ int sock_oob_shutdown(struct sock *sk, int how)
 	 * for which we have an out-of-band extension
 	 * (e.g. AF_INET/IPPROTO_UDP).
 	 */
-	if (sk->sk_family == PF_OOB || !esk->proto->shutdown)
+	if (sk->sk_family == PF_OOB)
 		return 0;
 
 	return esk->proto->shutdown(esk, how);
@@ -744,15 +744,12 @@ static int socket_iocget_option(struct evl_socket *esk,
 }
 
 static int socket_solicit_peer(struct evl_socket *esk,
-			struct sockaddr *addr, int flags)
+			struct sockaddr_unsized *addr, int flags)
 {
 	struct sock *sk = esk->sk;
 	struct net *net = sock_net(sk);
 	struct net_device *dev = NULL;
 	int ifindex, ret;
-
-	if (!esk->proto->solicit)
-		return -ENOTSUPP;
 
 	ifindex = READ_ONCE(sk->sk_bound_dev_if);
 	if (ifindex) {
@@ -868,7 +865,7 @@ static long sock_inband_ioctl(struct sock *sk, unsigned int cmd,
 		ret = copy_from_user(&solreq, u_solreq, sizeof(solreq));
 		if (ret)
 			return -EFAULT;
-		ret = socket_solicit_peer(esk, (struct sockaddr *)&solreq.addr,
+		ret = socket_solicit_peer(esk, (struct sockaddr_unsized *)&solreq.addr,
 					solreq.flags);
 		break;
 	default:
@@ -1051,3 +1048,70 @@ const struct net_proto_family evl_family_ops = {
 	.create = create_evl_socket,
 	.owner	= THIS_MODULE,
 };
+
+int evl_socket_no_bind(struct evl_socket *esk,
+		struct sockaddr_unsized *addr, int len)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(evl_socket_no_bind);
+
+int evl_socket_no_connect(struct evl_socket *esk,
+			struct sockaddr_unsized *addr, int len, int flags)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(evl_socket_no_connect);
+
+int evl_socket_no_ioctl(struct evl_socket *esk, unsigned int cmd,
+			unsigned long arg)
+{
+	return -ENOTTY;
+}
+EXPORT_SYMBOL_GPL(evl_socket_no_ioctl);
+
+ssize_t evl_socket_no_send(struct evl_socket *esk,
+			const struct user_oob_msghdr __user *u_msghdr,
+			struct iovec *iov,
+			size_t iovlen)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(evl_socket_no_send);
+
+ssize_t evl_socket_no_receive(struct evl_socket *esk,
+			struct user_oob_msghdr __user *u_msghdr,
+			struct iovec *iov,
+			size_t iovlen)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(evl_socket_no_receive);
+
+__poll_t evl_socket_no_poll(struct evl_socket *esk,
+			struct oob_poll_wait *wait)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(evl_socket_no_poll);
+
+int evl_socket_no_shutdown(struct evl_socket *esk, int how)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(evl_socket_no_shutdown);
+
+int evl_socket_no_solicit(struct net *net,
+			struct net_device *dev,
+			struct sockaddr_unsized *addr, int flags)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(evl_socket_no_solicit);
+
+int evl_socket_no_offload(struct evl_socket *esk,
+			struct evl_net_offload *ofld)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(evl_socket_no_offload);
