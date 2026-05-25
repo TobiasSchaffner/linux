@@ -47,6 +47,13 @@ struct net_device *
 evl_net_find_vlan_dev(struct net_device *real_dev,
 		__be16 vlan_proto, __u16 vlan_id);
 
+int evl_net_dev_transmit(struct net_device *dev,
+			struct sk_buff *skb,
+			const void *hw_dst);
+
+int evl_net_dev_transmit_raw(struct net_device *dev,
+			struct sk_buff *skb);
+
 void evl_net_wake_rx(struct net_device *dev);
 
 int evl_net_dev_allocfd(struct net *net, const char *devname);
