@@ -33,7 +33,7 @@
  *                     skb_is_oob_managed(skb) ? immediately released to oob pool
  *                              : pushed to in-band recycling queue
  *
- * [TX path]: skb = evl_net_dev_alloc_skb()
+ * [TX path]: skb = evl_net_alloc_skb()
  *           ...
  *           netdev_start_xmit(skb)
  *           ...
@@ -131,17 +131,19 @@ static struct page *alloc_bufpage(struct net_device *real_dev,
 	return page;
 }
 
-/*
- * evl_net_dev_alloc_skb - allocate a buffer for transmit.
+/**
+ *	evl_net_alloc_skb - Allocate a buffer (for transmit)
+ *	@dev:		output device
+ *	@timeout:	how long we may wait for a buffer on memory shortage
+ *	@tmode:		timeout type (relative/absolute)
  *
- * @dev is the target device, VLAN or real. Make sure to pass the VLAN
- * netdev if 802.1q encapsulation is required on transmit.
+ *	This routine reserves no headroom.
  */
-struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
-				      ktime_t timeout, enum evl_tmode tmode)
+struct sk_buff *evl_net_alloc_skb(struct net_device *dev,
+				ktime_t timeout, enum evl_tmode tmode)
 {
-	struct evl_netdev_state *est;
 	struct evl_netdev_stats *stats;
+	struct evl_netdev_state *est;
 	struct net_device *real_dev;
 	struct sk_buff *skb;
 	struct page *page;
@@ -160,9 +162,8 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 	BUILD_BUG_ON(sizeof(skb->list) > sizeof(struct sk_buff_list));
 
 	/*
-	 * Build a free skb (for TX) from a page pulled from a
-	 * per-device pool, enforcing congestion control according to
-	 * the specified timeout rule.
+	 * Pull a page from our per-device pool, enforcing congestion
+	 * control according to the specified timeout rule.
 	 */
 	est = evl_net_get_state(dev);
 	stats = evl_net_get_stats(dev);
@@ -181,17 +182,6 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 
 	skb_mark_oob_managed(skb);
 	skb_mark_for_recycle(skb);
-
-	/*
-	 * The current assumption is that we are going to deal with
-	 * ethernet devices, for which we may need some extra header
-	 * space for adding the 802.1q encapsulation. Reserve enough
-	 * headroom, so that we won't have to reallocate for such
-	 * purpose.
-	 */
-	if (is_vlan_dev(dev))
-		skb_reserve(skb, VLAN_HLEN);
-
 	skb->dev = dev;
 
 	/*
@@ -206,9 +196,34 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 	return skb;
 }
 
+/**
+ *	evl_net_alloc_frag - Add a fragment to a buffer
+ *	@head:		head buffer
+ *	@tail:		address of the pointer to the tail of the fragment list
+ *	@timeout:	how long we may wait for a buffer on shortage
+ *	@tmode:		timeout type (relative/absolute)
+ *
+ *	The fragment is allocated from the same source than the head
+ *	buffer, then queued to its fragment list.
+ */
+struct sk_buff *evl_net_alloc_frag(struct sk_buff *head,
+				struct sk_buff **tail,
+				ktime_t timeout, enum evl_tmode tmode)
+{
+	struct sk_buff *frag = evl_net_alloc_skb(head->dev, timeout, tmode);
+
+	if (IS_ERR(frag))
+		return frag;
+
+	*tail = frag;
+	frag->next = NULL;
+
+	return frag;
+}
+
 static int copy_skb(struct net_device *dev,
-		struct sk_buff **tail, struct sk_buff *in,
-		struct sk_buff **out,
+		struct sk_buff *head, struct sk_buff **tail,
+		struct sk_buff *in, struct sk_buff **out,
 		size_t *avail)
 {
 	size_t copied;
@@ -225,11 +240,9 @@ static int copy_skb(struct net_device *dev,
 			if (copied == in->len)
 				return 0;
 		}
-		*out = evl_net_dev_alloc_skb(dev, EVL_NONBLOCK, EVL_REL);
+		*out = evl_net_alloc_frag(head, tail, EVL_NONBLOCK, EVL_REL);
 		if (IS_ERR(*out))
 			return PTR_ERR(*out);
-		*tail = *out;
-		(*out)->next = NULL;
 		tail = out;
 		*avail = skb_tailroom(*out);
 	}
@@ -238,8 +251,10 @@ static int copy_skb(struct net_device *dev,
 }
 
 /**
- *	evl_net_dev_copy_skb - Get a copy of a buffer
- *	@src:	source buffer to copy
+ *	evl_net_copy_skb - Get a copy of a buffer
+ *	@src:		source buffer to copy
+ *	@dev:		output device
+ *	@headroom:	how much headroom should be reserved into the heading buffer
  *
  *	This routine copies the linear data from the source and the
  *	protocol type. Other meta-data is left to its default init
@@ -249,27 +264,28 @@ static int copy_skb(struct net_device *dev,
  *	rx/tx. Otherwise, the error status is folded into the returned
  *	value.
  */
-struct sk_buff *evl_net_dev_copy_skb(struct net_device *dev,
-				struct sk_buff *src)
+struct sk_buff *evl_net_copy_skb(struct net_device *dev,
+				struct sk_buff *src,
+				int headroom)
 {
 	struct sk_buff *dst = NULL, **pq = &dst, *frag, *n;
 	size_t avail;
 	int ret;
 
-	dst = evl_net_dev_alloc_skb(dev, EVL_NONBLOCK, EVL_REL);
+	dst = evl_net_alloc_skb(dev, EVL_NONBLOCK, EVL_REL);
 	if (IS_ERR(dst))
 		return dst;
 
-	skb_reserve(dst, skb_headroom(src));
+	skb_reserve(dst, headroom);
 
 	n = dst;
 	avail = skb_tailroom(n);
-	ret = copy_skb(dev, pq, src, &n, &avail);
+	ret = copy_skb(dev, dst, pq, src, &n, &avail);
 	if (ret < 0)
 		goto fail;
 
 	skb_walk_frags(src, frag) {
-		ret = copy_skb(dev, pq, frag, &n, &avail);
+		ret = copy_skb(dev, dst, pq, frag, &n, &avail);
 		if (ret < 0)
 			goto fail;
 	}
@@ -370,7 +386,7 @@ put_skb:
  *
  * CAUTION: skb->dev might be invalid or refer to a VLAN device,
  * always use skb_shinfo_oob(skb)->owner for release to the proper
- * pool instead. See comment in evl_net_dev_alloc_skb().
+ * pool instead. See comment in alloc_dev_skb().
  */
 static void free_evl_skb(struct sk_buff *skb)
 {
@@ -705,7 +721,7 @@ struct sk_buff *evl_net_wget_skb(struct evl_socket *esk,
 	struct sk_buff *skb;
 	int ret;
 
-	skb = evl_net_dev_alloc_skb(dev, timeout, tmode);
+	skb = evl_net_alloc_skb(dev, timeout, tmode);
 	if (IS_ERR(skb))
 		return skb;
 
