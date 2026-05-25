@@ -118,7 +118,7 @@ struct sk_buff *evl_net_ipv4_build_datagram(struct evl_socket *esk,
 			goto fail;
 		}
 
-		skb_reserve(skb, real_dev->hard_header_len + sizeof(*iph));
+		skb_reserve(skb, evl_net_dev_maclen(dev) + sizeof(*iph));
 
 		if (skbp) {
 			skb->next = NULL;
@@ -128,6 +128,7 @@ struct sk_buff *evl_net_ipv4_build_datagram(struct evl_socket *esk,
 			head = skb;
 			skb_shinfo(skb)->frag_list = NULL;
 			skbp = &skb_shinfo(skb)->frag_list;
+
 			/*
 			 * Reserve the required space to store the
 			 * transport header in the first skb. As far
