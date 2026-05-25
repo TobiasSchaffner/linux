@@ -7,7 +7,6 @@
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
 #include <linux/poll.h>
-#include <linux/if_ether.h>
 #include <linux/if_vlan.h>
 #include <linux/err.h>
 #include <linux/ip.h>
@@ -136,12 +135,12 @@ static bool packet_deliver(struct sk_buff *skb, int protocol) /* oob */
 }
 
 /**
- *	evl_net_packet_deliver - deliver an ethernet packet to the raw
- *	interface tap
+ *	evl_net_packet_deliver - deliver a packet to the raw interface
+ *	tap
  *
- *	Deliver a copy of @skb to every socket accepting all ethernet
- *	protocols (ETH_P_ALL) if any, and/or @skb to the heading
- *	socket waiting for skb->protocol.
+ *	Deliver a copy of @skb to every socket accepting all protocols
+ *	(ETH_P_ALL) if any, and/or @skb to the heading socket waiting
+ *	for skb->protocol.
  *
  *	@skb the packet to deliver, not linked to any upstream
  *	queue.
@@ -406,7 +405,7 @@ static ssize_t send_packet(struct evl_socket *esk,
 	if (ret)
 		goto cleanup;
 
-	ret = evl_net_ether_transmit_raw(dev, skb);
+	ret = evl_net_dev_transmit_raw(dev, skb);
 	if (ret) {
 		evl_net_uncharge_skb_wmem(skb);
 		goto cleanup;
@@ -585,7 +584,7 @@ static __poll_t poll_packet(struct evl_socket *esk,
 	return ret;
 }
 
-static struct evl_net_proto ether_packet_proto = {
+static struct evl_net_proto packet_proto = {
 	.attach		= attach_packet_socket,
 	.destroy	= destroy_packet_socket,
 	.bind		= bind_packet_socket,
@@ -606,7 +605,7 @@ find_packet_proto(int protocol,	struct evl_net_proto *default_proto)
 	switch (protocol) {
 	case ETH_P_ALL:
 	case ETH_P_IP:
-		return &ether_packet_proto;
+		return &packet_proto;
 	case 0:
 		return default_proto;
 	default:
@@ -618,7 +617,7 @@ static struct evl_net_proto *match_packet_domain(int type, int protocol)
 {
 	static struct evl_net_proto *proto;
 
-	proto = find_packet_proto(protocol, &ether_packet_proto);
+	proto = find_packet_proto(protocol, &packet_proto);
 	if (proto == NULL)
 		return NULL;
 
