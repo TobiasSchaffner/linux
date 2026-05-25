@@ -67,6 +67,9 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 				      ktime_t timeout,
 				      enum evl_tmode tmode);
 
+struct sk_buff *evl_net_dev_copy_skb(struct net_device *dev,
+				     struct sk_buff *src);
+
 void evl_net_free_skb(struct sk_buff *skb);
 
 void evl_net_free_skb_list(struct list_head *list);

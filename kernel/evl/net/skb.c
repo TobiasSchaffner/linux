@@ -206,6 +206,83 @@ struct sk_buff *evl_net_dev_alloc_skb(struct net_device *dev,
 	return skb;
 }
 
+static int copy_skb(struct net_device *dev,
+		struct sk_buff **tail, struct sk_buff *in,
+		struct sk_buff **out,
+		size_t *avail)
+{
+	size_t copied;
+	void *p;
+
+	copied = 0;
+	while (copied < in->len) {
+		while (*avail > 0) {
+			size_t partial = min(*avail, in->len - copied);
+			p = skb_put(*out, partial);
+			memcpy(p, in->data + copied, partial);
+			*avail -= partial;
+			copied += partial;
+			if (copied == in->len)
+				return 0;
+		}
+		*out = evl_net_dev_alloc_skb(dev, EVL_NONBLOCK, EVL_REL);
+		if (IS_ERR(*out))
+			return PTR_ERR(*out);
+		*tail = *out;
+		(*out)->next = NULL;
+		tail = out;
+		*avail = skb_tailroom(*out);
+	}
+
+	return 0;
+}
+
+/**
+ *	evl_net_dev_copy_skb - Get a copy of a buffer
+ *	@src:	source buffer to copy
+ *
+ *	This routine copies the linear data from the source and the
+ *	protocol type. Other meta-data is left to its default init
+ *	state.
+ *
+ *	On success, the returned buffer is suitable for out-of-band
+ *	rx/tx. Otherwise, the error status is folded into the returned
+ *	value.
+ */
+struct sk_buff *evl_net_dev_copy_skb(struct net_device *dev,
+				struct sk_buff *src)
+{
+	struct sk_buff *dst = NULL, **pq = &dst, *frag, *n;
+	size_t avail;
+	int ret;
+
+	dst = evl_net_dev_alloc_skb(dev, EVL_NONBLOCK, EVL_REL);
+	if (IS_ERR(dst))
+		return dst;
+
+	skb_reserve(dst, skb_headroom(src));
+
+	n = dst;
+	avail = skb_tailroom(n);
+	ret = copy_skb(dev, pq, src, &n, &avail);
+	if (ret < 0)
+		goto fail;
+
+	skb_walk_frags(src, frag) {
+		ret = copy_skb(dev, pq, frag, &n, &avail);
+		if (ret < 0)
+			goto fail;
+	}
+
+	dst->protocol = src->protocol;
+
+	return dst;
+fail:
+	evl_net_free_skb(dst);
+
+	return ERR_PTR(ret);
+}
+
 /*
  * Plan for a skb to be released by the in-band stack.
  *
