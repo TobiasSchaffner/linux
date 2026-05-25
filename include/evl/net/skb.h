@@ -89,4 +89,7 @@ ssize_t evl_net_skb_to_uio(const struct iovec *iov, size_t iovlen,
 			struct sk_buff *skb, size_t skip,
 			bool *short_write);
 
+int evl_net_skb_parse(struct sk_buff *skb,
+		void *src_hwaddr);
+
 #endif /* !_EVL_NET_SKB_H */
