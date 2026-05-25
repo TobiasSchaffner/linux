@@ -820,3 +820,28 @@ ssize_t evl_net_skb_to_uio(const struct iovec *iov, size_t iovlen,
 
 	return ret;
 }
+
+/**
+ *	evl_net_skb_parse - fetch source MAC address from skb
+ *
+ *	This call forwards the request to dev_parse_header(),
+ *	substituting the real device which received @skb for a VLAN
+ *	device found in @skb->dev.
+ *
+ *	@skb		the buffer to parse for the source MAC address
+ *
+ *	@src_hwaddr	where to store the source MAC address
+ *
+ *	This routine expects the MAC header to be set for @skb.
+ */
+int evl_net_skb_parse(struct sk_buff *skb, void *src_hwaddr)
+{
+	struct net_device *dev = skb->dev;
+	int ret;
+
+	skb->dev = evl_net_real_dev(dev);
+	ret = dev_parse_header(skb, src_hwaddr);
+	skb->dev = dev;
+
+	return ret;
+}
