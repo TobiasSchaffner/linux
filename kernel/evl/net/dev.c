@@ -27,6 +27,7 @@
 #include <evl/net/input.h>
 #include <evl/net/output.h>
 #include <evl/net/route.h>
+#include <evl/net/ether/output.h>
 #include <uapi/evl/net/net-abi.h>
 
 /*
@@ -851,3 +852,53 @@ int evl_net_dev_allocfd(struct net *net, const char *devname)
 
 	return fd;
 }
+
+int evl_net_dev_transmit(struct net_device *dev,
+			struct sk_buff *skb,
+			const void *hw_dst)
+{
+	struct net_device *real_dev = evl_net_real_dev(dev);
+	int ret;
+
+	/*
+	 * Given a device and a buffer, find out which handler is
+	 * suitable for transmitting the egress packet depending on
+	 * the device type.
+	 */
+	switch (real_dev->type) {
+	case ARPHRD_ETHER:
+	case ARPHRD_LOOPBACK:
+		ret = evl_net_ether_transmit(dev, skb, hw_dst);
+		break;
+	default:
+		ret = -ENODEV;
+	}
+
+	return ret;
+
+}
+EXPORT_SYMBOL_GPL(evl_net_dev_transmit);
+
+int evl_net_dev_transmit_raw(struct net_device *dev,
+			struct sk_buff *skb)
+{
+	struct net_device *real_dev = evl_net_real_dev(dev);
+	int ret;
+
+	/*
+	 * Same as evl_net_dev_transmit(), but using the raw output
+	 * interface for the device type.
+	 */
+	switch (real_dev->type) {
+	case ARPHRD_ETHER:
+	case ARPHRD_LOOPBACK:
+		ret = evl_net_ether_transmit_raw(dev, skb);
+		break;
+	default:
+		ret = -ENODEV;
+	}
+
+	return ret;
+
+}
+EXPORT_SYMBOL_GPL(evl_net_dev_transmit_raw);
