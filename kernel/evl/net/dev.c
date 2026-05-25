@@ -902,3 +902,19 @@ int evl_net_dev_transmit_raw(struct net_device *dev,
 
 }
 EXPORT_SYMBOL_GPL(evl_net_dev_transmit_raw);
+
+/**
+ *	evl_net_dev_maclen - Get a device-specific MAC header length
+ *
+ *	@dev	network device
+ */
+int evl_net_dev_maclen(struct net_device *dev)
+{
+	struct net_device *real_dev = evl_net_real_dev(dev);
+
+	if (real_dev->type == ARPHRD_ETHER && is_vlan_dev(dev))
+		return VLAN_ETH_HLEN;
+
+	return real_dev->hard_header_len;
+}
+EXPORT_SYMBOL_GPL(evl_net_dev_maclen);

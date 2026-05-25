@@ -54,6 +54,8 @@ int evl_net_dev_transmit(struct net_device *dev,
 int evl_net_dev_transmit_raw(struct net_device *dev,
 			struct sk_buff *skb);
 
+int evl_net_dev_maclen(struct net_device *dev);
+
 void evl_net_wake_rx(struct net_device *dev);
 
 int evl_net_dev_allocfd(struct net *net, const char *devname);
