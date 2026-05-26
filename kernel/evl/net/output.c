@@ -9,7 +9,6 @@
 #include <linux/err.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
-#include <linux/if_vlan.h>
 #include <linux/interrupt.h>
 #include <linux/irq_work.h>
 #include <evl/list.h>
@@ -217,18 +216,15 @@ static int xmit_oob(struct net_device *real_dev, struct sk_buff *skb)
 }
 
 /**
- *	evl_net_transmit - queue an egress packet for out-of-band
- *	transmission to the device.
+ *	evl_net_transmit - queue an egress packet for transmit
+ *	@dev	output device (may be a VLAN device)
+ *	@skb	packet to transmit
  *
- *	Add an outgoing packet to the out-of-band transmit queue, so
- *	that it will be handed over to the device referred to by
- *	@skb->dev. The packet is complete (e.g. the VLAN tag is set if
- *	@skb->dev is a VLAN device).
- *
- *	@skb the packet to queue. Must not be linked to any upstream
- *	queue.
+ *	Schedule the outgoing packet @skb for transmit by @dev or its
+ *	base device if @dev is an upper device (i.e. VLAN).
  *
  *	Prerequisites:
+ *
  *	- skb->dev is a valid device (real or VLAN). The caller must
  *        prevent from the interface going down.
  *	- skb->sk == NULL.
