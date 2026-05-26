@@ -151,12 +151,14 @@ static bool packet_deliver(struct sk_buff *skb, int protocol) /* oob */
  */
 bool evl_net_packet_deliver(struct sk_buff *skb) /* oob */
 {
+	bool all_delivered;
+
 	if (skb_is_oob_timestamped(skb))
 		skb_shinfo_oob(skb)->delivery_time = evl_ktime_monotonic();
 
-	packet_deliver(skb, ETH_P_ALL);
+	all_delivered = packet_deliver(skb, ETH_P_ALL);
 
-	return packet_deliver(skb, ntohs(skb->protocol));
+	return packet_deliver(skb, ntohs(skb->protocol)) || all_delivered;
 }
 
 static void do_bind(struct evl_socket *esk, int protocol)
