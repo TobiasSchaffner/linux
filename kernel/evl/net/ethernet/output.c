@@ -26,17 +26,19 @@ static void add_vlan_tag(struct net_device *vlan_dev, struct sk_buff *skb)
 	if (!netdev_is_oob_capable(real_dev))
 		return;
 
-	if (real_dev->features & NETIF_F_HW_VLAN_CTAG_TX)
-		return;
-
 	vlan_proto = vlan_dev_vlan_proto(vlan_dev);
 	vlan_tci = vlan_dev_vlan_id(vlan_dev);
 	vlan_tci |= vlan_dev_get_egress_qos_mask(vlan_dev, skb->priority);
 
+	if (real_dev->features & NETIF_F_HW_VLAN_CTAG_TX) {
+		__vlan_hwaccel_put_tag(skb, vlan_proto, vlan_tci);
+		return;
+	}
+
 	/*
 	 * Can't fail on skb_cow_head() since the caller is expected
-	 * to have reserved at least VLAN_ETH_HLEN bytes for us in
-	 * skb (otherwise, well, panic is looming..).
+	 * to have reserved VLAN_HLEN bytes from the linear space for
+	 * us (otherwise, well, panic is looming..).
 	 */
 	__vlan_insert_tag(skb, vlan_proto, vlan_tci);
 	skb->protocol = vlan_proto;
@@ -62,6 +64,7 @@ int evl_net_ether_transmit_raw(struct net_device *dev, struct sk_buff *skb)
 
 	if (is_vlan_dev(dev)) {
 		add_vlan_tag(dev, skb);
+		/* We have separate statistics about VLAN device I/O. */
 		stats = evl_net_get_stats(dev);
 		evl_counter_inc_careful(&stats->tx_packets);
 		evl_counter_add_careful(&stats->tx_bytes, skb->len);
