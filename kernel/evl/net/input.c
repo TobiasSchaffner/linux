@@ -175,6 +175,7 @@ void evl_net_receive(struct sk_buff *skb,
 		struct evl_net_handler *handler) /* in-band or oob */
 {
 	struct evl_netdev_state *est = evl_net_get_state(skb->dev);
+	struct net_device *dev = skb->dev;
 
 	if (refcount_read(&evl_net_rx_timestamping) > 1) {
 		skb_shinfo_oob(skb)->device_time = evl_ktime_monotonic();
@@ -197,8 +198,9 @@ void evl_net_receive(struct sk_buff *skb,
 	 * should push the buffer to the in-band nit, all operations
 	 * are properly serialized there.
 	 */
-	if (dev_nit_active(skb->dev))
-		evl_net_tap_in(skb->dev, skb);
+	if (dev_nit_active(dev) ||
+	    (is_vlan_dev(dev) && dev_nit_active(evl_net_real_dev(dev))))
+		evl_net_tap_in(dev, skb);
 
 	/*
 	 * Enqueue the packet. The NIC driver is expected to call
