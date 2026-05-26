@@ -76,7 +76,8 @@ static inline void update_vdso_time_data(struct vdso_time_data *vdata, struct ti
 
 static void update_generic_mmio(struct vdso_time_data *vdata, struct clocksource *cs)
 {
-#ifdef CONFIG_GENERIC_CLOCKSOURCE_VDSO
+#ifdef CONFIG_GENERIC_VDSO_CLOCKSOURCE
+	struct vdso_clock *vc = vdata->clock_data;
 	u16 seq;
 
 	if (cs->vdso_type == (vc->cs_type_seq >> 16))
