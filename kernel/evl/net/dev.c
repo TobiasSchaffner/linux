@@ -912,7 +912,8 @@ int evl_net_dev_maclen(struct net_device *dev)
 {
 	struct net_device *real_dev = evl_net_real_dev(dev);
 
-	if (real_dev->type == ARPHRD_ETHER && is_vlan_dev(dev))
+	if (real_dev->type == ARPHRD_ETHER &&
+	    is_vlan_dev(dev) && !(real_dev->features & NETIF_F_HW_VLAN_CTAG_TX))
 		return VLAN_ETH_HLEN;
 
 	return real_dev->hard_header_len;
