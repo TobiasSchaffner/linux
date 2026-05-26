@@ -11,6 +11,43 @@
 #include <evl/net/device.h>
 #include <evl/net/output.h>
 
+/*
+ * add_vlan_tag() does manual tagging if the base device of @dev is
+ * oob-capable and does not provide hw-assisted tagging. Otherwise,
+ * expect the in-band stack to do the right thing (TM) as we are going
+ * to forward it the packet for transmission.
+ */
+static void add_vlan_tag(struct net_device *vlan_dev, struct sk_buff *skb)
+{
+	struct net_device *real_dev = evl_net_real_dev(vlan_dev);
+	__be16 vlan_proto;
+	u16 vlan_tci;
+
+	if (!netdev_is_oob_capable(real_dev))
+		return;
+
+	if (real_dev->features & NETIF_F_HW_VLAN_CTAG_TX)
+		return;
+
+	vlan_proto = vlan_dev_vlan_proto(vlan_dev);
+	vlan_tci = vlan_dev_vlan_id(vlan_dev);
+	vlan_tci |= vlan_dev_get_egress_qos_mask(vlan_dev, skb->priority);
+
+	/*
+	 * Can't fail on skb_cow_head() since the caller is expected
+	 * to have reserved at least VLAN_ETH_HLEN bytes for us in
+	 * skb (otherwise, well, panic is looming..).
+	 */
+	__vlan_insert_tag(skb, vlan_proto, vlan_tci);
+	skb->protocol = vlan_proto;
+
+	/*
+	 * Since we inserted a tag manually into the packet, tell the
+	 * NIC driver that hw-assisted tagging is not needed.
+	 */
+	__vlan_hwaccel_clear_tag(skb);
+}
+
 /**
  *	evl_net_ether_transmit_raw - pass an ethernet packet down to
  *	the hardware as is. If @dev is a VLAN device, this routine
@@ -22,16 +59,9 @@
 int evl_net_ether_transmit_raw(struct net_device *dev, struct sk_buff *skb)
 {
 	struct evl_netdev_stats *stats;
-	__be16 vlan_proto;
-	u16 vlan_tci;
 
 	if (is_vlan_dev(dev)) {
-		vlan_proto = vlan_dev_vlan_proto(dev);
-		vlan_tci = vlan_dev_vlan_id(dev);
-		vlan_tci |= vlan_dev_get_egress_qos_mask(dev, skb->priority);
-		/* Can't fail on skb_cow_head(), we reserved VLAN_ETH_HLEN. */
-		__vlan_insert_tag(skb, vlan_proto, vlan_tci);
-		skb->protocol = vlan_proto;
+		add_vlan_tag(dev, skb);
 		stats = evl_net_get_stats(dev);
 		evl_counter_inc_careful(&stats->tx_packets);
 		evl_counter_add_careful(&stats->tx_bytes, skb->len);
@@ -53,15 +83,6 @@ static int ether_transmit_one(struct net_device *dev, struct sk_buff *skb,
 	eth = skb_push(skb, ETH_HLEN);
 	skb_reset_mac_header(skb);
 	eth->h_proto = skb->protocol;
-	/*
-	 * Ugly hack alert: the caller might reply to a peer using a
-	 * the original skb modified in-place (e.g. ICMP_ECHOREPLY),
-	 * with hw_dst pointing at the source hardware address in the
-	 * original MAC header. For this to work while saving the
-	 * caller the need for passing us a temp copy of the original
-	 * source address, we first set the destination address in the
-	 * MAC header _then_ the source address.
-	 */
 	ether_addr_copy(eth->h_dest, hw_dst);
 	ether_addr_copy(eth->h_source, evl_net_real_dev(dev)->dev_addr);
 
