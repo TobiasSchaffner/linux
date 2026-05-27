@@ -52,6 +52,18 @@ static int do_echoreply(struct sk_buff *skb)
 	if (READ_ONCE(net->ipv4.sysctl_icmp_echo_ignore_all))
 		goto out;
 
+	raddr = iph->daddr;
+	if (ipv4_is_lbcast(raddr) || ipv4_is_multicast(raddr)) {
+		if (READ_ONCE(net->ipv4.sysctl_icmp_echo_ignore_broadcasts))
+			goto out;
+		/* Get the replier source address. */
+		raddr = evl_net_ipv4_devaddr(dev);
+		if (!raddr) {
+			evl_net_free_skb(rskb);
+			return -EDESTADDRREQ;
+		}
+	}
+
 	/* Fetch the source MAC address. */
 	ret = evl_net_skb_parse(skb, src_hwaddr);
 	if (ret <= 0)
@@ -72,15 +84,6 @@ static int do_echoreply(struct sk_buff *skb)
 	skb_reset_network_header(rskb);
 
 	riph = (struct iphdr *)skb_network_header(rskb);
-	raddr = iph->daddr;
-	if (ipv4_is_lbcast(raddr) || ipv4_is_multicast(raddr)) {
-		/* Get the replier source address. */
-		raddr = evl_net_ipv4_devaddr(dev);
-		if (!raddr) {
-			evl_net_free_skb(rskb);
-			return -EDESTADDRREQ;
-		}
-	}
 	riph->saddr = raddr;
 	riph->daddr = iph->saddr;
 	ip_send_check(riph);
