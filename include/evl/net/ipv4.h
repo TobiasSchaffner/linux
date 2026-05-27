@@ -51,6 +51,8 @@ int evl_net_ipv4_solicit(struct net *net,
 			struct net_device *dev,
 			struct sockaddr_unsized *addr, int flags);
 
+__be32 evl_net_ipv4_devaddr(const struct net_device *dev);
+
 extern int evl_net_ipv4_solicit_timeout;
 
 extern struct evl_socket_domain evl_net_ipv4;
