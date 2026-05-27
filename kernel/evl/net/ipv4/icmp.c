@@ -44,6 +44,7 @@ static int do_echoreply(struct sk_buff *skb)
 	char src_hwaddr[MAX_ADDR_LEN];
 	struct icmphdr *ricmph;
 	struct sk_buff *rskb;
+	__be32 raddr;
 	int headroom;
 	__wsum csum;
 	int ret;
@@ -71,7 +72,16 @@ static int do_echoreply(struct sk_buff *skb)
 	skb_reset_network_header(rskb);
 
 	riph = (struct iphdr *)skb_network_header(rskb);
-	riph->saddr = iph->daddr;
+	raddr = iph->daddr;
+	if (ipv4_is_lbcast(raddr) || ipv4_is_multicast(raddr)) {
+		/* Get the replier source address. */
+		raddr = evl_net_ipv4_devaddr(dev);
+		if (!raddr) {
+			evl_net_free_skb(rskb);
+			return -EDESTADDRREQ;
+		}
+	}
+	riph->saddr = raddr;
 	riph->daddr = iph->saddr;
 	ip_send_check(riph);
 
