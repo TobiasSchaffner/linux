@@ -9,6 +9,7 @@
 #include <linux/units.h>
 #include <linux/jhash.h>
 #include <linux/notifier.h>
+#include <linux/inetdevice.h>
 #include <net/ip.h>
 #include <net/netevent.h>
 #include <net/neighbour.h>
@@ -386,6 +387,26 @@ out:
 	neigh_release(neigh);
 
 	return ret;
+}
+
+/**
+ *	evl_net_ipv4_devaddr - Get the IPv4 address of a device.
+ *
+ *	The caller must hold the RCU lock.
+ */
+__be32 evl_net_ipv4_devaddr(const struct net_device *dev)
+{
+	struct in_device *in_dev = __in_dev_get_rcu(dev);
+	const struct in_ifaddr *ifa;
+
+	if (EVL_WARN_ON(EVL, !in_dev)) /* Ummh, oh.. */
+		return 0;
+
+	ifa = rcu_dereference(in_dev->ifa_list);
+	if (EVL_WARN_ON(EVL, !ifa)) /* Seriously? */
+		return 0;
+
+	return ifa->ifa_address;
 }
 
 /*
