@@ -18,9 +18,9 @@
 #include <evl/flag.h>
 #include <evl/net.h>
 #include <evl/net/device.h>
-#include <evl/net/ipv4.h>
 #include <evl/net/timestamping.h>
 #include <evl/net/tap.h>
+#include <evl/net/ipv4/input.h>
 
 /*
  * NOTE: This code cannot compete with napi_complete_done()

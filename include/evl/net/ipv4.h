@@ -29,16 +29,6 @@ int evl_net_ipv4_handle_event(struct notifier_block *nb,
 
 int evl_net_ipv4_deliver(struct sk_buff *skb);
 
-void __evl_net_ipv4_gc(struct evl_net_frag_tdir *ftdir);
-
-static inline void evl_net_ipv4_gc(struct net *net)
-{
-	struct evl_net_frag_tdir *ftdir = &net->oob.ipv4.ftdir;
-
-	if (!hlist_empty(&ftdir->gc.queue))
-		__evl_net_ipv4_gc(ftdir);
-}
-
 int evl_net_init_ipv4(struct net *net);
 
 void evl_net_cleanup_ipv4(struct net *net);
