@@ -92,7 +92,7 @@ static inline void evl_get_cache_entry(struct evl_cache_entry *entry)
 
 void evl_put_cache_entry(struct evl_cache_entry *entry);
 
-void evl_clean_cache(struct evl_cache *cache,
+void evl_purge_cache(struct evl_cache *cache,
 		bool (*testfn)(struct evl_cache_entry *e, void *arg),
 		void *arg);
 

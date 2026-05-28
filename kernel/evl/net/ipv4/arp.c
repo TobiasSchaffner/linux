@@ -299,7 +299,7 @@ void evl_net_flush_arp(struct net *net, struct net_device *dev)
 	struct oob_net_state *nets = &net->oob;
 
 	if (dev)
-		evl_clean_cache(&nets->ipv4.arp, compare_arp_dev, dev);
+		evl_purge_cache(&nets->ipv4.arp, compare_arp_dev, dev);
 	else
 		evl_flush_cache(&nets->ipv4.arp);
 }
