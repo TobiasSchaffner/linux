@@ -88,7 +88,7 @@ static bool compare_route_dev(struct evl_cache_entry *entry, void *arg)
 static inline void flush_route_cache(struct net *net, struct net_device *dev)
 {
 	if (dev)
-		evl_clean_cache(&net->oob.ipv4.routes, compare_route_dev, dev);
+		evl_purge_cache(&net->oob.ipv4.routes, compare_route_dev, dev);
 	else
 		evl_flush_cache(&net->oob.ipv4.routes);
 }
