@@ -204,7 +204,7 @@ void evl_flush_cache(struct evl_cache *cache) /* in-band */
 }
 EXPORT_SYMBOL_GPL(evl_flush_cache);
 
-void evl_clean_cache(struct evl_cache *cache,
+void evl_purge_cache(struct evl_cache *cache,
 		bool (*testfn)(struct evl_cache_entry *e, void *arg),
 		void *arg) /* in-band */
 {
@@ -241,7 +241,7 @@ void evl_clean_cache(struct evl_cache *cache,
 
 	spin_unlock_bh(&cache->lock);
 }
-EXPORT_SYMBOL_GPL(evl_clean_cache);
+EXPORT_SYMBOL_GPL(evl_purge_cache);
 
 /* in-band / oob */
 struct evl_cache_entry *evl_lookup_cache(struct evl_cache *cache,
