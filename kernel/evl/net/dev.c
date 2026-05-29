@@ -7,7 +7,7 @@
 #include <linux/types.h>
 #include <linux/atomic.h>
 #include <linux/slab.h>
-#include <linux/netdevice.h>
+#include <linux/inetdevice.h>
 #include <linux/if_vlan.h>
 #include <linux/err.h>
 #include <linux/rtnetlink.h>
@@ -27,7 +27,6 @@
 #include <evl/net/input.h>
 #include <evl/net/output.h>
 #include <evl/net/route.h>
-#include <evl/net/ether/output.h>
 #include <uapi/evl/net/net-abi.h>
 
 /*
@@ -337,11 +336,6 @@ static int enable_oob_port(struct net_device *dev,
 queue:
 	netif_enable_oob_port(dev);
 
-	/* Advertise the device to the routing system. */
-	ret = evl_net_add_device_route(dev);
-	if (ret)
-		disable_oob_port(dev);
-
 	return ret;
 }
 
@@ -377,7 +371,7 @@ static void disable_oob_port(struct net_device *dev) /* inband, rtnl_lock held *
 		return;
 
 	/* Remove the oob-enabled device from the routing system. */
-	evl_net_remove_device_route(dev);
+	evl_net_del_route_dev(dev);
 
 	/* Force unbind any socket bound to the downed device. */
 	drop_bindings(nds);
@@ -617,16 +611,20 @@ int evl_netdev_event(struct notifier_block *ev_block,
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
-	switch (event) {
-	case NETDEV_UP:
-		break;
-	case NETDEV_GOING_DOWN:
-		if (netif_oob_port(dev)) {
-			disable_oob_port(dev);
-			evl_net_retire_device(dev);
-		}
-		break;
-	}
+	if (event == NETDEV_GOING_DOWN && netif_oob_port(dev))
+		disable_oob_port(dev);
+
+	return NOTIFY_DONE;
+}
+
+int evl_inetdev_event(struct notifier_block *ev_block,
+		unsigned long event, void *ptr) /* rtnl_lock held */
+{
+	struct in_ifaddr *ifa = ptr;
+	struct net_device *dev = ifa->ifa_dev->dev;
+
+	if (event == NETDEV_DOWN && netif_oob_port(dev))
+		evl_net_del_route_src(dev, ifa);
 
 	return NOTIFY_DONE;
 }

@@ -7,10 +7,12 @@
 #ifndef _EVL_NET_ROUTE_H
 #define _EVL_NET_ROUTE_H
 
+#include <net/flow.h>
 #include <net/route.h>
 #include <evl/cache.h>
 
 struct net;
+struct in_ifaddr;
 struct evl_work;
 
 /* Excerpt from struct flowi4. */
@@ -38,25 +40,31 @@ int evl_net_cache_route(struct evl_cache *cache,
 			const void *key,
 			size_t key_len);
 
+void evl_net_del_route_dev(struct net_device *dev);
+
+void evl_net_del_route_src(struct net_device *dev,
+			   struct in_ifaddr *ifa);
+
 static inline void evl_net_put_route(struct evl_net_route *ert)
 {
 	evl_put_cache_entry(&ert->entry);
 }
 
-int evl_net_add_device_route(struct net_device *dev);
-
-void evl_net_remove_device_route(struct net_device *dev);
-
-void evl_net_retire_device(struct net_device *dev);
-
-static inline struct dst_entry *evl_net_route_dst(const struct evl_net_route *ert)
+static inline
+struct dst_entry *evl_net_route_dst(const struct evl_net_route *ert)
 {
 	return &ert->rt->dst;
 }
 
-static inline struct net_device *evl_net_route_dev(const struct evl_net_route *ert)
+static inline
+struct net_device *evl_net_route_dev(const struct evl_net_route *ert)
 {
 	return evl_net_route_dst(ert)->dev;
+}
+
+static inline __be32 evl_net_route_src(const struct evl_net_route *ert)
+{
+	return ert->flowi4.saddr;
 }
 
 #endif /* !_EVL_NET_ROUTE_H */
