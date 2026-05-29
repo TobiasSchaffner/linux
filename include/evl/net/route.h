@@ -18,9 +18,9 @@ struct evl_work;
 /* Excerpt from struct flowi4. */
 struct evl_net_flowi4 {
 	/* Source address. */
-	u32 saddr;
+	__be32 saddr;
 	/* Destination address. */
-	u32 daddr;
+	__be32 daddr;
 };
 
 /* Cached route for IP datagrams. */
