@@ -5,6 +5,7 @@
  */
 
 #include <linux/slab.h>
+#include <linux/inetdevice.h>
 #include <net/route.h>
 #include <net/ip.h>
 #include <evl/net/ipv4/route.h>
@@ -46,8 +47,10 @@ static void drop_ipv4_route(struct evl_cache_entry *entry) /* in-band */
 {
 	struct evl_net_route *e =
 		container_of(entry, struct evl_net_route, entry);
+	struct net_device *dev = evl_net_route_dev(e);
 
-	netdev_dbg(evl_net_route_dev(e), "dropping IPv4 route %pI4\n", e->key);
+	netdev_dbg(dev, "dropping out-of-band route %pI4 -> %pI4\n",
+		&e->flowi4.saddr, &e->flowi4.daddr);
 
 	ip_rt_put(e->rt);
 
@@ -76,26 +79,9 @@ int evl_net_init_ipv4_routing(struct net *net)
 	return evl_init_cache(cache);
 }
 
-static bool compare_route_dev(struct evl_cache_entry *entry, void *arg)
-{
-	const struct evl_net_route *ert =
-		container_of(entry, struct evl_net_route, entry);
-	struct net_device *dev = arg;
-
-	return dev == evl_net_route_dev(ert);
-}
-
-static inline void flush_route_cache(struct net *net, struct net_device *dev)
-{
-	if (dev)
-		evl_purge_cache(&net->oob.ipv4.routes, compare_route_dev, dev);
-	else
-		evl_flush_cache(&net->oob.ipv4.routes);
-}
-
 void evl_net_cleanup_ipv4_routing(struct net *net)
 {
-	flush_route_cache(net, NULL);
+	evl_flush_cache(&net->oob.ipv4.routes);
 }
 
 /*
@@ -161,9 +147,37 @@ evl_net_get_ipv4_route(struct net *net, __be32 daddr)
 	return NULL;
 }
 
-void evl_net_flush_ipv4_routes(struct net *net, struct net_device *dev)
+static bool compare_route_dev(struct evl_cache_entry *entry, void *arg)
 {
-	flush_route_cache(net, dev);
+	const struct evl_net_route *ert =
+		container_of(entry, struct evl_net_route, entry);
+	struct net_device *dev = arg;
+
+	return dev == evl_net_route_dev(ert);
+}
+
+void evl_net_ipv4_purge_dev(struct net *net, struct net_device *dev)
+{
+	evl_purge_cache(&net->oob.ipv4.routes, compare_route_dev, dev);
+}
+
+static bool compare_route_src(struct evl_cache_entry *entry, void *arg)
+{
+	const struct evl_net_route *ert =
+		container_of(entry, struct evl_net_route, entry);
+	struct in_ifaddr *ifa = arg;
+
+	return inet_ifa_match(evl_net_route_src(ert), ifa);
+}
+
+void evl_net_ipv4_purge_src(struct net *net, struct in_ifaddr *ifa)
+{
+	evl_purge_cache(&net->oob.ipv4.routes, compare_route_src, ifa);
+}
+
+void evl_net_ipv4_flush_cache(struct net *net)
+{
+	evl_purge_cache(&net->oob.ipv4.routes, NULL, NULL);
 }
 
 /*

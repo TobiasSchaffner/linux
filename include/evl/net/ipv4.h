@@ -16,6 +16,7 @@ struct sk_buff;
 struct sockaddr;
 struct timespec64;
 struct notifier_block;
+struct in_ifaddr;
 
 struct evl_net_ipv4_cookie {
 	__be32 saddr;		/* Source IP */
@@ -32,10 +33,6 @@ int evl_net_ipv4_deliver(struct sk_buff *skb);
 int evl_net_init_ipv4(struct net *net);
 
 void evl_net_cleanup_ipv4(struct net *net);
-
-int evl_net_ipv4_add_device(struct net_device *dev);
-
-void evl_net_ipv4_remove_device(struct net_device *dev);
 
 int evl_net_ipv4_solicit(struct net *net,
 			struct net_device *dev,

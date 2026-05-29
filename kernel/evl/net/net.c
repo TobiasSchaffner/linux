@@ -5,7 +5,7 @@
  */
 
 #include <linux/notifier.h>
-#include <linux/netdevice.h>
+#include <linux/inetdevice.h>
 #include <linux/socket.h>
 #include <linux/export.h>
 #include <linux/slab.h>
@@ -60,6 +60,10 @@ static struct notifier_block netdev_notifier __read_mostly = {
 	.notifier_call = evl_netdev_event
 };
 
+static struct notifier_block inetdev_notifier __read_mostly = {
+	.notifier_call = evl_inetdev_event
+};
+
 int __init evl_net_init(void)
 {
 	int ret;
@@ -72,11 +76,15 @@ int __init evl_net_init(void)
 
 	ret = register_netevent_notifier(&netevent_notifier);
 	if (ret)
-		goto fail_netnotifier;
+		goto fail_net;
 
 	ret = register_netdevice_notifier(&netdev_notifier);
 	if (ret)
-		goto fail_devnotifier;
+		goto fail_netdev;
+
+	ret = register_inetaddr_notifier(&inetdev_notifier);
+	if (ret)
+		goto fail_inetdev;
 
 	ret = evl_register_socket_domain(&evl_net_packet);
 	if (ret)
@@ -100,10 +108,12 @@ fail_proto:
 fail_ipv4:
 	evl_unregister_socket_domain(&evl_net_packet);
 fail_packet:
+	unregister_inetaddr_notifier(&inetdev_notifier);
+fail_inetdev:
 	unregister_netdevice_notifier(&netdev_notifier);
-fail_devnotifier:
+fail_netdev:
 	unregister_netdevice_notifier(&netevent_notifier);
-fail_netnotifier:
+fail_net:
 	evl_net_cleanup_qdisc();
 
 	return ret;
@@ -114,6 +124,7 @@ void __init evl_net_cleanup(void)
 	sock_unregister(PF_OOB);
 	proto_unregister(&evl_af_oob_proto);
 	evl_unregister_socket_domain(&evl_net_packet);
+	unregister_inetaddr_notifier(&inetdev_notifier);
 	unregister_netdevice_notifier(&netdev_notifier);
 	unregister_netevent_notifier(&netevent_notifier);
 	evl_net_cleanup_qdisc();
@@ -209,7 +220,7 @@ static ssize_t ipv4_flush_routes_store(struct device *dev,
 {
 	struct net *net = current->nsproxy->net_ns;
 
-	evl_net_flush_ipv4_routes(net, NULL);
+	evl_net_ipv4_flush_cache(net);
 
 	return count;
 }

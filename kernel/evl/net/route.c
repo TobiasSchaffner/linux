@@ -5,6 +5,7 @@
  */
 
 #include <linux/slab.h>
+#include <linux/inetdevice.h>
 #include <net/route.h>
 #include <evl/net/socket.h>
 #include <evl/net/ipv4.h>
@@ -21,29 +22,26 @@ void ip_learn_oob_route(struct net *net, struct flowi4 *fl4, struct rtable *rt)
 }
 
 /*
- * Retire a device from the routing system. This involves flushing the
- * routes and neighbour entries maintained in their respective
- * out-of-band front caches.
+ * Disconnect a device from the routing system by purging the route
+ * and neighbour caches from entries associated to this device.
  */
-void evl_net_retire_device(struct net_device *dev)
+void evl_net_del_route_dev(struct net_device *dev)
 {
-	evl_net_flush_ipv4_routes(dev_net(dev), dev);
-	evl_net_flush_arp(dev_net(dev), dev);
+  	if  (!EVL_WARN_ON(NET, !netif_oob_port(dev)))
+		return;
+
+	if (rcu_access_pointer(dev->ip_ptr)) {
+		evl_net_ipv4_purge_dev(dev_net(dev), dev);
+		evl_net_flush_arp(dev_net(dev), dev);
+	}
 }
 
 /*
- * Prepare the routing system for using an emerging device.
+ * Purge the route cache from entries referring to the given address
+ * as source.
  */
-int evl_net_add_device_route(struct net_device *dev)
+void evl_net_del_route_src(struct net_device *dev, struct in_ifaddr *ifa)
 {
-	return evl_net_ipv4_add_device(dev);
-}
-
-/*
- * Drop the information related to a downed device from the routing
- * system.
- */
-void evl_net_remove_device_route(struct net_device *dev)
-{
-	evl_net_ipv4_remove_device(dev);
+	if (rcu_access_pointer(dev->ip_ptr))
+		evl_net_ipv4_purge_src(dev_net(dev), ifa);
 }
