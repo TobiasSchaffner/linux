@@ -250,28 +250,6 @@ __be32 evl_net_ipv4_devaddr(const struct net_device *dev)
 	return ifa->ifa_address;
 }
 
-/*
- * Declare a new oob-enabled device to the routing system. Although
- * unused at the moment, keep this in place for future needs.
- */
-int evl_net_ipv4_add_device(struct net_device *dev)
-{
-	/*
-	 * EVL performs output routing only so far, which targets
-	 * oob-enabled devices exclusively. So complain if oob mode is
-	 * not active for the device received.
-	 */
-	EVL_WARN_ON(NET, !netif_oob_port(dev));
-	return 0;
-}
-
-/* Remove a disabled device from the routing system. */
-void evl_net_ipv4_remove_device(struct net_device *dev)
-{
-	if (EVL_WARN_ON(NET, !netif_oob_port(dev)))
-		return;
-}
-
 static struct evl_net_proto *match_ipv4_domain(int type, int protocol)
 {
 	switch (protocol) {
