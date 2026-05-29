@@ -14,6 +14,7 @@ struct net;
 struct net_device;
 struct flowi4;
 struct rtable;
+struct in_ifaddr;
 
 int evl_net_init_ipv4_routing(struct net *net);
 
@@ -22,7 +23,11 @@ void evl_net_cleanup_ipv4_routing(struct net *net);
 void evl_net_learn_ipv4_route(struct net *net,
 			struct flowi4 *fl4, struct rtable *rt);
 
-void evl_net_flush_ipv4_routes(struct net *net, struct net_device *dev);
+void evl_net_ipv4_purge_dev(struct net *net, struct net_device *dev);
+
+void evl_net_ipv4_purge_src(struct net *net, struct in_ifaddr *ifa);
+
+void evl_net_ipv4_flush_cache(struct net *net);
 
 struct evl_net_route *evl_net_get_ipv4_route(struct net *net, __be32 daddr);
 

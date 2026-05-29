@@ -56,7 +56,7 @@ static int do_echoreply(struct sk_buff *skb)
 	if (ipv4_is_lbcast(raddr) || ipv4_is_multicast(raddr)) {
 		if (READ_ONCE(net->ipv4.sysctl_icmp_echo_ignore_broadcasts))
 			goto out;
-		/* Get the replier source address. */
+		/* Get our primary source address. */
 		raddr = evl_net_ipv4_devaddr(dev);
 		if (!raddr) {
 			evl_net_free_skb(rskb);

@@ -24,6 +24,9 @@ int evl_net_switch_oob_port(struct net_device *dev,
 int evl_netdev_event(struct notifier_block *ev_block,
 		     unsigned long event, void *ptr);
 
+int evl_inetdev_event(struct notifier_block *ev_block,
+		     unsigned long event, void *ptr);
+
 struct net_device *
 evl_net_get_dev_by_index(struct net *net, int ifindex);
 
