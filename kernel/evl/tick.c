@@ -93,7 +93,7 @@ static void setup_proxy(struct clock_proxy_device *dev)
 	struct clock_event_device *proxy_dev = &dev->proxy_device;
 
 	dev->handle_oob_event = evl_core_tick;
-	proxy_dev->features |= CLOCK_EVT_FEAT_KTIME;
+	proxy_dev->features |= CLOCK_EVT_FEAT_HRTIMER;
 	proxy_dev->set_next_ktime = proxy_set_next_ktime;
 	if (proxy_dev->set_state_oneshot_stopped)
 		proxy_dev->set_state_oneshot_stopped = proxy_set_oneshot_stopped;
@@ -261,7 +261,7 @@ void evl_program_proxy_tick(struct evl_clock *clock)
 	t = evl_tdate(timer);
 	delta = ktime_to_ns(ktime_sub(t, evl_read_clock(clock)));
 
-	if (real_dev->features & CLOCK_EVT_FEAT_KTIME) {
+	if (real_dev->features & CLOCK_EVT_FEAT_HRTIMER) {
 		real_dev->set_next_ktime(t, real_dev);
 		trace_evl_timer_shot(timer, delta, t);
 	} else {
