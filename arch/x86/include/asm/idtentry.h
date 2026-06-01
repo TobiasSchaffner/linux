@@ -226,6 +226,11 @@ __visible noinstr void func(struct pt_regs *regs)			\
 	arch_pipeline_entry(regs, vector);				\
 }									\
 									\
+void fred_##func(struct pt_regs *regs)					\
+{									\
+	arch_pipeline_entry(regs, vector);				\
+}									\
+									\
 __visible void __##func(struct pt_regs *regs)
 
 #define DEFINE_IDTENTRY_SYSVEC_PIPELINED_NORETURN(vector, func)		\
@@ -233,6 +238,12 @@ __visible noinstr void func(struct pt_regs *regs)			\
 {									\
 	arch_pipeline_entry(regs, vector);				\
 }									\
+									\
+void fred_##func(struct pt_regs *regs)					\
+{									\
+	arch_pipeline_entry(regs, vector);				\
+}									\
+									\
 __visible __noreturn void __##func(struct pt_regs *regs)
 
 #define DEFINE_IDTENTRY_SYSVEC_SIMPLE_PIPELINED(vector, func)		\
