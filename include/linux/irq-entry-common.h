@@ -316,6 +316,10 @@ static __always_inline void exit_to_user_mode(void)
 static __always_inline void irqentry_enter_from_user_mode(struct pt_regs *regs)
 {
 	WARN_ON_ONCE(irq_pipeline_debug() && irqs_disabled());
+
+	if (running_oob())
+		return;
+
 	stall_inband_nocheck();
 	enter_from_user_mode(regs);
 	rseq_note_user_irq_entry();
@@ -337,6 +341,9 @@ static __always_inline void irqentry_enter_from_user_mode(struct pt_regs *regs)
 static __always_inline void irqentry_exit_to_user_mode(struct pt_regs *regs)
 {
 	lockdep_assert_irqs_disabled();
+
+	if (running_oob())
+		return;
 
 	instrumentation_begin();
 	irqentry_exit_to_user_mode_prepare(regs);
@@ -600,6 +607,9 @@ irqentry_exit_to_kernel_mode_after_preempt(struct pt_regs *regs, irqentry_state_
 {
 	bool synchronized;
 
+	if (running_oob())
+		return;
+
 	instrumentation_begin();
 	synchronized = irqentry_syncstage(state);
 
@@ -656,6 +666,9 @@ static __always_inline void irqentry_exit_to_kernel_mode(struct pt_regs *regs,
 							 irqentry_state_t state)
 {
 	lockdep_assert_irqs_disabled();
+
+	if (running_oob())
+		return;
 
 	instrumentation_begin();
 	irqentry_exit_to_kernel_mode_preempt(regs, state);
