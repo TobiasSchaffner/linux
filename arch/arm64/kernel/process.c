@@ -713,8 +713,8 @@ static inline void debug_switch_state(void)
 		unsigned long pmr_expected = GIC_PRIO_IRQOFF;
 		unsigned long pmr_actual = read_sysreg_s(SYS_ICC_PMR_EL1);
 
-		WARN_ONCE(daif_actual != daif_expected ||
-			  pmr_actual != pmr_expected,
+		WARN_ONCE(running_inband() && (daif_actual != daif_expected ||
+			  pmr_actual != pmr_expected),
 			  "Unexpected DAIF + PMR: 0x%lx + 0x%lx (expected 0x%lx + 0x%lx)\n",
 			  daif_actual, pmr_actual,
 			  daif_expected, pmr_expected);
@@ -722,7 +722,7 @@ static inline void debug_switch_state(void)
 		unsigned long daif_expected = DAIF_PROCCTX_NOIRQ;
 		unsigned long daif_actual = read_sysreg(daif);
 
-		WARN_ONCE(daif_actual != daif_expected,
+		WARN_ONCE(running_inband() && daif_actual != daif_expected,
 			  "Unexpected DAIF value: 0x%lx (expected 0x%lx)\n",
 			  daif_actual, daif_expected);
 	}
