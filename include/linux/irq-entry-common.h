@@ -600,6 +600,9 @@ irqentry_exit_to_kernel_mode_after_preempt(struct pt_regs *regs, irqentry_state_
 {
 	bool synchronized;
 
+	if (running_oob())
+		return;
+
 	instrumentation_begin();
 	synchronized = irqentry_syncstage(state);
 

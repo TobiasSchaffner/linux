@@ -166,7 +166,16 @@ static noinstr irqentry_state_t arm64_enter_from_kernel_mode(struct pt_regs *reg
 static void noinstr arm64_exit_to_kernel_mode(struct pt_regs *regs,
 					      irqentry_state_t state)
 {
-	local_irq_disable();
+	if (irqs_pipelined()) {
+		hard_local_irq_disable();
+		if (running_inband()) {
+			stall_inband_nocheck();
+			trace_hardirqs_off();
+		}
+	} else {
+		local_irq_disable();
+	}
+
 	irqentry_exit_to_kernel_mode_preempt(regs, state);
 	local_daif_mask();
 	mte_check_tfsr_exit();
@@ -175,7 +184,14 @@ static void noinstr arm64_exit_to_kernel_mode(struct pt_regs *regs,
 
 static __always_inline void arm64_syscall_enter_from_user_mode(struct pt_regs *regs)
 {
-	enter_from_user_mode(regs);
+	if (running_inband()) {
+		WARN_ON_ONCE(irq_pipeline_debug() && irqs_disabled());
+		stall_inband_nocheck();
+		enter_from_user_mode(regs);
+		trace_hardirqs_on();
+		unstall_inband_nocheck();
+	}
+
 	mte_disable_tco_entry(current);
 	sme_enter_from_user_mode();
 }
@@ -191,6 +207,7 @@ static __always_inline void arm64_enter_from_user_mode(struct pt_regs *regs)
 		WARN_ON_ONCE(irq_pipeline_debug() && irqs_disabled());
 		stall_inband_nocheck();
 		enter_from_user_mode(regs);
+		rseq_note_user_irq_entry();
 		trace_hardirqs_on();
 		unstall_inband_nocheck();
 	}
@@ -226,8 +243,18 @@ static __always_inline void arm64_syscall_exit_to_user_mode(struct pt_regs *regs
  */
 static __always_inline void arm64_exit_to_user_mode(struct pt_regs *regs)
 {
-	local_irq_disable();
-	irqentry_exit_to_user_mode_prepare(regs);
+	if (irqs_pipelined()) {
+		hard_local_irq_disable();
+		if (running_inband()) {
+			stall_inband_nocheck();
+			trace_hardirqs_off();
+			irqentry_exit_to_user_mode_prepare(regs);
+		}
+	} else {
+		local_irq_disable();
+		irqentry_exit_to_user_mode_prepare(regs);
+	}
+
 	local_daif_mask();
 	sme_exit_to_user_mode();
 	mte_check_tfsr_exit();
