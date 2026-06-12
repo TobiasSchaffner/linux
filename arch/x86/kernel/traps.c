@@ -355,7 +355,9 @@ static __always_inline
 void mark_trap_exit(int trapnr, struct pt_regs *regs)
 {
 	oob_trap_unwind(trapnr, regs);
-	hard_cond_local_irq_disable();
+
+	if (likely(running_inband()))
+		hard_cond_local_irq_disable();
 }
 
 static __always_inline
