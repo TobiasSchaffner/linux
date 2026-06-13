@@ -347,7 +347,7 @@ TRACE_EVENT(evl_sleep_on,
 		__field(pid_t, pid)
 		__field(ktime_t, timeout)
 		__field(enum evl_tmode, timeout_mode)
-		__string(wchan_name, wchan->name)
+		__string(wchan_name, wchan ? wchan->name : "none")
 		__string(clock_name, clock->name)
 	),
 
