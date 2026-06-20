@@ -419,7 +419,15 @@ static ssize_t send_udp(struct evl_socket *esk,
 	if (ret == -EMULTIHOP)
 		return ret;	/* MSG_DONTROUTE cannot be honored. */
 
-	if (ret) { /* No route known from the front cache - bummer. */
+	if (ret) {
+		/*
+		 * No route known from the front cache - bummer. We
+		 * are about to offload the transmit operation to the
+		 * in-band stack, unless MSG_DONTWAIT is set.
+		 */
+		if (msg_flags & MSG_DONTWAIT)
+			return -EWOULDBLOCK;
+
 		/*
 		 * We always charge the socket even when offloading to
 		 * the in-band stack although we won't consume any
