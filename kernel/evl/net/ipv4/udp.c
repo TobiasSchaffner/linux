@@ -224,7 +224,7 @@ static int find_egress_path(struct evl_socket *esk,
 
 	ert = evl_net_route_ipv4_output(sock_net(esk->sk), daddr);
 	if (!ert)
-		return -ENOENT;
+		return -EHOSTUNREACH;
 
 	/*
 	 * Need a broadcast-enabled socket for using a broadcast
@@ -243,7 +243,7 @@ static int find_egress_path(struct evl_socket *esk,
 	if  (msg_flags & MSG_DONTROUTE && rt_nexthop(ert->rt, daddr) != daddr)
 		goto fail;
 
-	ret = -ENOENT;
+	ret = -EHOSTUNREACH;
 	earp = evl_net_get_arp_entry_or_pseudo(ert->rt->dst.dev, daddr,
 					pseudo_earp);
 	if (!earp)
@@ -401,11 +401,8 @@ static ssize_t send_udp(struct evl_socket *esk,
 		dport = inet->inet_dport;
 	}
 
-	datalen = evl_iov_flat_length(iov, iovlen);
-	if (datalen == 0)
-		return 0;
-
 	/* UDP datagram cannot exceed 64k. */
+	datalen = iov ? evl_iov_flat_length(iov, iovlen) : 0;
 	if (datalen > 65535)
 		return -EMSGSIZE;
 
@@ -418,6 +415,12 @@ static ssize_t send_udp(struct evl_socket *esk,
 	ret = find_egress_path(esk, daddr, &ert, &earp, &pseudo_earp, msg_flags);
 	if (ret == -EMULTIHOP)
 		return ret;	/* MSG_DONTROUTE cannot be honored. */
+
+	if (msg_flags & MSG_PROBE)
+		goto out;
+
+	if (datalen == 0)
+		return 0;
 
 	if (ret) {
 		/*
