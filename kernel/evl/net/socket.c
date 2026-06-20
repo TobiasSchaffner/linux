@@ -509,7 +509,7 @@ static int socket_send_recv(struct evl_socket *esk,
 			struct user_oob_msghdr __user *u_msghdr,
 			unsigned int cmd)
 {
-	struct iovec fast_iov[UIO_FASTIOV], *iov, __user *u_iov;
+	struct iovec fast_iov[UIO_FASTIOV], *iov = NULL, __user *u_iov;
 	__u64 iov_ptr;
 	__u32 iovlen;
 	__s32 count;
@@ -524,16 +524,21 @@ static int socket_send_recv(struct evl_socket *esk,
 		return -EFAULT;
 
 	u_iov = evl_valptr64(iov_ptr, struct iovec);
-	iov = evl_load_uio(u_iov, iovlen, fast_iov);
-	if (IS_ERR(iov))
-		return PTR_ERR(iov);
+	if (u_iov) {
+		iov = evl_load_uio(u_iov, iovlen, fast_iov);
+		if (IS_ERR(iov))
+			return PTR_ERR(iov);
+	} else {
+		if (iovlen != 0)
+			return -EINVAL;
+	}
 
 	if (cmd == EVL_SOCKIOC_SENDMSG)
 		count = esk->proto->oob_send(esk, u_msghdr, iov, iovlen);
 	else
 		count = esk->proto->oob_receive(esk, u_msghdr, iov, iovlen);
 
-	if (iov != fast_iov)
+	if (iov && iov != fast_iov)
 		evl_free(iov);
 
 	if (count < 0)
