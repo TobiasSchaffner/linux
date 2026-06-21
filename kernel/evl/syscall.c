@@ -242,7 +242,7 @@ static bool handle_vdso_fallback(struct pt_regs *regs, unsigned int nr,
 		u_old_ts = (struct __kernel_old_timespec __user *)args[1];
 		if (raw_copy_to_user(u_old_ts, &old_ts, sizeof(old_ts)))
 			ret = -EFAULT;
-	} else if (is_clock_gettime64(nr)) {
+	} else {
 		uts.tv_sec = ts64.tv_sec;
 		uts.tv_nsec = ts64.tv_nsec;
 		u_uts = (struct __kernel_timespec __user *)args[1];
