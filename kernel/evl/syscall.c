@@ -231,6 +231,9 @@ static bool handle_vdso_fallback(struct pt_regs *regs, unsigned int nr,
 		return false;
 	}
 
+	printk_once(EVL_WARNING "%s clock readout via fallback (no vDSO support)\n",
+		clock->name);
+
 	ts64 = ktime_to_timespec64(evl_read_clock(clock));
 
 	if (is_clock_gettime(nr)) {
