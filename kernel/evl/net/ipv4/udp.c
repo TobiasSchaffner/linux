@@ -411,25 +411,27 @@ static ssize_t send_udp(struct evl_socket *esk,
 	 * routing information collected into our front caches. If
 	 * none, then offload the packet to the inband stack (as a
 	 * result, we may receive the missing information eventually).
+	 *
+	 * NOTE: Caller may send zero-sized message (i.e. datalen ==
+	 * 0) only to probe the out-of-band cache for the destination
+	 * address.
 	 */
 	ret = find_egress_path(esk, daddr, &ert, &earp, &pseudo_earp, msg_flags);
 	if (ret == -EMULTIHOP)
 		return ret;	/* MSG_DONTROUTE cannot be honored. */
 
-	if (msg_flags & MSG_PROBE)
-		goto out;
-
-	if (datalen == 0)
-		return 0;
-
 	if (ret) {
 		/*
 		 * No route known from the front cache - bummer. We
-		 * are about to offload the transmit operation to the
-		 * in-band stack, unless MSG_DONTWAIT is set.
+		 * may have to offload the transmit operation to the
+		 * in-band stack, unless only probing or MSG_DONTWAIT
+		 * is set.
 		 */
 		if (msg_flags & MSG_DONTWAIT)
 			return -EWOULDBLOCK;
+
+		if (datalen == 0)
+			return ret;
 
 		/*
 		 * We always charge the socket even when offloading to
@@ -463,6 +465,9 @@ static ssize_t send_udp(struct evl_socket *esk,
 		 */
 		return -EINPROGRESS;
 	}
+
+	if (datalen == 0)
+		goto out;
 
 	/*
 	 * Ok, we have an oob path for that datagram. In connected
