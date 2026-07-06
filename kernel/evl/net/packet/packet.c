@@ -42,8 +42,16 @@ void evl_net_cleanup_packet(struct net *net)
 	EVL_WARN_ON(NET, !evl_rculist_empty(&nets->packet.all_listeners));
 }
 
-/* oob, hard irqs ON */
-static bool __packet_deliver(struct evl_rculist *rxq,
+/*
+ * __packet_deliver - Deliver a packet to every listener.
+ *
+ * If @protocol is ETH_P_ALL, every socket bound to the catch-all
+ * protocol receives a clone of @skb, leaving the latter
+ * unconsumed. Otherwise, a single socket which listens to the
+ * specific @protocol receives @skb which is consumed by the
+ * operation.
+ */
+static bool __packet_deliver(struct evl_rculist *rxq, /* oob, hard irqs ON */
 			struct sk_buff *skb, int protocol)
 {
 	struct net_device *dev = skb->dev;
@@ -62,13 +70,6 @@ static bool __packet_deliver(struct evl_rculist *rxq,
 		if (force_unbound || (bound_if && bound_if != dev->ifindex))
 			continue;
 
-		/*
-		 * All sockets bound to ETH_P_ALL receive a clone of
-		 * each incoming buffer, leaving the original one
-		 * unconsumed. When monitoring a specific protocol
-		 * instead of ETH_P_ALL, a single listener directly
-		 * receives the incoming buffer.
-		 */
 		qskb = skb;
 		if (protocol == ETH_P_ALL) {
 			qskb = skb_oob_clone(skb);
@@ -158,7 +159,17 @@ bool evl_net_packet_deliver(struct sk_buff *skb) /* oob */
 
 	all_delivered = packet_deliver(skb, ETH_P_ALL);
 
-	return packet_deliver(skb, ntohs(skb->protocol)) || all_delivered;
+	if (packet_deliver(skb, ntohs(skb->protocol)))
+		return true;
+
+	/*
+	 * If we are going to short-circuit the receive sequence, we
+	 * have to free the buffer since the caller won't do it.
+	 */
+	if (all_delivered)
+		evl_net_free_skb(skb);
+
+	return all_delivered;
 }
 
 static void do_bind(struct evl_socket *esk, int protocol)
