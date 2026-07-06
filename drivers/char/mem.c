@@ -418,12 +418,6 @@ static ssize_t read_null(struct file *file, char __user *buf,
 	return 0;
 }
 
-static ssize_t write_null(struct file *file, const char __user *buf,
-			  size_t count, loff_t *ppos)
-{
-	return count;
-}
-
 static ssize_t read_iter_null(struct kiocb *iocb, struct iov_iter *to)
 {
 	return 0;
@@ -639,7 +633,6 @@ static int open_port(struct inode *inode, struct file *filp)
 
 #define zero_lseek	null_lseek
 #define full_lseek      null_lseek
-#define write_zero	write_null
 #define write_iter_zero	write_iter_null
 #define splice_write_zero	splice_write_null
 #define open_mem	open_port
@@ -660,7 +653,6 @@ static const struct file_operations __maybe_unused mem_fops = {
 static const struct file_operations null_fops = {
 	.llseek		= null_lseek,
 	.read		= read_null,
-	.write		= write_null,
 	.read_iter	= read_iter_null,
 	.write_iter	= write_iter_null,
 	.splice_write	= splice_write_null,
@@ -678,7 +670,6 @@ static const struct file_operations port_fops = {
 
 static const struct file_operations zero_fops = {
 	.llseek		= zero_lseek,
-	.write		= write_zero,
 	.read_iter	= read_iter_zero,
 	.read		= read_zero,
 	.write_iter	= write_iter_zero,
