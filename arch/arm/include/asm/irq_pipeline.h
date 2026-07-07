@@ -98,15 +98,33 @@ static inline void arch_handle_irq_pipelined(struct pt_regs *regs)
 	handle_arch_irq(regs);
 }
 
-#define arch_kentry_get_irqstate(__regs)		\
-	({						\
-		to_svc_pt_regs(__regs)->irqstate;	\
-	})
+#define KENTRY_STALL_BIT      BIT(0) /* Tracks INBAND_STALL_BIT */
+#define KENTRY_LOCKDEP_BIT    BIT(1) /* Tracks hardirqs_enabled */
 
-#define arch_kentry_set_irqstate(__regs, __irqstate)		\
-	do {							\
-		to_svc_pt_regs(__regs)->irqstate = __irqstate;	\
-	} while (0)
+#define arch_kentry_test_stalled(__regs)			\
+({								\
+	to_svc_pt_regs(__regs)->irqstate & KENTRY_STALL_BIT;	\
+})
+
+#define arch_kentry_test_hardirq(__regs)			\
+({								\
+	to_svc_pt_regs(__regs)->irqstate & KENTRY_LOCKDEP_BIT;	\
+})
+
+#define arch_kentry_clear_irq_state(__regs)			\
+({								\
+	to_svc_pt_regs(__regs)->irqstate = 0;			\
+})
+
+#define arch_kentry_set_stalled(__regs)				\
+({								\
+	to_svc_pt_regs(__regs)->irqstate |= KENTRY_STALL_BIT;	\
+})
+
+#define arch_kentry_set_hardirq(__regs)				\
+({								\
+	to_svc_pt_regs(__regs)->irqstate |= KENTRY_LOCKDEP_BIT;	\
+})
 
 int handle_arch_irq_pipelined(struct pt_regs *regs);
 
@@ -141,6 +159,11 @@ static inline int arch_irqs_disabled_flags(unsigned long flags)
 {
 	return native_irqs_disabled_flags(flags);
 }
+
+#define arch_kentry_test_stalled(regs)	\
+({					\
+	!interrupts_enabled(regs);	\
+})
 
 #endif /* !CONFIG_IRQ_PIPELINE */
 
