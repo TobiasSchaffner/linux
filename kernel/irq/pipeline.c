@@ -1400,33 +1400,26 @@ respin:
  * in kernel context, indexed on the current register frame.
  */
 
-#define KENTRY_STALL_BIT      BIT(0) /* Tracks INBAND_STALL_BIT */
-#define KENTRY_LOCKDEP_BIT    BIT(1) /* Tracks hardirqs_enabled */
-
 asmlinkage __visible noinstr void kentry_enter_pipelined(struct pt_regs *regs)
 {
-	long irqstate = 0;
-
 	WARN_ON(irq_pipeline_debug() && !hard_irqs_disabled());
 
 	if (!running_inband())
 		return;
 
+	arch_kentry_clear_irq_state(regs);
+
 	if (lockdep_read_irqs_state())
-		irqstate |= KENTRY_LOCKDEP_BIT;
+		arch_kentry_set_hardirq(regs);
 
 	if (irqs_disabled())
-		irqstate |= KENTRY_STALL_BIT;
+		arch_kentry_set_stalled(regs);
 	else
 		trace_hardirqs_off();
-
-	arch_kentry_set_irqstate(regs, irqstate);
 }
 
 asmlinkage void __visible noinstr kentry_exit_pipelined(struct pt_regs *regs)
 {
-	long irqstate;
-
 	WARN_ON(irq_pipeline_debug() && !hard_irqs_disabled());
 
 	if (!running_inband())
@@ -1443,13 +1436,12 @@ asmlinkage void __visible noinstr kentry_exit_pipelined(struct pt_regs *regs)
 	 * do flip the stall bit, but are not tracked by lockdep).
 	 */
 
-	irqstate = arch_kentry_get_irqstate(regs);
-	if (!(irqstate & KENTRY_STALL_BIT)) {
+	if (!arch_kentry_test_stalled(regs)) {
 		stall_inband_nocheck();
 		trace_hardirqs_on();
 		unstall_inband_nocheck();
 	} else {
-		lockdep_write_irqs_state(!!(irqstate & KENTRY_LOCKDEP_BIT));
+		lockdep_write_irqs_state(arch_kentry_test_hardirq(regs));
 	}
 }
 
