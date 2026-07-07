@@ -102,10 +102,11 @@ static inline void arch_handle_irq_pipelined(struct pt_regs *regs)
  * the latter for now, until we enventually switch to using whichever
  * of them is available first.
  */
-#define arch_kentry_get_irqstate(__regs)	0
-
-#define arch_kentry_set_irqstate(__regs, __irqstate)	\
-	do { (void)__irqstate; } while (0)
+#define arch_kentry_test_stalled(__regs)	0
+#define arch_kentry_test_hardirq(__regs)	0
+#define arch_kentry_clear_irq_state(__regs)
+#define arch_kentry_set_stalled(__regs)
+#define arch_kentry_set_hardirq(__regs)
 
 #else  /* !CONFIG_IRQ_PIPELINE */
 
