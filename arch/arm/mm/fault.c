@@ -345,7 +345,7 @@ do_kernel_address_page_fault(struct mm_struct *mm, unsigned long addr,
 		 * PTE or PTE permission fault. This may happen in exceptional
 		 * circumstances and need the fixup tables to be walked.
 		 */
-		if (interrupts_enabled(regs))
+		if (!arch_kentry_test_stalled(regs))
 			local_irq_enable();
 
 		__do_kernel_fault(mm, addr, fsr, regs);

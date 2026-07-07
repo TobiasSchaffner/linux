@@ -817,7 +817,7 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 
 	mark_trap_entry(ARM_TRAP_ALIGNMENT, regs);
 
-	if (interrupts_enabled(regs))
+	if (!arch_kentry_test_stalled(regs))
 		local_irq_enable();
 
 	instrptr = instruction_pointer(regs);
