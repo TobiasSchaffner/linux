@@ -815,10 +815,10 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	if (addr >= TASK_SIZE && user_mode(regs))
 		harden_branch_predictor();
 
-	if (interrupts_enabled(regs))
-		hard_local_irq_enable();
-
 	mark_trap_entry(ARM_TRAP_ALIGNMENT, regs);
+
+	if (interrupts_enabled(regs))
+		local_irq_enable();
 
 	instrptr = instruction_pointer(regs);
 
