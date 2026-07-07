@@ -26,6 +26,7 @@
 #include <asm/current.h>
 #include <asm/hw_breakpoint.h>
 #include <asm/traps.h>
+#include <asm/trap_entry.h>
 
 /* Breakpoint currently in use for each BRP. */
 static DEFINE_PER_CPU(struct perf_event *, bp_on_reg[ARM_MAX_BRP]);
@@ -938,8 +939,11 @@ static void hw_breakpoint_cfi_handler(struct pt_regs *regs)
 static int hw_breakpoint_pending(unsigned long addr, unsigned int fsr,
 				 struct pt_regs *regs)
 {
+	unsigned long irqflags;
 	int ret = 0;
 	u32 dscr;
+
+	irqflags = dovetail_fault_entry(ARM_TRAP_BREAK, regs);
 
 	preempt_disable();
 
@@ -973,6 +977,8 @@ static int hw_breakpoint_pending(unsigned long addr, unsigned int fsr,
 	}
 
 	preempt_enable();
+
+	dovetail_fault_exit(ARM_TRAP_BREAK, regs, irqflags);
 
 	return ret;
 }
