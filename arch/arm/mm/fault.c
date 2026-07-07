@@ -336,6 +336,7 @@ do_kernel_address_page_fault(struct mm_struct *mm, unsigned long addr,
 		__do_user_fault(addr, fsr, SIGSEGV, SEGV_MAPERR, regs);
 		dovetail_fault_exit(ARM_TRAP_ACCESS, regs, irqflags);
 	} else {
+		irqflags = dovetail_fault_entry(ARM_TRAP_ACCESS, regs);
 		/*
 		 * Fault from kernel mode. Enable interrupts if they were
 		 * enabled in the parent context. Section (upper page table)
@@ -348,6 +349,8 @@ do_kernel_address_page_fault(struct mm_struct *mm, unsigned long addr,
 			local_irq_enable();
 
 		__do_kernel_fault(mm, addr, fsr, regs);
+
+		dovetail_fault_exit(ARM_TRAP_ACCESS, regs, irqflags);
 	}
 
 	return 0;
