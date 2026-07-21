@@ -948,6 +948,11 @@ void handle_level_irq(struct irq_desc *desc)
 		return;
 	}
 
+	if (!irq_can_handle_actions(desc)) {
+		mask_irq(desc);
+		return;
+	}
+
 	kstat_incr_irqs_this_cpu(desc);
 	handle_irq_event(desc);
 
