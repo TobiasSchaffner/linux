@@ -110,7 +110,7 @@ static struct irq_chip qcom_ipcc_irq_chip = {
 	.name = "ipcc",
 	.irq_mask = qcom_ipcc_mask_irq,
 	.irq_unmask = qcom_ipcc_unmask_irq,
-	.flags = IRQCHIP_SKIP_SET_WAKE,
+	.flags = IRQCHIP_SKIP_SET_WAKE | IRQCHIP_PIPELINE_SAFE,
 };
 
 static int qcom_ipcc_domain_map(struct irq_domain *d, unsigned int irq,
@@ -322,7 +322,7 @@ static int qcom_ipcc_probe(struct platform_device *pdev)
 
 	ret = devm_request_irq(&pdev->dev, ipcc->irq, qcom_ipcc_irq_fn,
 			       IRQF_TRIGGER_HIGH | IRQF_NO_SUSPEND |
-			       IRQF_NO_THREAD, name, ipcc);
+			       IRQF_NO_THREAD | IRQF_OOB, name, ipcc);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Failed to register the irq: %d\n", ret);
 		goto err_req_irq;
