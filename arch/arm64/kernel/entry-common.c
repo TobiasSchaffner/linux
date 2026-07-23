@@ -17,6 +17,7 @@
 #include <linux/sched/debug.h>
 #include <linux/thread_info.h>
 #include <linux/irq_pipeline.h>
+#include <linux/rv_irqoff.h>
 
 #include <asm/cpufeature.h>
 #include <asm/daifflags.h>
@@ -84,6 +85,13 @@ static noinstr void arm64_pipeline_el1_irq(struct pt_regs *regs,
 	struct irq_stage_data *prevd;
 	irqentry_state_t state;
 
+	/*
+	 * Capture trap-arrival timestamp on every trap, unconditionally,
+	 * so the rv_evl monitor can split the subsequent
+	 * hwirq_enter_over_irqoff_inband dwell into blocker vs dispatch.
+	 */
+	rv_evl_account_trap_arrival();
+
 	if (unlikely(running_oob() || irqs_disabled())) {
 		mte_check_tfsr_entry();
 		mte_disable_tco_entry(current);
@@ -97,6 +105,7 @@ static noinstr void arm64_pipeline_el1_irq(struct pt_regs *regs,
 	}
 
 	/* In-band stage on entry, accepting interrupts. */
+	rv_irqoff_account_off();
 	state = irqentry_enter(regs);
 	mte_check_tfsr_entry();
 	mte_disable_tco_entry(current);
@@ -111,6 +120,7 @@ static noinstr void arm64_pipeline_el1_irq(struct pt_regs *regs,
 	instrumentation_end();
 	mte_check_tfsr_exit();
 	irqentry_exit(regs, state);
+	rv_irqoff_account_on();
 }
 
 #else  /* !CONFIG_IRQ_PIPELINE */
@@ -142,6 +152,11 @@ static noinstr irqentry_state_t arm64_enter_from_kernel_mode(struct pt_regs *reg
 {
 	irqentry_state_t state;
 
+	rv_evl_account_trap_arrival();
+
+	if (interrupts_enabled(regs))
+		rv_irqoff_account_off();
+
 	state = irqentry_enter_from_kernel_mode(regs);
 
 	/*
@@ -171,6 +186,9 @@ static void noinstr arm64_exit_to_kernel_mode(struct pt_regs *regs,
 	local_daif_mask();
 	mte_check_tfsr_exit();
 	irqentry_exit_to_kernel_mode_after_preempt(regs, state);
+
+	if (interrupts_enabled(regs))
+		rv_irqoff_account_on();
 }
 
 static __always_inline void arm64_syscall_enter_from_user_mode(struct pt_regs *regs)
@@ -187,6 +205,9 @@ static __always_inline void arm64_syscall_enter_from_user_mode(struct pt_regs *r
  */
 static __always_inline void arm64_enter_from_user_mode(struct pt_regs *regs)
 {
+	rv_evl_account_trap_arrival();
+	rv_irqoff_account_off();
+
 	if (running_inband()) {
 		WARN_ON_ONCE(irq_pipeline_debug() && irqs_disabled());
 		stall_inband_nocheck();
@@ -232,6 +253,8 @@ static __always_inline void arm64_exit_to_user_mode(struct pt_regs *regs)
 	sme_exit_to_user_mode();
 	mte_check_tfsr_exit();
 	exit_to_user_mode();
+
+	rv_irqoff_account_on();
 }
 
 asmlinkage void noinstr asm_exit_to_user_mode(struct pt_regs *regs)
