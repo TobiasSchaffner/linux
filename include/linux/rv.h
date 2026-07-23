@@ -15,6 +15,8 @@
 #define RV_MON_PER_TASK 2
 #define RV_MON_PER_OBJ  3
 
+struct file_operations;
+
 #ifdef CONFIG_RV
 #include <linux/array_size.h>
 #include <linux/bitops.h>
@@ -147,6 +149,17 @@ struct rv_monitor {
 	struct rv_reactor	*reactor;
 	__printf(1, 0) void	(*react)(const char *msg, va_list args);
 #endif
+	/* Optional edge-stat fields (all NULL/0 for classic DA monitors) */
+	unsigned int		n_edges;
+	const char * const	*edge_labels;
+	void			(*snapshot_edge)(unsigned int cpu,
+						 unsigned int edge,
+						 void *out);
+	void			(*coverage_snapshot)(unsigned int cpu,
+						     unsigned long *dst);
+	const struct file_operations	*extra_fops;
+	const char			*extra_name;
+
 	struct list_head	list;
 	struct rv_monitor	*parent;
 	struct dentry		*root_d;
