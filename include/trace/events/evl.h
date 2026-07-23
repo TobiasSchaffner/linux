@@ -244,6 +244,25 @@ DEFINE_EVENT(evl_schedule_event, evl_reschedule_ipi,
 	TP_ARGS(rq)
 );
 
+TRACE_EVENT(evl_core_tick,
+	TP_PROTO(struct evl_rq *rq, int phase),
+	TP_ARGS(rq, phase),
+
+	TP_STRUCT__entry(
+		__field(int, phase)
+		__field(unsigned long, local_flags)
+	),
+
+	TP_fast_assign(
+		__entry->phase = phase;
+		__entry->local_flags = rq->local_flags;
+	),
+
+	TP_printk("phase=%s local_flags=%#lx",
+		  __entry->phase ? "leave" : "enter",
+		  __entry->local_flags)
+);
+
 TRACE_EVENT(evl_pick_thread,
 	TP_PROTO(struct evl_thread *next),
 	TP_ARGS(next),
@@ -912,6 +931,142 @@ TRACE_EVENT(evl_latspot,
 	TP_printk("** latency peak: %d.%.3d us **",
 		  __entry->latmax_ns / 1000,
 		  __entry->latmax_ns % 1000)
+);
+
+/*
+ * Experimental Delta_platform probe: emitted by the latmus driver on
+ * every EVL_LATIOC_PULSE ioctl that carries a user-side timestamp.
+ *
+ * @wake_kts:        kernel-exit timestamp captured right after
+ *                   evl_wait_flag() returned on the previous wake (just
+ *                   before the ioctl unwound back to userspace).
+ * @user_kts:        user-side evl_read_clock(MONOTONIC) result, observed
+ *                   at the first user instruction after the syscall
+ *                   returned.
+ * @tail_ns:         user_kts - wake_kts; bounds return-to-user asm tail
+ *                   + vDSO clock_gettime cost (kernel->user trip).
+ * @kernel_delta_ns: wake_kts - state->ideal; per-wake kernel-side
+ *                   contribution (everything captured by the FSM edges).
+ * @user_delta_ns:   user_kts - state->ideal; per-wake total latency as
+ *                   reported by latmus (== kernel_delta_ns + tail_ns).
+ *
+ * Use kernel_delta_ns + tail_ns from the SAME row to bound Delta_platform
+ * for the actual worst-case wake (the row with max user_delta_ns).
+ */
+TRACE_EVENT(evl_latmus_uthread_tail,
+	TP_PROTO(s64 wake_kts, s64 user_kts, s64 tail_ns,
+		 s64 kernel_delta_ns, s64 user_delta_ns),
+	TP_ARGS(wake_kts, user_kts, tail_ns, kernel_delta_ns, user_delta_ns),
+	TP_STRUCT__entry(
+		__field(s64, wake_kts)
+		__field(s64, user_kts)
+		__field(s64, tail_ns)
+		__field(s64, kernel_delta_ns)
+		__field(s64, user_delta_ns)
+	),
+	TP_fast_assign(
+		__entry->wake_kts        = wake_kts;
+		__entry->user_kts        = user_kts;
+		__entry->tail_ns         = tail_ns;
+		__entry->kernel_delta_ns = kernel_delta_ns;
+		__entry->user_delta_ns   = user_delta_ns;
+	),
+	TP_printk("wake_kts=%lld user_kts=%lld tail=%lld ns kernel_delta=%lld ns user_delta=%lld ns",
+		  __entry->wake_kts, __entry->user_kts, __entry->tail_ns,
+		  __entry->kernel_delta_ns, __entry->user_delta_ns)
+);
+
+/*
+ * evl_latmus_uthread_head - per-wake head decomposition, emitted by the
+ * latmus driver alongside evl_latmus_uthread_tail when the rv_evl
+ * monitor is active (rv_evl_trap_arrival_mono() returned non-zero and
+ * the stamp belongs to this wake). Absent when the monitor is off.
+ *
+ * @ideal_kts: programmed timer deadline for this wake (state->ideal).
+ * @trap_kts:  monotonic trap-arrival timestamp of the timer IRQ that
+ *             drove this wake, stamped by the rv_evl monitor in the arch
+ *             trap-entry path (same CLOCK_MONOTONIC base as ideal_kts).
+ * @wake_kts:  in-kernel wake timestamp (thread resumed after the OOB
+ *             switch) -- the same point the --kwake sample is taken.
+ * @head_ns:   trap_kts - ideal_kts; the deadline -> first-trap delta.
+ *             When the wake's FSM edge shows hard IRQs were enabled at
+ *             the trap (hwirq_enter_over_running_irqs_on, or blocker~0
+ *             in evl_hwirq_split), this is pure hardware IRQ-delivery
+ *             latency + gravity, with no software IRQ-off contribution.
+ * @fsm_ns:    wake_kts - trap_kts; trap-arrival -> thread-running, the
+ *             portion the FSM edges model. head_ns + fsm_ns equals the
+ *             --kwake kernel-side latency (wake_kts - ideal_kts).
+ * @gravity_ns: user timer gravity subtracted from the hardware deadline
+ *             (fires at ideal-gravity). hw = head_ns + gravity_ns is the
+ *             absolute hardware IRQ-delivery latency from the hardware
+ *             fire point.
+ * @blocker_ns: inband-irqoff blocker for this wake (0 if the trap
+ *             arrived with hard IRQs enabled). Classifies the head:
+ *             blocker~0 => hw is pure hardware; blocker>0 => software
+ *             IRQ-off blocking of ~blocker_ns is included.
+ */
+TRACE_EVENT(evl_latmus_uthread_head,
+	TP_PROTO(s64 ideal_kts, s64 trap_kts, s64 wake_kts,
+		 s64 head_ns, s64 fsm_ns, s64 gravity_ns, s64 blocker_ns),
+	TP_ARGS(ideal_kts, trap_kts, wake_kts, head_ns, fsm_ns,
+		gravity_ns, blocker_ns),
+	TP_STRUCT__entry(
+		__field(s64, ideal_kts)
+		__field(s64, trap_kts)
+		__field(s64, wake_kts)
+		__field(s64, head_ns)
+		__field(s64, fsm_ns)
+		__field(s64, gravity_ns)
+		__field(s64, blocker_ns)
+	),
+	TP_fast_assign(
+		__entry->ideal_kts  = ideal_kts;
+		__entry->trap_kts   = trap_kts;
+		__entry->wake_kts   = wake_kts;
+		__entry->head_ns    = head_ns;
+		__entry->fsm_ns     = fsm_ns;
+		__entry->gravity_ns = gravity_ns;
+		__entry->blocker_ns = blocker_ns;
+	),
+	TP_printk("head=%lld fsm=%lld gravity=%lld blocker=%lld ns (hw=head+gravity, sw=blocker)",
+		  __entry->head_ns, __entry->fsm_ns,
+		  __entry->gravity_ns, __entry->blocker_ns)
+);
+
+/*
+ * evl_hwirq_split - decompose FSM edge 4 dwell (hwirq_enter_over_irqoff_inband)
+ *                   into the inband-blocker and trap-dispatch components.
+ *
+ * @irq:         IRQ number of the handler about to be entered.
+ * @blocker_ns:  trap_kts - state_entered_at; time the trap waited because
+ *               the inband stage held hard IRQs off (lock window). 0 if
+ *               the trap arrived while IRQs were already enabled (Case A:
+ *               SR_PIE=1, rv_irqoff_trap_enter() reset state_entered_at
+ *               to trap arrival, so blocker collapses to ~0).
+ * @dispatch_ns: now - trap_kts; pure trap-asm + glue + Dovetail
+ *               dispatch path up to the irq_handler_entry tracepoint.
+ *
+ * Emitted from probe_irq_handler_entry() only on the outermost handler
+ * entry from RV_EVL_S_IRQOFF_INBAND, immediately before the FSM event
+ * is fired. blocker_ns + dispatch_ns equals the dwell that the FSM will
+ * record on edge 4.
+ */
+TRACE_EVENT(evl_hwirq_split,
+	TP_PROTO(int irq, s64 blocker_ns, s64 dispatch_ns),
+	TP_ARGS(irq, blocker_ns, dispatch_ns),
+	TP_STRUCT__entry(
+		__field(int, irq)
+		__field(s64, blocker_ns)
+		__field(s64, dispatch_ns)
+	),
+	TP_fast_assign(
+		__entry->irq         = irq;
+		__entry->blocker_ns  = blocker_ns;
+		__entry->dispatch_ns = dispatch_ns;
+	),
+	TP_printk("irq=%d blocker=%lld ns dispatch=%lld ns total=%lld ns",
+		  __entry->irq, __entry->blocker_ns, __entry->dispatch_ns,
+		  __entry->blocker_ns + __entry->dispatch_ns)
 );
 
 TRACE_EVENT(evl_fpu_corrupt,

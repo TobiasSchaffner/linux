@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config RV_MON_EVL
+	bool "EVL OOB blocking edge-stat RV monitor"
+	depends on RV
+	depends on EVL
+	depends on IRQ_PIPELINE
+	depends on TRACING
+	# Trap-entry IRQ-off hooks live in arch/{riscv,arm64} only;
+	# other IRQ_PIPELINE architectures would silently get partial
+	# coverage.  Drop this depends when those hooks land.
+	depends on RISCV || ARM64 || X86_64
+	select RV_EDGE_STAT
+	default n
+	help
+	  Composed edge-stat RV monitor for OOB blocking on EVL/Dovetail.
+
+	  Tracks the per-CPU joint state of hard-IRQ-off windows,
+	  the OOB scheduler core, the OOB clock-tick handler, and
+	  OOB hardware-IRQ handlers using a transition table generated
+	  at build time from
+	    tools/verification/models/evl.dot
+	  by ``python3 tools/verification/rvgen edgestat``.
+
+	  When enabled, every component event triggers a O(1) per-CPU
+	  table lookup and a sched_clock() reservation; per-edge
+	  rv_edge_stat (count/sum/max/log2 histogram) plus a coverage
+          bitmap are aggregated.
+
+          Cost when CONFIG_RV_MON_EVL=n is zero (the IRQ-off hooks
+          collapse to an empty inline). When the option is built in
+          but the runtime switch under
+          /sys/kernel/tracing/rv/monitors/rv_evl/enable is OFF,
+          every hot-path hook is a single static_branch_unlikely()
+          test (patched NOP).

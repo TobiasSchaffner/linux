@@ -36,6 +36,14 @@ config HA_MON_EVENTS_ID
 	select RV_HA_MONITOR
 	bool
 
+config RV_EDGE_STAT
+	bool
+	help
+	  Generic per-edge dwell-time bookkeeping for edge-stat RV
+	  monitors. Selected by monitors that account per-transition
+	  timing via <linux/rv_edge_stat.h>. Header-only; no code is
+	  emitted unless a consumer instantiates it.
+
 menuconfig RV
 	bool "Runtime Verification"
 	select TRACING
@@ -84,6 +92,7 @@ source "kernel/trace/rv/monitors/nomiss/Kconfig"
 # Add new deadline monitors here
 
 # Add new monitors here
+source "kernel/trace/rv/monitors/evl/Kconfig"
 
 config RV_REACTORS
 	bool "Runtime verification reactors"
