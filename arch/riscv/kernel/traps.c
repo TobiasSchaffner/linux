@@ -7,6 +7,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/irqflags.h>
+#include <linux/rv_irqoff.h>
 #include <linux/randomize_kstack.h>
 #include <linux/sched.h>
 #include <linux/sched/debug.h>
@@ -546,6 +547,39 @@ asmlinkage __visible noinstr void do_page_fault(struct pt_regs *regs)
 #ifdef CONFIG_IRQ_PIPELINE
 
 extern void (*handle_arch_irq)(struct pt_regs *);
+
+/*
+ * RV-monitor hooks invoked from handle_exception / ret_from_exception
+ * in entry.S. RISC-V clears SIE in hardware on trap entry without
+ * going through hard_local_irq_*, so the rv_evl monitor never sees an
+ * irqoff_enter before the resulting hwirq/exception event. We bracket
+ * every trap (interrupt and exception) here. The SR_PIE bit in the
+ * saved status tells us whether IRQs were actually enabled before the
+ * trap; if they weren't, this trap nested inside an existing IRQ-off
+ * window and we must not double-account.
+ *
+ * These hooks compile to a single ret when CONFIG_RV_MON_EVL is off,
+ * and to a cheap static_branch-gated check when the runtime switch
+ * is off.
+ */
+asmlinkage void noinstr rv_irqoff_trap_enter(struct pt_regs *regs)
+{
+	/*
+	 * Capture a per-CPU trap-arrival timestamp on every trap (not
+	 * gated by SR_PIE) so the monitor can split the subsequent
+	 * hwirq_enter_over_irqoff_inband dwell into blocker vs dispatch.
+	 */
+	rv_evl_account_trap_arrival();
+
+	if (regs->status & SR_PIE)
+		rv_irqoff_account_off();
+}
+
+asmlinkage void noinstr rv_irqoff_trap_exit(struct pt_regs *regs)
+{
+	if (regs->status & SR_PIE)
+		rv_irqoff_account_on();
+}
 
 static void noinstr handle_riscv_irq_pipelined(struct pt_regs *regs)
 {
