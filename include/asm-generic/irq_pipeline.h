@@ -8,6 +8,7 @@
 
 #include <linux/kconfig.h>
 #include <linux/types.h>
+#include <linux/rv_irqoff.h>
 
 #ifdef CONFIG_IRQ_PIPELINE
 
@@ -22,10 +23,48 @@ int inband_irqs_disabled(void);
 #define hard_cond_local_irq_save()		hard_local_irq_save()
 #define hard_cond_local_irq_restore(__flags)	hard_local_irq_restore(__flags)
 
-#define hard_local_irq_save()			native_irq_save()
-#define hard_local_irq_restore(__flags)		native_irq_restore(__flags)
-#define hard_local_irq_enable()			native_irq_enable()
-#define hard_local_irq_disable()		native_irq_disable()
+/*
+ * EVL hard-IRQ-off measurement hook (CONFIG_RV_MON_EVL).
+ *
+ * Hooks fire only on real ON->OFF / OFF->ON edges so the rv_evl
+ * monitor sees one IRQOFF_ENTER per off window, not one per nested
+ * save(). The entire edge-detect predicate sits behind
+ * static_branch_unlikely(&rv_irqoff_key) via short-circuit &&, so
+ * when the runtime switch is OFF neither the predicate nor the call
+ * is executed -- the patched-out NOP path skips both. When
+ * CONFIG_RV_MON_EVL=n, rv_irqoff_key resolves to a constant-false
+ * stub and the compiler eliminates the whole expression.
+ */
+#define hard_local_irq_save()						\
+	({								\
+		unsigned long __rv_flags = native_irq_save();		\
+		if (rv_irqoff_enabled() &&				\
+		    !native_irqs_disabled_flags(__rv_flags))		\
+			__rv_irqoff_off();				\
+		__rv_flags;						\
+	})
+#define hard_local_irq_restore(__flags)					\
+	do {								\
+		if (rv_irqoff_enabled() &&				\
+		    !native_irqs_disabled_flags(__flags) &&		\
+		    native_irqs_disabled())				\
+			__rv_irqoff_on();				\
+		native_irq_restore(__flags);				\
+	} while (0)
+#define hard_local_irq_enable()						\
+	do {								\
+		if (rv_irqoff_enabled() && native_irqs_disabled())	\
+			__rv_irqoff_on();				\
+		native_irq_enable();					\
+	} while (0)
+#define hard_local_irq_disable()					\
+	do {								\
+		bool __rv_was_off = rv_irqoff_enabled() &&		\
+				    native_irqs_disabled();		\
+		native_irq_disable();					\
+		if (rv_irqoff_enabled() && !__rv_was_off)		\
+			__rv_irqoff_off();				\
+	} while (0)
 #define hard_local_save_flags()			native_save_flags()
 
 #define hard_irqs_disabled()			native_irqs_disabled()
