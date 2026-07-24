@@ -228,7 +228,7 @@ void evl_purge_cache(struct evl_cache *cache,
 					lockdep_is_held(&cache->lock)); e; e = next) {
 				next = rcu_dereference_protected(e->next,
 						lockdep_is_held(&cache->lock));
-				if (testfn(e, arg)) {
+				if (!testfn || testfn(e, arg)) {
 					rcu_assign_pointer(*ep, next);
 					if (refcount_dec_and_test(&e->refcnt))
 						call_rcu(&e->rcu, entry_free_rcu);
