@@ -553,8 +553,11 @@ static void probe_irq_handler_entry(void *data, int irq,
 	 * Desync safety: if the FSM already runs a handler at depth 0
 	 * (counter reset mid-handler), drop this enter so it cannot raise
 	 * an unmodelled event.
+	 *
+	 * Use READ_ONCE for consistency with the exit-path orphan guard.
 	 */
-	if (rv_evl_in_hwirq_state(p->state))
+	u8 state = READ_ONCE(p->state);
+	if (rv_evl_in_hwirq_state(state))
 		return;
 	p->hwirq_outer_suppressed = false;
 	p->blocker_ns = 0;
@@ -641,8 +644,14 @@ static void probe_irq_handler_exit(void *data, int irq,
 	 * State-based orphan guard: a hwirq_exit while the FSM is not in a
 	 * handler state is an orphan (enter suppressed / counter desync);
 	 * drop it instead of raising an unmodelled event.
+	 *
+	 * Use READ_ONCE to prevent compiler from reordering this check
+	 * with the p->state read inside rv_evl_event (which is inlined).
+	 * Without the barrier, the compiler might hoist the transition
+	 * lookup above this guard, causing TOCTOU races.
 	 */
-	if (!rv_evl_in_hwirq_state(p->state))
+	u8 state = READ_ONCE(p->state);
+	if (!rv_evl_in_hwirq_state(state))
 		return;
 	rv_evl_event(RV_EVL_EV_HWIRQ_EXIT);
 }
