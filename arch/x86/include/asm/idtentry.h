@@ -10,10 +10,30 @@
 #ifndef __ASSEMBLER__
 #include <linux/entry-common.h>
 #include <linux/hardirq.h>
+#include <linux/rv_irqoff.h>
 
 #include <asm/irq_stack.h>
 
 typedef void (*idtentry_t)(struct pt_regs *regs);
+
+/*
+ * RV IRQ-off accounting hooks for x86 IDT entries: the CPU disables
+ * IF on trap/IRQ entry, so account a transition only when the trapped
+ * context had IF set.  Gated by the RV runtime static branch.
+ */
+static __always_inline __attribute__((no_instrument_function))
+void rv_idtentry_account_off(struct pt_regs *regs)
+{
+	if (rv_irqoff_enabled() && (regs->flags & X86_EFLAGS_IF))
+		__rv_irqoff_off();
+}
+
+static __always_inline __attribute__((no_instrument_function))
+void rv_idtentry_account_on(struct pt_regs *regs)
+{
+	if (rv_irqoff_enabled() && (regs->flags & X86_EFLAGS_IF))
+		__rv_irqoff_on();
+}
 
 /**
  * DECLARE_IDTENTRY - Declare functions for simple IDT entry points
@@ -55,12 +75,16 @@ static __always_inline void __##func(struct pt_regs *regs);		\
 									\
 __visible noinstr void func(struct pt_regs *regs)			\
 {									\
-	irqentry_state_t state = irqentry_enter(regs);			\
+	irqentry_state_t state;						\
+									\
+	rv_idtentry_account_off(regs);					\
+	state = irqentry_enter(regs);					\
 									\
 	instrumentation_begin();					\
 	__##func (regs);						\
 	instrumentation_end();						\
 	irqentry_exit(regs, state);					\
+	rv_idtentry_account_on(regs);					\
 }									\
 									\
 static __always_inline void __##func(struct pt_regs *regs)
@@ -102,12 +126,16 @@ static __always_inline void __##func(struct pt_regs *regs,		\
 __visible noinstr void func(struct pt_regs *regs,			\
 			    unsigned long error_code)			\
 {									\
-	irqentry_state_t state = irqentry_enter(regs);			\
+	irqentry_state_t state;						\
+									\
+	rv_idtentry_account_off(regs);					\
+	state = irqentry_enter(regs);					\
 									\
 	instrumentation_begin();					\
 	__##func (regs, error_code);					\
 	instrumentation_end();						\
 	irqentry_exit(regs, state);					\
+	rv_idtentry_account_on(regs);					\
 }									\
 									\
 static __always_inline void __##func(struct pt_regs *regs,		\
@@ -273,14 +301,18 @@ static void __##func(struct pt_regs *regs, u32 vector);			\
 __visible noinstr void func(struct pt_regs *regs,			\
 			    unsigned long error_code)			\
 {									\
-	irqentry_state_t state = irqentry_enter(regs);			\
+	irqentry_state_t state;						\
 	u32 vector = (u32)(u8)error_code;				\
+									\
+	rv_idtentry_account_off(regs);					\
+	state = irqentry_enter(regs);					\
 									\
 	kvm_set_cpu_l1tf_flush_l1d();                                   \
 	instrumentation_begin();					\
 	run_irq_on_irqstack_cond(__##func, regs, vector);		\
 	instrumentation_end();						\
 	irqentry_exit(regs, state);					\
+	rv_idtentry_account_on(regs);					\
 }									\
 									\
 static noinline void __##func(struct pt_regs *regs, u32 vector)
