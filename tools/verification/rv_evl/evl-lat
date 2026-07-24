@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+# evl-lat -- control the rv_evl runtime-verification monitor and report the
+# modelled critical-path latency (average and worst case) of the EVL
+# out-of-band wake path.
+#
+# Runs ON the target (StarFive VisionFive2 etc.); talks to tracefs directly.
+#
+# Only EXACT values are reported:
+#   max = sum of per-edge max_ns  (arrival = max(in-band, OOB) branch)
+#   avg = sum of per-edge mean_ns (sum_ns / count, same dominant branch)
+# The edge-stat has no min field, so no minimum is shown.
+# Also reports the longest inband-irqoff blocker per CPU (dwell + caller).
+#
+# Commands:
+#   enable            attach + enable rv_evl (monitoring + reacting on)
+#   disable           detach + disable rv_evl
+#   clear             reset the edge statistics (keeps the reactor)
+#   status            show enable / monitoring / reacting / reactor state
+#   reactor <name>    select the reactor (actuator): nop | printk | panic
+#   report            print critical-path avg/max once  (default command)
+#
+# Options (report):
+#   -c, --continuous  loop in the foreground, one line per interval (Ctrl-C to stop)
+#   --breakdown       detailed per-component WCL decomposition (all CPUs)
+#   --cpu N           restrict to CPU N (default: the worst CPU in the snapshot)
+#   --interval SEC    refresh interval for --continuous (default: 1)
+set -u
+
+# --- locate tracefs / the monitor ------------------------------------------
+RV=/sys/kernel/tracing/rv
+[ -d "$RV" ] || RV=/sys/kernel/debug/tracing/rv
+MON="$RV/monitors/rv_evl"
+
+# --- composed critical-path topology --------------------------------------
+# The edge labels below are hard-wired into the awk reducers. The bound is:
+#   WCL = max(in-band, OOB) arrival + sched + exit
+# where each arrival branch is  blocker + ISR body, and the blocker is the
+# worst hard-IRQs-off window that can precede the wake -- inband OR OOB,
+# *however it ended*: delivered straight into the handler
+# (hwirq_enter_over_irqoff_*) or closed by a normal re-enable
+# (irqoff_exit_inband). Any hard-off section can delay an EVL thread, so the
+# worst case takes the max over both ways the window can end.
+
+die() { echo "evl-lat: $*" >&2; exit 1; }
+
+require_mon() {
+	[ -d "$MON" ] || die "rv_evl monitor not found under $RV (is the monitor built in?)"
+}
+
+current_reactor() {
+	# reactors file lists all options, the active one in [brackets]
+	tr ' ' '\n' < "$MON/reactors" 2>/dev/null \
+		| sed -n 's/^\[\(.*\)\]$/\1/p' | head -n1
+}
+
+# --- commands --------------------------------------------------------------
+cmd_enable() {
+	require_mon
+	echo 1 > "$MON/enable"
+	echo 1 > "$RV/monitoring_on"
+	echo 1 > "$RV/reacting_on"
+	echo "rv_evl enabled (reactor: $(current_reactor))"
+}
+
+cmd_disable() {
+	require_mon
+	echo 0 > "$MON/enable"
+	echo "rv_evl disabled"
+}
+
+cmd_clear() {
+	require_mon
+	# The edge stats are zeroed on attach (rv_evl_attach -> reset_ipi), so a
+	# disable/enable cycle is the clean reset. Preserve the reactor across it.
+	local r; r=$(current_reactor)
+	local was; was=$(cat "$MON/enable" 2>/dev/null)
+	echo 0 > "$MON/enable"
+	echo 1 > "$MON/enable"
+	[ -n "$r" ] && [ "$r" != nop ] && echo "$r" > "$MON/reactors" 2>/dev/null
+	[ "$was" = 0 ] && echo 0 > "$MON/enable"   # restore disabled state
+	echo "edge statistics cleared"
+}
+
+cmd_reactor() {
+	require_mon
+	local name="${1:-}"
+	case "$name" in
+		nop|printk|panic) ;;
+		"") die "reactor: name required (nop | printk | panic)";;
+		*) die "reactor: unknown reactor '$name' (nop | printk | panic)";;
+	esac
+	echo "$name" > "$MON/reactors" || die "failed to set reactor"
+	echo 1 > "$RV/reacting_on"
+	echo "reactor set to $(current_reactor)"
+}
+
+cmd_status() {
+	require_mon
+	printf "%-14s %s\n" "monitor:"     "rv_evl"
+	printf "%-14s %s\n" "enable:"       "$(cat "$MON/enable" 2>/dev/null)"
+	printf "%-14s %s\n" "monitoring_on:" "$(cat "$RV/monitoring_on" 2>/dev/null)"
+	printf "%-14s %s\n" "reacting_on:"  "$(cat "$RV/reacting_on" 2>/dev/null)"
+	printf "%-14s %s\n" "reactor:"      "$(current_reactor)"
+}
+
+# awk reducer: reads a stats dump, prints one line per CPU:
+#   cpu avg_ns max_ns dominant_branch
+# max: blocker = max(hard-off window, however it ended) + ISR + sched + exit,
+#      arrival branch = max(in-band, OOB).
+# avg: typical wake -- blocker uses the arrival (enter) mean, not the
+#      worst-case closed-window candidate.
+AWK_REDUCE='
+function mx(c,l){return MX[c,l]+0}
+function mn(c,l){return MN[c,l]+0}
+/^#/ {next}
+{
+	n=split($0,f,","); if(n<7) next; if(f[3]=="label") next;
+	c=f[1]+0; cpus[c]=1;
+	MX[c,f[3]]=f[5]+0; MN[c,f[3]]=f[7]+0;
+}
+END{
+	for(c in cpus){
+		blk=mx(c,"hwirq_enter_over_irqoff_inband");
+		e=mx(c,"irqoff_exit_inband"); if(e>blk) blk=e;
+		isr=mx(c,"hwirq_exit_over_irqoff_inband")+mx(c,"hwirq_enter_nested_inband")+mx(c,"hwirq_exit_nested_inband");
+		inband=blk+isr;
+		oob=mx(c,"hwirq_enter_over_irqoff_oob")+mx(c,"hwirq_exit_over_irqoff_oob");
+		if(inband>=oob){am=inband; dom="in-band"} else {am=oob; dom="OOB(ALT!)"}
+		sc=mx(c,"schedule_from_oob")+mx(c,"pick_thread")+mx(c,"switch_tail");
+		ex=mx(c,"irqoff_exit_oob");
+		maxns=am+sc+ex;
+		if(dom=="in-band")
+			aa=mn(c,"hwirq_enter_over_irqoff_inband")+mn(c,"hwirq_exit_over_irqoff_inband")+mn(c,"hwirq_enter_nested_inband")+mn(c,"hwirq_exit_nested_inband");
+		else
+			aa=mn(c,"hwirq_enter_over_irqoff_oob")+mn(c,"hwirq_exit_over_irqoff_oob");
+		avgns=aa+mn(c,"schedule_from_oob")+mn(c,"pick_thread")+mn(c,"switch_tail")+mn(c,"irqoff_exit_oob");
+		printf "%d %.0f %.0f %s\n", c, avgns, maxns, dom;
+	}
+}'
+
+reduce() {
+	awk "$AWK_REDUCE"
+}
+
+# breakdown: per-component WCL decomposition (blocker, ISR, sched, exit)
+AWK_BREAKDOWN='
+function mx(c,l){return MX[c,l]+0}
+function us(ns){return sprintf("%8.2f",ns/1000.0)}
+/^#/ {next}
+{
+	n=split($0,f,","); if(n<7) next; if(f[3]=="label") next;
+	c=f[1]+0; cpus[c]=1;
+	MX[c,f[3]]=f[5]+0;
+}
+END{
+	for(c in cpus){
+		blk_en=mx(c,"hwirq_enter_over_irqoff_inband");
+		blk_ex=mx(c,"irqoff_exit_inband");
+		blk=blk_en; blk_src="delivered-out-of-window";
+		if(blk_ex>blk_en){blk=blk_ex; blk_src="inband-window-closed"}
+		isr=mx(c,"hwirq_exit_over_irqoff_inband")+mx(c,"hwirq_enter_nested_inband")+mx(c,"hwirq_exit_nested_inband");
+		inband=blk+isr;
+		blk_ob=mx(c,"hwirq_enter_over_irqoff_oob");
+		isr_ob=mx(c,"hwirq_exit_over_irqoff_oob");
+		oob=blk_ob+isr_ob;
+		if(inband>=oob){arr=inband; dom="in-band"} else {arr=oob; dom="OOB(ALT!)"}
+		sc=mx(c,"schedule_from_oob")+mx(c,"pick_thread")+mx(c,"switch_tail");
+		ex=mx(c,"irqoff_exit_oob");
+		wcl=arr+sc+ex;
+		print "=== CPU " c " ===";
+		print "  blocker (max hard-off window) " us(blk) " us  in-band [" blk_src "];  OOB " us(blk_ob) " us";
+		print "  ISR body       in-band " us(isr) " us   OOB " us(isr_ob) " us";
+		print "  arrival = max(in-band " us(inband) ", OOB " us(oob) ") us  -> " dom;
+		print "  sched " us(sc) " us   exit " us(ex) " us";
+		print "  WCL(FSM) = " us(wcl) " us  (arrival " us(arr) " + sched " us(sc) " + exit " us(ex) ")";
+		if(oob>inband) print "  !! OOB (ALT) arrival now EXCEEDS in-band -- assumption broken";
+		print "";
+	}
+}'
+
+# pick a CPU line from reduce() output: $1 = optional forced cpu.
+# default: the CPU with the largest max_ns.
+pick_cpu_line() {
+	local force="${1:-}"
+	if [ -n "$force" ]; then
+		awk -v c="$force" '$1==c{print; found=1} END{exit !found}'
+	else
+		sort -k3,3 -n | tail -n1
+	fi
+}
+
+report_once() {
+	local force="${1:-}"
+	if [ "$BREAKDOWN" = 1 ]; then
+		cat "$MON/stats" | awk "$AWK_BREAKDOWN"
+		echo "Longest inband-irqoff blocker:"
+		grep "^# [0-9]" "$MON/hwirq_stats" | \
+			sed 's/^# //' | awk -F, '{printf "  CPU %d: %8.2f us  %s\n", $1, $2/1000.0, $3}'
+		return
+	fi
+	local line
+	line=$(cat "$MON/stats" | reduce | pick_cpu_line "$force") \
+		|| die "no stats for CPU ${force:-?} (idle, or wrong CPU)"
+	# line: cpu avg_ns max_ns dom
+	awk '{printf "CPU %d   avg %8.2f us   max %8.2f us   arrival: %s\n", \
+	      $1, $2/1000.0, $3/1000.0, $4}' <<<"$line"
+
+	# Show longest inband-irqoff blocker
+	echo ""
+	echo "Longest inband-irqoff blocker:"
+	grep "^# [0-9]" "$MON/hwirq_stats" | \
+		sed 's/^# //' | awk -F, '{printf "  CPU %d: %8.2f us  %s\n", $1, $2/1000.0, $3}'
+}
+
+# interval (per-second) EXACT avg via sum/count deltas + running max.
+AWK_INTERVAL='
+function mx(c,l){return MX[c,l]+0}
+function im(c,l){return IM[c,l]+0}
+FNR==NR{                                   # previous snapshot
+	if($0 ~ /^#/) next; n=split($0,f,","); if(n<7||f[3]=="label") next;
+	psum[f[1]+0,f[3]]=f[6]+0; pcnt[f[1]+0,f[3]]=f[4]+0; next;
+}
+{                                          # current snapshot
+	if($0 ~ /^#/) next; n=split($0,f,","); if(n<7||f[3]=="label") next;
+	c=f[1]+0; cpus[c]=1;
+	MX[c,f[3]]=f[5]+0;                       # running max
+	dc=(f[4]+0)-(pcnt[c,f[3]]+0); ds=(f[6]+0)-(psum[c,f[3]]+0);
+	if(dc>0) IM[c,f[3]]=ds/dc; else IM[c,f[3]]=0;   # per-edge interval mean
+}
+END{
+	for(c in cpus){
+		blk=mx(c,"hwirq_enter_over_irqoff_inband");
+		e=mx(c,"irqoff_exit_inband"); if(e>blk) blk=e;
+		isr=mx(c,"hwirq_exit_over_irqoff_inband")+mx(c,"hwirq_enter_nested_inband")+mx(c,"hwirq_exit_nested_inband");
+		inband=blk+isr;
+		oob=mx(c,"hwirq_enter_over_irqoff_oob")+mx(c,"hwirq_exit_over_irqoff_oob");
+		if(inband>=oob){am=inband; dom="in-band"} else {am=oob; dom="OOB(ALT!)"}
+		sc=mx(c,"schedule_from_oob")+mx(c,"pick_thread")+mx(c,"switch_tail");
+		ex=mx(c,"irqoff_exit_oob");
+		maxns=am+sc+ex;
+		if(dom=="in-band")
+			ia=im(c,"hwirq_enter_over_irqoff_inband")+im(c,"hwirq_exit_over_irqoff_inband")+im(c,"hwirq_enter_nested_inband")+im(c,"hwirq_exit_nested_inband");
+		else
+			ia=im(c,"hwirq_enter_over_irqoff_oob")+im(c,"hwirq_exit_over_irqoff_oob");
+		avgns=ia+im(c,"schedule_from_oob")+im(c,"pick_thread")+im(c,"switch_tail")+im(c,"irqoff_exit_oob");
+		printf "%d %.0f %.0f %s\n", c, avgns, maxns, dom;
+	}
+}'
+
+report_continuous() {
+	local force="${1:-}" interval="${2:-1}"
+	require_mon
+	[ "$(cat "$MON/enable" 2>/dev/null)" = 1 ] || cmd_enable >/dev/null
+	cmd_clear >/dev/null
+	local cpu_label="${force:-worst}"
+	echo "# rv_evl critical-path latency (CPU ${cpu_label}, reactor $(current_reactor)) -- avg/s exact over interval, max running peak"
+	printf "# %10s %12s %12s   %s\n" "sample" "avg/s(us)" "max(us)" "arrival"
+	trap 'echo; echo "# stopped"; exit 0' INT
+	local prev cur line n=0
+	prev=$(cat "$MON/stats")
+	while :; do
+		sleep "$interval"
+		n=$((n+1))
+		cur=$(cat "$MON/stats")
+		line=$(awk "$AWK_INTERVAL" \
+			<(printf '%s\n' "$prev") <(printf '%s\n' "$cur") \
+			| pick_cpu_line "$force")
+		if [ -n "$line" ]; then
+			awk -v n="$n" '{printf "  %10d %12.2f %12.2f   %s\n", \
+				n, $2/1000.0, $3/1000.0, $4}' <<<"$line"
+		else
+			printf "  %10d %12s %12s   %s\n" "$n" "-" "-" "(no CPU data)"
+		fi
+		prev=$cur
+	done
+}
+
+# --- arg parsing -----------------------------------------------------------
+CMD=""
+CONT=0
+CPU=""
+INTERVAL=1
+BREAKDOWN=0
+while [ $# -gt 0 ]; do
+	case "$1" in
+		enable|disable|clear|status)  CMD="$1"; shift;;
+		reactor)                      CMD="reactor"; shift; REACTOR_ARG="${1:-}"; [ $# -gt 0 ] && shift;;
+		report|show)                  CMD="report"; shift;;
+		-c|--continuous)              CONT=1; shift;;
+		--breakdown)                  BREAKDOWN=1; shift;;
+		--cpu)                        CPU="${2:-}"; shift 2;;
+		--cpu=*)                      CPU="${1#*=}"; shift;;
+		--interval)                   INTERVAL="${2:-}"; shift 2;;
+		--interval=*)                 INTERVAL="${1#*=}"; shift;;
+		-h|--help)                    sed -n '2,40p' "$0"; exit 0;;
+		*)                            die "unknown argument '$1' (try --help)";;
+	esac
+done
+[ -n "$CMD" ] || CMD="report"
+
+case "$CMD" in
+	enable)   cmd_enable;;
+	disable)  cmd_disable;;
+	clear)    cmd_clear;;
+	status)   cmd_status;;
+	reactor)  cmd_reactor "${REACTOR_ARG:-}";;
+	report)
+		if [ "$CONT" = 1 ]; then report_continuous "$CPU" "$INTERVAL"
+		else report_once "$CPU"; fi;;
+	*) die "unhandled command '$CMD'";;
+esac
