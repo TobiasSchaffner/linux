@@ -209,6 +209,10 @@ SYM_CODE_START(handle_exception)
 	move a0, sp
 	call riscv_v_context_nesting_start
 #endif
+#ifdef CONFIG_RV_MON_EVL
+	move a0, sp
+	call rv_irqoff_trap_enter
+#endif
 	move a0, sp /* pt_regs */
 
 	/*
@@ -275,6 +279,10 @@ SYM_CODE_START_NOALIGN(ret_from_exception)
 #ifdef CONFIG_RISCV_ISA_V_PREEMPTIVE
 	move a0, sp
 	call riscv_v_context_nesting_end
+#endif
+#ifdef CONFIG_RV_MON_EVL
+	move a0, sp
+	call rv_irqoff_trap_exit
 #endif
 	REG_L a0, PT_STATUS(sp)
 	restore_userssp s3, a0
