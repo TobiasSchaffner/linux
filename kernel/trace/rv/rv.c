@@ -139,9 +139,12 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/math64.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
+#include <linux/rv_edge_stat.h>
+#include <linux/seq_file.h>
 
 #ifdef CONFIG_RV_MON_EVENTS
 #define CREATE_TRACE_POINTS
@@ -412,6 +415,104 @@ static const struct file_operations interface_desc_fops = {
 	.read	= monitor_desc_read_data,
 };
 
+static int rv_edge_stats_show(struct seq_file *seq, void *v)
+{
+	struct rv_monitor *mon = seq->private;
+	unsigned int e, b;
+	int cpu;
+
+	seq_puts(seq, "# cpu,edge,label,count,max_ns,sum_ns,mean_ns");
+	for (b = 0; b < RV_EDGE_HIST_BINS; b++)
+		seq_printf(seq, ",h%u", b);
+	seq_putc(seq, '\n');
+
+	if (!mon->snapshot_edge || mon->n_edges == 0)
+		return 0;
+
+	for_each_online_cpu(cpu) {
+		for (e = 0; e < mon->n_edges; e++) {
+			struct rv_edge_stat snap = {};
+			u64 mean = 0;
+			const char *lbl = mon->edge_labels ? mon->edge_labels[e] : "";
+
+			mon->snapshot_edge(cpu, e, &snap);
+			if (snap.count)
+				mean = div64_u64(snap.sum_ns, snap.count);
+
+			seq_printf(seq, "%d,%u,%s,%llu,%llu,%llu,%llu",
+				   cpu, e, lbl,
+				   (unsigned long long)snap.count,
+				   (unsigned long long)snap.max_ns,
+				   (unsigned long long)snap.sum_ns,
+				   (unsigned long long)mean);
+			for (b = 0; b < RV_EDGE_HIST_BINS; b++)
+				seq_printf(seq, ",%u", snap.hist[b]);
+			seq_putc(seq, '\n');
+		}
+	}
+	return 0;
+}
+
+static int rv_edge_stats_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, rv_edge_stats_show, inode->i_private);
+}
+
+static const struct file_operations rv_edge_stats_fops = {
+	.open		= rv_edge_stats_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static int rv_edge_coverage_show(struct seq_file *seq, void *v)
+{
+	struct rv_monitor *mon = seq->private;
+	unsigned long *folded, *per_cpu;
+	unsigned int nlongs;
+	unsigned int hits;
+	int cpu;
+
+	if (!mon->coverage_snapshot || mon->n_edges == 0) {
+		seq_puts(seq, "0/0\n");
+		return 0;
+	}
+
+	nlongs  = RV_EDGE_COVERAGE_LONGS(mon->n_edges);
+	folded  = kcalloc(nlongs, sizeof(*folded), GFP_KERNEL);
+	per_cpu = kcalloc(nlongs, sizeof(*per_cpu), GFP_KERNEL);
+	if (!folded || !per_cpu) {
+		kfree(folded);
+		kfree(per_cpu);
+		return -ENOMEM;
+	}
+
+	for_each_online_cpu(cpu) {
+		memset(per_cpu, 0, nlongs * sizeof(*per_cpu));
+		mon->coverage_snapshot(cpu, per_cpu);
+		bitmap_or(folded, folded, per_cpu, mon->n_edges);
+	}
+
+	hits = bitmap_weight(folded, mon->n_edges);
+	seq_printf(seq, "%u/%u\n", hits, mon->n_edges);
+
+	kfree(folded);
+	kfree(per_cpu);
+	return 0;
+}
+
+static int rv_edge_coverage_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, rv_edge_coverage_show, inode->i_private);
+}
+
+static const struct file_operations rv_edge_coverage_fops = {
+	.open		= rv_edge_coverage_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 /*
  * During the registration of a monitor, this function creates
  * the monitor dir, where the specific options of the monitor
@@ -434,6 +535,27 @@ static int create_monitor_dir(struct rv_monitor *mon, struct rv_monitor *parent)
 	tmp = rv_create_file("desc", RV_MODE_READ, dir, mon, &interface_desc_fops);
 	if (!tmp)
 		return -ENOMEM;
+
+	if (mon->n_edges && mon->snapshot_edge) {
+		tmp = rv_create_file("stats", RV_MODE_READ, dir, mon,
+				     &rv_edge_stats_fops);
+		if (!tmp)
+			return -ENOMEM;
+	}
+
+	if (mon->coverage_snapshot) {
+		tmp = rv_create_file("coverage", RV_MODE_READ, dir, mon,
+				     &rv_edge_coverage_fops);
+		if (!tmp)
+			return -ENOMEM;
+	}
+
+	if (mon->extra_fops && mon->extra_name) {
+		tmp = rv_create_file(mon->extra_name, RV_MODE_READ, dir, mon,
+				     mon->extra_fops);
+		if (!tmp)
+			return -ENOMEM;
+	}
 
 	retval = reactor_populate_monitor(mon, dir);
 	if (retval)
