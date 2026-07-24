@@ -33,6 +33,20 @@ class AutomataError(Exception):
     or malformed automaton definitions.
     """
 
+# Regex to extract key="value" pairs from dot edge attribute brackets
+_ATTR_RE = re.compile(r'(\w+)\s*=\s*"([^"]*)"')
+_EDGE_RE = re.compile(r'^\s*"([^"]+)"\s*->\s*"([^"]+)"\s*(?:\[(.*)\])?\s*;?\s*$')
+_NODE_RE = re.compile(r'^\s*"([^"]+)"\s*\[(.*)\]\s*;?\s*$')
+_NODE_GROUP_RE = re.compile(r'^\s*\{\s*node\s*\[(.*?)\]\s*(.+?)\s*\}\s*;?\s*$')
+_GRAPH_ATTR_RE = re.compile(r'^\s*(\w+)\s*=\s*"((?:[^"\\]|\\.)*)"\s*;\s*$')
+
+
+def _parse_attrs(body: str) -> dict:
+    out = {}
+    for m in _ATTR_RE.finditer(body or ""):
+        out[m.group(1)] = m.group(2) if m.group(2) is not None else m.group(3)
+    return out
+
 class Automata:
     """Automata class: Reads a dot file and parses it as an automaton.
 
@@ -77,6 +91,8 @@ class Automata:
         self.env_stored = sorted(self.env_stored)
         self.constraint_vars = sorted(self.constraint_vars)
         self.self_loop_reset_events = sorted(self.self_loop_reset_events)
+        self.graph_attrs, self.node_attrs, self.edge_attrs = \
+            self.__parse_dot_attrs()
 
     def __get_model_name(self) -> str:
         basename = ntpath.basename(self.__dot_path)
@@ -366,3 +382,82 @@ class Automata:
         constraint, false if it is a state constraint
         """
         return isinstance(key, _EventConstraintKey)
+
+    def __parse_dot_attrs(self) -> tuple[dict, dict, list]:
+        """Second pass: collect graph-, node- and edge-level attributes."""
+        graph_attrs: dict = {}
+        node_attrs: dict = {}
+        edge_attrs: list = []
+        for line in self.__dot_lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("//"):
+                continue
+            m = _EDGE_RE.match(stripped)
+            if m:
+                src, dst, body = m.group(1), m.group(2), m.group(3) or ""
+                if src.startswith("__init_"):
+                    continue
+                edge_attrs.append((src, dst, _parse_attrs(body)))
+                continue
+            m = _NODE_GROUP_RE.match(stripped)
+            if m:
+                shared = _parse_attrs(m.group(1))
+                for name in re.findall(r'"([^"]+)"', m.group(2)):
+                    if name.startswith("__init_"):
+                        continue
+                    node_attrs.setdefault(name, {}).update(shared)
+                continue
+            m = _NODE_RE.match(stripped)
+            if m and not m.group(1).startswith("__init_"):
+                node_attrs.setdefault(m.group(1), {}).update(
+                    _parse_attrs(m.group(2)))
+                continue
+            m = _GRAPH_ATTR_RE.match(stripped)
+            if m and "->" not in stripped:
+                graph_attrs[m.group(1)] = m.group(2)
+        return graph_attrs, node_attrs, edge_attrs
+
+    def __parse_edges(self) -> list[tuple[str, str, str, str, bool]]:
+        """Parse edges with their attributes from dot transitions.
+
+        Returns a list of (label, src_state, dst_state, on_event) tuples.
+        - label: the edge's display name (from label= attribute)
+        - src_state / dst_state: transition endpoints
+        - on_event: the event that triggers this edge (from on= or defaults to label)
+        """
+        edges = []
+        cursor = self.__get_cursor_begin_events()
+
+        while self.__dot_lines[cursor].lstrip()[0] == '"':
+            if self.__dot_lines[cursor].split()[1] == "->":
+                raw = self.__dot_lines[cursor]
+                parts = raw.split()
+                src = parts[0].replace('"', '').replace(',', '_')
+                dst = parts[2].replace('"', '').replace(',', '_')
+
+                # Parse all key="value" attributes from the bracket section
+                bracket_start = raw.find('[')
+                attrs = {}
+                if bracket_start != -1:
+                    bracket_section = raw[bracket_start:]
+                    attrs = dict(_ATTR_RE.findall(bracket_section))
+
+                label = attrs.get('label', '')
+                on_event = attrs.get('on', label)
+
+                # Handle multi-label edges (legacy "event1\nevent2" format)
+                labels = label.replace("\\n", " ").split()
+                on_events = on_event.replace("\\n", " ").split()
+
+                for i, lbl in enumerate(labels):
+                    on_ev = on_events[i] if i < len(on_events) else lbl
+                    edges.append((lbl, src, dst, on_ev))
+            cursor += 1
+
+        return edges
+
+    def get_edges(self) -> list[tuple[str, str, str, str]]:
+        """Public accessor for parsed edge data."""
+        if not hasattr(self, '_edges'):
+            self._edges = self.__parse_edges()
+        return self._edges

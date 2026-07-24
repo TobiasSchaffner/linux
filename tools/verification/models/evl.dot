@@ -1,0 +1,186 @@
+digraph state_automaton {
+    /*
+     * EVL OOB wake-up RV monitor -- 9 states, 9 events, 28 edges.
+     *
+     * Each edge's recorded value is the dwell time spent in its
+     * SOURCE state, not the cost of the event/transition itself.
+     *
+     * States:
+     *
+     *   RUNNING_HARDIRQS_ON
+     *       The unique non-blocking state.  Either stage may be
+     *       active; hard IRQs are on.  All other states represent
+     *       some form of blocking or hard-IRQ-off window.
+     *
+     *   LINUX_TURNED_HARDIRQS_OFF
+     *       Hard IRQs went off while running inband.  Dwell on the
+     *       exit edges measures how long inband held off OOB
+     *       delivery -- the primary blocking-dwell quantity.
+     *
+     *   EVL_TURNED_IRQS_OFF
+     *       Hard IRQs went off while already running OOB.  Dwell is
+     *       bounded by EVL/OOB internal critical sections (scheduler,
+     *       IRQ handlers).
+     *
+     *   IRQ_HANDLER_OVER_LINUX_IRQOFF
+     *       An IRQ handler is running on top of an LINUX_TURNED_HARDIRQS_OFF
+     *       window.  Dwell is the handler duration that *extends*
+     *       an already inband-blocking window.
+     *
+     *   IRQ_HANDLER_OVER_EVL_IRQOFF
+     *       An IRQ handler is running on top of an EVL_TURNED_IRQS_OFF window
+     *       (typical case for the wake-up path: timer/IPI handler
+     *       running while the OOB scheduler is about to run).
+     *
+     *   IRQ_HANDLER_SOFT_INJECTED
+     *       An IRQ handler invoked WITHOUT a preceding
+     *       __rv_irqoff_off() hook.  This covers software-injected
+     *       handlers that fire irq_handler_entry/exit tracepoints
+     *       but bypass the arch trap-entry path: proxy_tick fired
+     *       from evl_notify_proxy_tick(), in-band irq_work consumed
+     *       at a sync point, and some IPI paths that skip the
+     *       dovetail/asm-generic hook on RISC-V.  Dwell here is the
+     *       synchronous-handler runtime and is NOT inband-blocking.
+     *
+     *   EVL_SCHEDULER_PICKING
+     *       Inside __evl_schedule() between schedule entry and
+     *       pick_thread; the OOB scheduler is choosing the next task.
+     *
+     *   EVL_SCHEDULER_SWITCHING
+     *       Inside __evl_schedule() between pick_thread and
+     *       switch_tail; the dovetail context switch is in progress
+     *       and the CPU is treated as a black box (hard IRQs may
+     *       flip transiently inside switch_to()).
+     *
+     * Both HWIRQ_OVER_IRQOFF_* exit to EVL_TURNED_IRQS_OFF after the handler:
+     * any IRQF_OOB handler causes a stage switch to OOB on return;
+     * pure inband handlers transition through OOB-stage bookkeeping
+     * on the way to dovetail's exit_to_user / sync paths.  This
+     * conservative approximation preserves 0-unmodelled.
+     *
+     * IRQ_HANDLER_SOFT_INJECTED exits back to RUNNING_HARDIRQS_ON: the
+     * synchronous handler invocations that land here are bracketed
+     * by their caller's IRQs-on context (no irqoff hook on entry
+     * means no implicit OOB-stage promotion on exit either).
+     *
+     * The LINUX_TURNED_HARDIRQS_OFF --schedule--> EVL_SCHEDULER_PICKING edge models
+     * the dovetail leave_inband path: a wake-up that disables hard
+     * IRQs on the inband stage, migrates to OOB, and calls
+     * __evl_schedule() inside the same IRQs-off window.  The
+     * leave_inband transition itself emits no event; the schedule
+     * tracepoint is the first observable point after the stage flip.
+     * Dwell on this edge spans both inband-blocking and the
+     * leave_inband cost.
+     *
+     * The EVL_SCHEDULER_PICKING -> EVL_SCHEDULER_SWITCHING -> EVL_TURNED_IRQS_OFF
+     * chain is the OOB scheduler running with hard IRQs off
+     * (always).  switch_tail leaves EVL_SCHEDULER_SWITCHING back to
+     * EVL_TURNED_IRQS_OFF (or LINUX_TURNED_HARDIRQS_OFF on the inband_tail path).
+     *
+     * In-handler activity edges (HWIRQ_OVER_*):
+     *   irqoff_enter_oob_in_handler / irqoff_exit_oob_in_handler
+     *     symmetric to the inband pair; a hwirq handler that
+     *     entered over IRQs-on may transition into an OOB-stage
+     *     critical section (e.g. an EVL wakeup callback acquiring
+     *     a hard spinlock with oob_local_irq_save()) and back.
+     *
+     *   schedule_in_handler_* / pick_thread_in_handler_*
+     *     synchronous-injected handlers (proxy_tick, in-band
+     *     irq_work, IPI paths that skip the dovetail asm hook on
+     *     RISC-V) can invoke __evl_schedule() inline from the
+     *     handler body: their wakeup of a higher-priority EVL
+     *     thread triggers evl_schedule/evl_pick_thread inside the
+     *     hwirq_handler_entry .. hwirq_handler_exit window.
+     *     These edges self-loop on the HWIRQ_OVER_* state because
+     *     the handler is still the outer enclosing context; the
+     *     three flavours preserve the source variant so the
+     *     matching hwirq_exit_over_* edge can still discriminate
+     *     inband/oob/running pre-state when accounting dwell.
+     *     A real context switch (switch_tail) does not fire from
+     *     this nested path under observation -- if it ever does,
+     *     extend the model with HWIRQ_OVER_*_SCHED_SWITCHING
+     *     states rather than another self-loop.
+     *
+     * All metadata (event bindings, monitor description, graph-wide
+     * timed flag) is embedded as DOT attributes in this file; the
+     * parser is tools/verification/rvgen/rvgen/model.py.
+     */
+
+    /* monitor-level attributes */
+    name="rv_evl";
+    description="EVL OOB wake-up latency monitor (per CPU).\nEach edge value is the dwell time spent in its SOURCE state.\nModels the deterministic edges of an OOB wake-up:\n  {linux,evl}_turned_hardirqs_off -> irq_handler_over_{linux,evl}_irqoff ->\n    evl_scheduler_picking -> evl_scheduler_switching.\nCross-stage __evl_schedule invocations are accepted from\nLINUX_TURNED_HARDIRQS_OFF too (dovetail leave_inband path).\nSynchronous-injected handlers (proxy_tick, in-band irq_work,\nIPIs that skip __rv_irqoff_off) are tracked separately via\nthe IRQ_HANDLER_SOFT_INJECTED state.\nThe switch_to body is black-boxed by the EVL_SCHEDULER_SWITCHING\nstate set on pick_thread and cleared on switch_tail.";
+    /* All edges feed rv_edge_stat_account(); no per-edge override. */
+    timed="true";
+
+    /*
+     * Event bindings (synthetic plaintext-invisible nodes; not states).
+     *   hook="<symbol>" : static-key hook (declared in dovetail/evl).
+     *   tp="<event>"    : kernel tracepoint name.
+     */
+    "__event_irqoff_enter_inband" [shape=plaintext, style=invis, label="", hook="__rv_irqoff_off"];
+    "__event_irqoff_enter_oob"    [shape=plaintext, style=invis, label="", hook="__rv_irqoff_off"];
+    "__event_irqoff_exit"         [shape=plaintext, style=invis, label="", hook="__rv_irqoff_on"];
+    "__event_hwirq_enter"         [shape=plaintext, style=invis, label="", tp="irq_handler_entry"];
+    "__event_hwirq_exit"          [shape=plaintext, style=invis, label="", tp="irq_handler_exit"];
+    "__event_schedule"            [shape=plaintext, style=invis, label="", tp="evl_schedule"];
+    "__event_pick_thread"         [shape=plaintext, style=invis, label="", tp="evl_pick_thread"];
+    "__event_switch_tail"         [shape=plaintext, style=invis, label="", tp="evl_switch_tail"];
+    "__event_switch_tail_inband"  [shape=plaintext, style=invis, label="", tp="evl_switch_tail"];
+
+    /* States. doublecircle marks the (single) non_blocking state. */
+    {node [shape = plaintext, style=invis, label=""] "__init_RUNNING_HARDIRQS_ON"};
+    {node [shape = doublecircle] "RUNNING_HARDIRQS_ON"};
+    {node [shape = circle] "LINUX_TURNED_HARDIRQS_OFF"};
+    {node [shape = circle] "EVL_TURNED_IRQS_OFF"};
+    {node [shape = circle] "IRQ_HANDLER_OVER_LINUX_IRQOFF"};
+    {node [shape = circle] "IRQ_HANDLER_OVER_EVL_IRQOFF"};
+    {node [shape = circle] "IRQ_HANDLER_SOFT_INJECTED"};
+    {node [shape = circle] "IRQ_HANDLER_NESTED"};
+    {node [shape = circle] "EVL_SCHEDULER_PICKING"};
+    {node [shape = circle] "EVL_SCHEDULER_SWITCHING"};
+
+    "__init_RUNNING_HARDIRQS_ON" -> "RUNNING_HARDIRQS_ON";
+
+    /*
+     * Edges. ``label="..."`` is the unique short edge label (becomes
+     * EDGE_<LABEL> in the kernel header). ``on="..."`` overrides the
+     * event name when several edges share the same event (default:
+     * label). ``timed="true"`` records per-edge dwell statistics.
+     *
+     * ``note="..."`` is a free-form annotation describing each edge's
+     * role on the OOB-wake critical path (CRITICAL / ALT / SUBSUMED /
+     * SUPPRESSED / OFF-PATH). rvgen silently ignores unknown edge
+     * attributes, so this metadata is documentation-only today but can
+     * later be surfaced in rendered graphs or analysis tooling.
+     */
+    "RUNNING_HARDIRQS_ON"            -> "LINUX_TURNED_HARDIRQS_OFF"              [label="irqoff_enter_inband",            note="OFF-PATH: inband stage bookkeeping; does not gate OOB wake under Dovetail."];
+    "RUNNING_HARDIRQS_ON"            -> "EVL_TURNED_IRQS_OFF"                 [label="irqoff_enter_oob",               note="OFF-PATH: OOB stage bookkeeping; the matching exit edge is the blocker."];
+    "LINUX_TURNED_HARDIRQS_OFF"              -> "RUNNING_HARDIRQS_ON"            [label="irqoff_exit_inband",             on="irqoff_exit", note="CRITICAL: an inband hard-IRQs-off window that closed without delivering the wake IRQ. Its dwell is the full window duration -- a worst-case blocker candidate for an EVL wake (a timer firing at its start waits the whole window), symmetric with irqoff_exit_oob. Folded into the blocker term as max(hard-off window)."];
+    "EVL_TURNED_IRQS_OFF"                 -> "RUNNING_HARDIRQS_ON"            [label="irqoff_exit_oob",                on="irqoff_exit", note="CRITICAL: last hop on the OOB wake chain (switch_tail -> ret_to_user gap); also the OOB hard-irqoff blocker bound when a timer arrives during an OOB IRQ-off window."];
+    "LINUX_TURNED_HARDIRQS_OFF"              -> "IRQ_HANDLER_OVER_LINUX_IRQOFF"   [label="hwirq_enter_over_irqoff_inband", on="hwirq_enter", note="CRITICAL: trap-dispatch latency from trap arrival (rv_irqoff_trap_enter) to ISR entry; dwell folds in any inband-irqoff blocker the timer was waiting on (dominant arrival branch on RISC-V)."];
+    "EVL_TURNED_IRQS_OFF"                 -> "IRQ_HANDLER_OVER_EVL_IRQOFF"      [label="hwirq_enter_over_irqoff_oob",    on="hwirq_enter", note="ALT: cheaper trap-dispatch branch when timer fires inside an OOB hard-irqoff window; dwell folds in the OOB-irqoff blocker."];
+    "RUNNING_HARDIRQS_ON"            -> "IRQ_HANDLER_SOFT_INJECTED" [label="hwirq_enter_over_running_irqs_on",on="hwirq_enter", note="OFF-PATH: synchronous-injected handler (proxy_tick, in-band irq_work, IPI paths skipping the dovetail asm hook); returns to RUNNING without an OOB promotion, so it never completes an RT wake -- no trap dispatch, dwell is the call-site gap only."];
+    "IRQ_HANDLER_OVER_LINUX_IRQOFF"   -> "EVL_TURNED_IRQS_OFF"                 [label="hwirq_exit_over_irqoff_inband",  on="hwirq_exit", note="CRITICAL: ISR body dwell on the dominant arrival branch (timer over inband-irqoff). With hard IRQs re-enabled on the inband entry, a nested IRQ is broken out via IRQ_HANDLER_NESTED, so this dwell is the ISR body MINUS any nested excursion."];
+    "IRQ_HANDLER_OVER_LINUX_IRQOFF"   -> "IRQ_HANDLER_NESTED"               [label="hwirq_enter_nested_inband",   on="hwirq_enter", note="CRITICAL: a nested hardware IRQ arrives while the in-band wake handler runs -- EVL re-enables hard IRQs on the inband entry (running_inband -> hard_cond_local_irq_enable), so nesting is expected here. Its dwell adds directly to the OOB wake latency. Only the inband handler nests; OOB handlers keep hard IRQs off."];
+    "IRQ_HANDLER_NESTED"              -> "IRQ_HANDLER_OVER_LINUX_IRQOFF"    [label="hwirq_exit_nested_inband",    on="hwirq_exit",  note="CRITICAL: the nested handler body dwell; on exit it pops back to the in-band wake handler, closing the nested-IRQ excursion that extended the wake."];
+    "IRQ_HANDLER_OVER_EVL_IRQOFF"      -> "EVL_TURNED_IRQS_OFF"                 [label="hwirq_exit_over_irqoff_oob",     on="hwirq_exit", note="ALT: ISR body dwell on the OOB-irqoff arrival branch; encloses any nested in-handler edges."];
+    "IRQ_HANDLER_SOFT_INJECTED" -> "RUNNING_HARDIRQS_ON"            [label="hwirq_exit_over_running_irqs_on",on="hwirq_exit", note="OFF-PATH: synchronous-handler body dwell; returns to RUNNING with no OOB-stage promotion, so it is off the OOB wake critical path entirely."];
+    "IRQ_HANDLER_SOFT_INJECTED" -> "IRQ_HANDLER_OVER_LINUX_IRQOFF"   [label="irqoff_enter_in_handler",        on="irqoff_enter_inband", note="SUBSUMED: inband-irqoff window opened inside a running handler; fully enclosed by the outer hwirq_exit_over_* dwell."];
+    "IRQ_HANDLER_SOFT_INJECTED" -> "IRQ_HANDLER_OVER_EVL_IRQOFF"      [label="irqoff_enter_oob_in_handler",    on="irqoff_enter_oob", note="SUBSUMED: OOB-irqoff window opened inside a running handler (e.g. proxy_tick reprogramming); enclosed by the outer hwirq_exit_over_* dwell."];
+    "IRQ_HANDLER_OVER_LINUX_IRQOFF"   -> "IRQ_HANDLER_SOFT_INJECTED" [label="irqoff_exit_in_handler",         on="irqoff_exit", note="SUBSUMED: closes an in-handler irqoff window; enclosed by the outer hwirq_exit_over_* dwell."];
+    "IRQ_HANDLER_OVER_EVL_IRQOFF"      -> "IRQ_HANDLER_SOFT_INJECTED" [label="irqoff_exit_oob_in_handler",     on="irqoff_exit", note="SUBSUMED: closes an in-handler OOB-irqoff window; enclosed by the outer hwirq_exit_over_* dwell."];
+    "IRQ_HANDLER_SOFT_INJECTED" -> "IRQ_HANDLER_SOFT_INJECTED" [label="schedule_in_handler_running",    on="schedule", note="SUBSUMED: inline __evl_schedule() invoked from a synchronous-handler body; enclosed by the outer hwirq_exit_* dwell."];
+    "IRQ_HANDLER_OVER_LINUX_IRQOFF"   -> "IRQ_HANDLER_OVER_LINUX_IRQOFF"   [label="schedule_in_handler_inband",     on="schedule", note="SUBSUMED: inline __evl_schedule() from a handler that arrived over inband-irqoff; enclosed by the outer hwirq_exit_* dwell."];
+    "IRQ_HANDLER_OVER_EVL_IRQOFF"      -> "IRQ_HANDLER_OVER_EVL_IRQOFF"      [label="schedule_in_handler_oob",        on="schedule", note="SUBSUMED: inline __evl_schedule() from a handler that arrived over OOB-irqoff; enclosed by the outer hwirq_exit_* dwell."];
+    "IRQ_HANDLER_SOFT_INJECTED" -> "IRQ_HANDLER_SOFT_INJECTED" [label="pick_thread_in_handler_running", on="pick_thread", note="SUBSUMED: pick_thread fired from the inline __evl_schedule() above; enclosed by the outer hwirq_exit_* dwell."];
+    "IRQ_HANDLER_OVER_LINUX_IRQOFF"   -> "IRQ_HANDLER_OVER_LINUX_IRQOFF"   [label="pick_thread_in_handler_inband",  on="pick_thread", note="SUBSUMED: pick_thread from inline __evl_schedule() on the inband-irqoff arrival branch; enclosed by outer hwirq_exit_* dwell."];
+    "IRQ_HANDLER_OVER_EVL_IRQOFF"      -> "IRQ_HANDLER_OVER_EVL_IRQOFF"      [label="pick_thread_in_handler_oob",     on="pick_thread", note="SUBSUMED: pick_thread from inline __evl_schedule() on the OOB-irqoff arrival branch; enclosed by outer hwirq_exit_* dwell."];
+    "EVL_TURNED_IRQS_OFF"                 -> "EVL_SCHEDULER_PICKING"          [label="schedule_from_oob",              on="schedule", note="CRITICAL: __evl_schedule() entry on the OOB wake chain; dwell is the post-hwirq tail (pipeline finish + resched check) before pick_thread."];
+    "LINUX_TURNED_HARDIRQS_OFF"              -> "EVL_SCHEDULER_PICKING"          [label="schedule_from_inband",           on="schedule", note="OFF-PATH: dovetail leave_inband path (cross-stage wake); not on the periodic OOB timer wake."];
+    "RUNNING_HARDIRQS_ON"            -> "EVL_SCHEDULER_PICKING"          [label="schedule_from_running",          on="schedule", note="OFF-PATH: __evl_schedule() from an IRQs-on context; not on the timer-IRQ wake chain (top-level entry has hard-irqs off)."];
+    "EVL_SCHEDULER_PICKING"          -> "EVL_SCHEDULER_PICKING"          [label="irqoff_enter_oob_in_picking",    on="irqoff_enter_oob", note="SUBSUMED: OOB IRQ disable during thread selection; enclosed by schedule_from_* → pick_thread dwell."];
+    "EVL_SCHEDULER_PICKING"          -> "EVL_SCHEDULER_PICKING"          [label="irqoff_exit_in_picking",         on="irqoff_exit", note="SUBSUMED: IRQ enable during thread selection; enclosed by schedule_from_* → pick_thread dwell."];
+    "EVL_SCHEDULER_PICKING"          -> "EVL_SCHEDULER_SWITCHING"        [label="pick_thread",                    note="CRITICAL: OOB scheduler picks the next thread; dwell spans rq lookup, priority-class arithmetic and the transition into context_switch()."];
+    "EVL_SCHEDULER_SWITCHING"        -> "EVL_TURNED_IRQS_OFF"                 [label="switch_tail",                    note="CRITICAL: context-switch resume on the new (latmus) stack; dwell spans switch_to() asm + cold-cache refill on the new kernel stack."];
+    "EVL_SCHEDULER_SWITCHING"        -> "LINUX_TURNED_HARDIRQS_OFF"              [label="switch_tail_inband",             note="OFF-PATH: context-switch resume that lands on the inband stage; not the OOB wake."];
+}
