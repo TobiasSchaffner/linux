@@ -4749,14 +4749,18 @@ static inline int netif_enable_oob_diversion(struct net_device *dev)
 	const struct net_device_ops *ops = dev->netdev_ops;
 	int ret;
 
+	/*
+	 * CAUTION: Diversion must be enabled _before_ napi_poll()
+	 * starts receiving packets from the out-of-band stage.
+	 */
+	smp_mb__before_atomic();
+	set_bit(__LINK_STATE_OOB, &dev->state);
+
 	if (ops->ndo_enable_oob) {
 		ret = ops->ndo_enable_oob(dev);
 		if (ret)
 			return ret;
 	}
-
-	smp_mb__before_atomic();
-	set_bit(__LINK_STATE_OOB, &dev->state);
 
 	return 0;
 }
@@ -4765,11 +4769,11 @@ static inline void netif_disable_oob_diversion(struct net_device *dev)
 {
 	const struct net_device_ops *ops = dev->netdev_ops;
 
-	clear_bit(__LINK_STATE_OOB, &dev->state);
-	smp_mb__after_atomic();
-
 	if (ops->ndo_disable_oob)
 		ops->ndo_disable_oob(dev);
+
+	clear_bit(__LINK_STATE_OOB, &dev->state);
+	smp_mb__after_atomic();
 }
 
 /**
