@@ -22,7 +22,8 @@ static inline void arch_exit_to_user_mode_prepare(struct pt_regs *regs,
 
 #define arch_exit_to_user_mode_prepare arch_exit_to_user_mode_prepare
 
-void handle_page_fault(struct pt_regs *regs);
+struct irqentry_state;
+void handle_page_fault(struct pt_regs *regs, struct irqentry_state state);
 void handle_break(struct pt_regs *regs);
 
 #ifdef CONFIG_RISCV_MISALIGNED

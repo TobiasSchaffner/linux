@@ -79,6 +79,7 @@ out:
 static void die_kernel_fault(const char *msg, unsigned long addr,
 		struct pt_regs *regs)
 {
+	irq_pipeline_oops();
 	bust_spinlocks(1);
 
 	pr_alert("Unable to handle kernel %s at virtual address " REG_FMT "\n", msg,
@@ -275,7 +276,7 @@ static inline bool access_error(unsigned long cause, struct vm_area_struct *vma)
  * This routine handles page faults.  It determines the address and the
  * problem, and then passes it off to one of the appropriate routines.
  */
-void handle_page_fault(struct pt_regs *regs)
+void handle_page_fault(struct pt_regs *regs, irqentry_state_t state)
 {
 	struct task_struct *tsk;
 	struct vm_area_struct *vma;
@@ -315,8 +316,13 @@ void handle_page_fault(struct pt_regs *regs)
 	}
 
 	/* Enable interrupts if they were enabled in the parent context. */
+#ifdef CONFIG_IRQ_PIPELINE
+	if (state.stage_info != IRQENTRY_INBAND_STALLED)
+		local_irq_enable_full();
+#else
 	if (!regs_irqs_disabled(regs))
 		local_irq_enable();
+#endif
 
 	/*
 	 * If we're in an interrupt, have no user context, or are running

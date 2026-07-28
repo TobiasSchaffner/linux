@@ -12,6 +12,7 @@
 #include <linux/arch_topology.h>
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/irqstage.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
@@ -260,6 +261,6 @@ asmlinkage __visible void smp_callin(void)
 #ifndef CONFIG_HOTPLUG_PARALLEL
 	complete(&cpu_running);
 #endif
-	local_irq_enable();
+	local_irq_enable_full();
 	cpu_startup_entry(CPUHP_AP_ONLINE_IDLE);
 }
