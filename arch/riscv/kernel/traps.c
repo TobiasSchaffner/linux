@@ -21,6 +21,8 @@
 #include <linux/irq.h>
 #include <linux/kexec.h>
 #include <linux/entry-common.h>
+#include <linux/audit.h>
+#include <linux/dovetail.h>
 
 #include <asm/asm-prototypes.h>
 #include <asm/bug.h>
@@ -114,11 +116,15 @@ void die(struct pt_regs *regs, const char *str)
 static __always_inline
 bool mark_trap_entry(struct pt_regs *regs)
 {
+	oob_trap_notify(regs->cause, regs);
+
 	if (likely(running_inband())) {
 		if (user_mode(regs))
 			hard_cond_local_irq_enable();
 		return true;
 	}
+
+	oob_trap_unwind(regs->cause, regs);
 
 	return false;
 }
@@ -126,6 +132,8 @@ bool mark_trap_entry(struct pt_regs *regs)
 static __always_inline
 void mark_trap_exit(struct pt_regs *regs)
 {
+	oob_trap_unwind(regs->cause, regs);
+
 	if (likely(running_inband()) && user_mode(regs))
 		hard_cond_local_irq_disable();
 }
@@ -171,13 +179,19 @@ asmlinkage __visible __trap_section void name(struct pt_regs *regs)		\
 {										\
 	if (user_mode(regs)) {							\
 		irqentry_enter_from_user_mode(regs);				\
-		local_irq_enable();						\
-		do_trap_error(regs, signo, code, regs->epc, "Oops - " str);	\
-		local_irq_disable();						\
+		if (mark_trap_entry(regs)) {					\
+			local_irq_enable();					\
+			do_trap_error(regs, signo, code, regs->epc, "Oops - " str); \
+			local_irq_disable();					\
+			mark_trap_exit(regs);					\
+		}								\
 		irqentry_exit_to_user_mode(regs);				\
 	} else {								\
 		irqentry_state_t state = irqentry_nmi_enter(regs);		\
-		do_trap_error(regs, signo, code, regs->epc, "Oops - " str);	\
+		if (mark_trap_entry(regs)) {					\
+			do_trap_error(regs, signo, code, regs->epc, "Oops - " str); \
+			mark_trap_exit(regs);					\
+		}								\
 		irqentry_nmi_exit(regs, state);					\
 	}									\
 }
@@ -197,21 +211,26 @@ asmlinkage __visible __trap_section void do_trap_insn_illegal(struct pt_regs *re
 
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
-		local_irq_enable();
+		if (mark_trap_entry(regs)) {
+			local_irq_enable();
 
-		handled = riscv_v_first_use_handler(regs);
-		if (!handled)
-			do_trap_error(regs, SIGILL, ILL_ILLOPC, regs->epc,
-				      "Oops - illegal instruction");
+			handled = riscv_v_first_use_handler(regs);
 
-		local_irq_disable();
+			if (!handled)
+				do_trap_error(regs, SIGILL, ILL_ILLOPC, regs->epc,
+					      "Oops - illegal instruction");
+
+			local_irq_disable();
+			mark_trap_exit(regs);
+		}
 		irqentry_exit_to_user_mode(regs);
 	} else {
 		irqentry_state_t state = irqentry_nmi_enter(regs);
-
-		do_trap_error(regs, SIGILL, ILL_ILLOPC, regs->epc,
-			      "Oops - illegal instruction");
-
+		if (mark_trap_entry(regs)) {
+			do_trap_error(regs, SIGILL, ILL_ILLOPC, regs->epc,
+				      "Oops - illegal instruction");
+			mark_trap_exit(regs);
+		}
 		irqentry_nmi_exit(regs, state);
 	}
 }
@@ -243,17 +262,26 @@ static void do_trap_misaligned(struct pt_regs *regs, enum misaligned_access_type
 
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
+		if (!mark_trap_entry(regs))
+			goto out;
 		local_irq_enable();
 	} else {
 		state = irqentry_nmi_enter(regs);
+		if (!mark_trap_entry(regs))
+			goto out;
 	}
 
 	if (misaligned_handler[type].handler(regs))
 		do_trap_error(regs, SIGBUS, BUS_ADRALN, regs->epc,
 			      misaligned_handler[type].type_str);
 
-	if (user_mode(regs)) {
+	if (user_mode(regs))
 		local_irq_disable();
+
+	mark_trap_exit(regs);
+
+out:
+	if (user_mode(regs)) {
 		irqentry_exit_to_user_mode(regs);
 	} else {
 		irqentry_nmi_exit(regs, state);
@@ -332,17 +360,21 @@ asmlinkage __visible __trap_section void do_trap_break(struct pt_regs *regs)
 {
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
-		local_irq_enable();
+		if (mark_trap_entry(regs)) {
+			local_irq_enable();
 
-		handle_break(regs);
+			handle_break(regs);
 
-		local_irq_disable();
+			local_irq_disable();
+			mark_trap_exit(regs);
+		}
 		irqentry_exit_to_user_mode(regs);
 	} else {
 		irqentry_state_t state = irqentry_nmi_enter(regs);
-
-		handle_break(regs);
-
+		if (mark_trap_entry(regs)) {
+			handle_break(regs);
+			mark_trap_exit(regs);
+		}
 		irqentry_nmi_exit(regs, state);
 	}
 }
@@ -364,7 +396,28 @@ void do_trap_ecall_u(struct pt_regs *regs)
 				syscall = array_index_nospec(syscall, NR_syscalls);
 				syscall_handler(regs, syscall);
 			}
+		} else if (dovetailing()) {
+			if (syscall == EXIT_SYSCALL_OOB) {
+				hard_local_irq_disable();
+				return;
+			}
+			if (syscall == EXIT_SYSCALL_TAIL)
+				goto done_inband;
+			
+			if (syscall >= 0 && syscall < NR_syscalls) {
+				syscall = array_index_nospec(syscall, NR_syscalls);
+				syscall_handler(regs, syscall);
+			}
+
 		}
+
+done_inband:
+		/*
+		 * Dovetail: balance audit entry that generic exit
+		 * skips for in_oob_syscall().
+		 */
+		if (dovetailing() && in_oob_syscall(regs))
+			audit_syscall_exit(regs);
 		syscall_exit_to_user_mode(regs);
 	} else {
 		irqentry_state_t state = irqentry_nmi_enter(regs);
@@ -419,11 +472,13 @@ asmlinkage __visible __trap_section void do_trap_software_check(struct pt_regs *
 {
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
+		if (mark_trap_entry(regs)) {
+			/* not a cfi violation, then merge into flow of unknown trap handler */
+			if (!handle_user_cfi_violation(regs))
+				do_trap_unknown(regs);
 
-		/* not a cfi violation, then merge into flow of unknown trap handler */
-		if (!handle_user_cfi_violation(regs))
-			do_trap_unknown(regs);
-
+			mark_trap_exit(regs);
+		}
 		irqentry_exit_to_user_mode(regs);
 	} else {
 		/* sw check exception coming from kernel is a bug in kernel */
@@ -436,9 +491,21 @@ asmlinkage __visible noinstr void do_page_fault(struct pt_regs *regs)
 {
 	irqentry_state_t state = irqentry_enter(regs);
 
-	handle_page_fault(regs);
+	mark_trap_entry(regs);
+
+	BUG_ON(dovetail_debug() && !running_inband());
+
+	if (!user_mode(regs))
+		hard_cond_local_irq_enable();
+
+	handle_page_fault(regs, state);
 
 	local_irq_disable();
+
+	mark_trap_exit(regs);
+
+	if (!user_mode(regs))
+		hard_cond_local_irq_disable();
 
 	irqentry_exit(regs, state);
 }
