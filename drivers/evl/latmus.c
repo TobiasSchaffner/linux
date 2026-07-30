@@ -14,6 +14,7 @@
 #include <linux/cdev.h>
 #include <linux/fs.h>
 #include <linux/fcntl.h>
+#include <linux/rv_irqoff.h>
 #include <evl/file.h>
 #include <evl/flag.h>
 #include <evl/clock.h>
@@ -107,11 +108,26 @@ struct uthread_runner {
 	struct evl_flag pulse;
 	struct latmus_runner runner;
 	/*
-	 * In-kernel wake timestamp captured right after evl_wait_flag()
-	 * returned on the previous wake, at the OOB wake-up boundary.
-	 * Used as the sample source for EVL_LAT_KWAKE.
+	 * Experimental Delta_platform probe: kernel-exit timestamp
+	 * captured right after evl_wait_flag() returned on the previous
+	 * wake. Paired with the next ioctl's user timestamp and emitted
+	 * via the evl_latmus_uthread_tail tracepoint.
 	 */
 	ktime_t last_wake_kts;
+	/*
+	 * Monitor-side trap-arrival stamp (CLOCK_MONOTONIC) for the timer
+	 * IRQ that drove the previous wake, read from the rv_evl monitor
+	 * via rv_evl_trap_arrival_mono(). 0 when the monitor is not
+	 * running, which suppresses the evl_latmus_uthread_head probe.
+	 */
+	u64 last_trap_mono;
+	/*
+	 * Inband-irqoff blocker for the same wake, from the monitor via
+	 * rv_evl_trap_blocker_ns(); 0 when the monitor is off or the trap
+	 * arrived with IRQs enabled. Lets the head probe classify each
+	 * wake as hardware vs software.
+	 */
+	u64 last_blocker_ns;
 	/*
 	 * EVL_LAT_KWAKE: score the in-kernel wake timestamp
 	 * (last_wake_kts, captured at the OOB wake-up boundary) instead
@@ -617,8 +633,10 @@ static int start_uthread_runner(struct latmus_runner *runner,
 
 	u_runner = container_of(runner, struct uthread_runner, runner);
 
-	/* Reset the in-kernel wake timestamp for this run. */
+	/* Reset Delta_platform tail-latency probe state for this run. */
 	u_runner->last_wake_kts = 0;
+	u_runner->last_trap_mono = 0;
+	u_runner->last_blocker_ns = 0;
 
 	evl_start_timer(&u_runner->timer, start_time, runner->period);
 
@@ -640,9 +658,63 @@ static int add_uthread_sample(struct latmus_runner *runner,
 	struct uthread_runner *u_runner;
 	ktime_t wake_kts, sample;
 	bool have_sample;
+	s64 tail_ns;
 	int ret;
 
 	u_runner = container_of(runner, struct uthread_runner, runner);
+
+	/*
+	 * Delta_platform probe: on every ioctl that carries a user
+	 * timestamp, emit a tracepoint pairing the kernel-exit timestamp
+	 * we captured on the previous wake with the user-side timestamp.
+	 * The tail covers return-to-user asm + vDSO clock_gettime cost.
+	 * Skip the first ioctl (no prior wake) and any restart where the
+	 * user passed timestamp == 0.
+	 */
+	if (user_timestamp && u_runner->last_wake_kts) {
+		tail_ns = ktime_to_ns(user_timestamp) -
+			  ktime_to_ns(u_runner->last_wake_kts);
+		/*
+		 * runner->state.ideal still points to the wake the user
+		 * timestamp is sampling here: add_measurement_sample()
+		 * (called below) advances it. Emit both deltas so the
+		 * per-wake breakdown (kernel_delta + tail = user_delta)
+		 * is directly readable in trace.
+		 */
+		trace_evl_latmus_uthread_tail(
+			ktime_to_ns(u_runner->last_wake_kts),
+			ktime_to_ns(user_timestamp), tail_ns,
+			ktime_to_ns(u_runner->last_wake_kts) -
+				ktime_to_ns(runner->state.ideal),
+			ktime_to_ns(user_timestamp) -
+				ktime_to_ns(runner->state.ideal));
+
+		/*
+		 * Head decomposition (deadline -> first trap). Emitted
+		 * only when the rv_evl monitor is active
+		 * (last_trap_mono != 0) AND the stamp belongs to this wake
+		 * (0 <= wake - trap < period); otherwise -- including when
+		 * latmus runs with the monitor off -- it is skipped. Same
+		 * CLOCK_MONOTONIC timebase as state->ideal, so the deltas
+		 * are directly comparable.
+		 */
+		if (u_runner->last_trap_mono) {
+			s64 fsm_ns = ktime_to_ns(u_runner->last_wake_kts) -
+				     (s64)u_runner->last_trap_mono;
+			if (fsm_ns >= 0 &&
+			    fsm_ns < ktime_to_ns(runner->period)) {
+				trace_evl_latmus_uthread_head(
+					ktime_to_ns(runner->state.ideal),
+					(s64)u_runner->last_trap_mono,
+					ktime_to_ns(u_runner->last_wake_kts),
+					(s64)u_runner->last_trap_mono -
+						ktime_to_ns(runner->state.ideal),
+					fsm_ns,
+					(s64)runner->clock->gravity.user,
+					(s64)u_runner->last_blocker_ns);
+			}
+		}
+	}
 
 	/*
 	 * EVL_LAT_KWAKE scores the in-kernel wake timestamp captured at
@@ -673,6 +745,12 @@ static int add_uthread_sample(struct latmus_runner *runner,
 		 */
 		wake_kts = evl_ktime_monotonic();
 		u_runner->last_wake_kts = wake_kts;
+		/*
+		 * Pin the timer trap-arrival stamp for this same wake from
+		 * the rv_evl monitor (this CPU). 0 when the monitor is off.
+		 */
+		u_runner->last_trap_mono = rv_evl_trap_arrival_mono();
+		u_runner->last_blocker_ns = rv_evl_trap_blocker_ns();
 	}
 
 	return ret;
