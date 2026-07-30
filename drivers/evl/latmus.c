@@ -106,6 +106,20 @@ struct uthread_runner {
 	struct evl_timer timer;
 	struct evl_flag pulse;
 	struct latmus_runner runner;
+	/*
+	 * In-kernel wake timestamp captured right after evl_wait_flag()
+	 * returned on the previous wake, at the OOB wake-up boundary.
+	 * Used as the sample source for EVL_LAT_KWAKE.
+	 */
+	ktime_t last_wake_kts;
+	/*
+	 * EVL_LAT_KWAKE: score the in-kernel wake timestamp
+	 * (last_wake_kts, captured at the OOB wake-up boundary) instead
+	 * of the userspace timestamp carried by the pulse ioctl. This
+	 * excludes the return-to-user + vDSO tail that EVL_LAT_USER
+	 * measures, yielding a latency comparable to the rv_evl FSM.
+	 */
+	bool kernel_timestamp;
 };
 
 struct sirq_runner {
@@ -603,6 +617,9 @@ static int start_uthread_runner(struct latmus_runner *runner,
 
 	u_runner = container_of(runner, struct uthread_runner, runner);
 
+	/* Reset the in-kernel wake timestamp for this run. */
+	u_runner->last_wake_kts = 0;
+
 	evl_start_timer(&u_runner->timer, start_time, runner->period);
 
 	return 0;
@@ -621,23 +638,48 @@ static int add_uthread_sample(struct latmus_runner *runner,
 			      ktime_t user_timestamp)
 {
 	struct uthread_runner *u_runner;
+	ktime_t wake_kts, sample;
+	bool have_sample;
 	int ret;
 
 	u_runner = container_of(runner, struct uthread_runner, runner);
 
-	if (user_timestamp &&
-	    u_runner->runner.add_sample(runner, user_timestamp)) {
+	/*
+	 * EVL_LAT_KWAKE scores the in-kernel wake timestamp captured at
+	 * the OOB wake-up boundary on the previous pulse; EVL_LAT_USER
+	 * scores the userspace timestamp carried by this ioctl. In both
+	 * cases the first pulse has no prior sample to score (the guard
+	 * value is 0).
+	 */
+	if (u_runner->kernel_timestamp) {
+		sample = u_runner->last_wake_kts;
+		have_sample = !!u_runner->last_wake_kts;
+	} else {
+		sample = user_timestamp;
+		have_sample = !!user_timestamp;
+	}
+
+	if (have_sample &&
+	    u_runner->runner.add_sample(runner, sample)) {
 		evl_stop_timer(&u_runner->timer);
 		/* Tell the caller to park until next round. */
 		ret = -EPIPE;
 	} else {
 		ret = evl_wait_flag(&u_runner->pulse);
+		/*
+		 * Captured as late as possible on the kernel side: this
+		 * is the OOB ioctl path, so we are about to unwind back
+		 * to userspace with hard-irqs off (irqoff_exit_oob edge).
+		 */
+		wake_kts = evl_ktime_monotonic();
+		u_runner->last_wake_kts = wake_kts;
 	}
 
 	return ret;
 }
 
-static struct latmus_runner *create_uthread_runner(int cpu, struct evl_clock *clock)
+static struct latmus_runner *create_uthread_runner(int cpu, struct evl_clock *clock,
+						   bool kernel_timestamp)
 {
 	struct uthread_runner *u_runner;
 
@@ -646,7 +688,7 @@ static struct latmus_runner *create_uthread_runner(int cpu, struct evl_clock *cl
 		return NULL;
 
 	u_runner->runner = (struct latmus_runner){
-		.name = "uthread",
+		.name = kernel_timestamp ? "kwake" : "uthread",
 		.destroy = destroy_uthread_runner,
 		.get_gravity = get_uthread_gravity,
 		.set_gravity = set_uthread_gravity,
@@ -655,6 +697,7 @@ static struct latmus_runner *create_uthread_runner(int cpu, struct evl_clock *cl
 		.stop = stop_uthread_runner,
 		.clock = clock,
 	};
+	u_runner->kernel_timestamp = kernel_timestamp;
 
 	init_runner_base(&u_runner->runner);
 	evl_init_timer_on_cpu(&u_runner->timer, cpu,
@@ -1103,7 +1146,10 @@ static long latmus_ioctl(struct file *filp, unsigned int cmd,
 					setup_data.cpu, clock);
 		break;
 	case EVL_LAT_USER:
-		runner = create_uthread_runner(setup_data.cpu, clock);
+		runner = create_uthread_runner(setup_data.cpu, clock, false);
+		break;
+	case EVL_LAT_KWAKE:
+		runner = create_uthread_runner(setup_data.cpu, clock, true);
 		break;
 	case EVL_LAT_SIRQ:
 		runner = create_sirq_runner(setup_data.cpu, clock);
