@@ -793,7 +793,7 @@ DECLARE_IDTENTRY_SYSVEC(DEFERRED_ERROR_VECTOR,		sysvec_deferred_error);
 # endif
 
 # ifdef CONFIG_X86_THERMAL_VECTOR
-DECLARE_IDTENTRY_SYSVEC(THERMAL_APIC_VECTOR,		sysvec_thermal);
+DECLARE_IDTENTRY_SYSVEC_PIPELINED(THERMAL_APIC_VECTOR,		sysvec_thermal);
 # else
 # define fred_sysvec_thermal				NULL
 # endif

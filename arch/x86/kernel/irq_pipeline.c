@@ -176,6 +176,11 @@ static void do_sysvec_inband(struct irq_desc *desc, struct pt_regs *regs)
 	case LOCAL_TIMER_VECTOR:
 		run_sysvec_on_irqstack_cond(__sysvec_apic_timer_interrupt, regs);
 		break;
+#ifdef CONFIG_X86_THERMAL_VECTOR
+	case THERMAL_APIC_VECTOR:
+		run_sysvec_on_irqstack_cond(__sysvec_thermal, regs);
+		break;
+#endif
 	default:
 		printk_once(KERN_ERR "irq_pipeline: unexpected event"
 			" on vector #%.2x (irq=%u)", vector, irq);

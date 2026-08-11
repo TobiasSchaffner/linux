@@ -529,12 +529,13 @@ static void smp_thermal_vector(void)
 		       smp_processor_id());
 }
 
-DEFINE_IDTENTRY_SYSVEC(sysvec_thermal)
+DEFINE_IDTENTRY_SYSVEC_PIPELINED(THERMAL_APIC_VECTOR,
+				sysvec_thermal)
 {
 	trace_thermal_apic_entry(THERMAL_APIC_VECTOR);
 	inc_irq_stat(THERMAL_APIC);
 	smp_thermal_vector();
 	trace_thermal_apic_exit(THERMAL_APIC_VECTOR);
-	__apic_eoi();
+	apic_eoi();
 }
 #endif
