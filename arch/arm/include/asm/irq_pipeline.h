@@ -79,6 +79,8 @@ void arch_save_timer_regs(struct pt_regs *dst, struct pt_regs *src)
 {
 	dst->ARM_cpsr = src->ARM_cpsr;
 	dst->ARM_pc = src->ARM_pc;
+	dst->ARM_lr = src->ARM_lr;
+	dst->ARM_sp = src->ARM_sp;
 }
 
 static inline bool arch_steal_pipelined_tick(struct pt_regs *regs)
