@@ -229,13 +229,16 @@ int tick_setup_proxy(struct clock_proxy_device *dev)
 
 	/*
 	 * Inherit the feature bits since the proxy device has the
-	 * same capabilities than the real one we are overriding
-	 * (including CLOCK_EVT_FEAT_C3STOP if present).
+	 * same capabilities than the real one we are overriding,
+	 * except for C3STOP which is omitted to prevent the timer
+	 * core from fully disabling oneshot mode if no
+	 * oneshot-capable broadcast device is available either.
 	 */
 	proxy_dev = &dev->proxy_device;
 	memset(proxy_dev, 0, sizeof(*proxy_dev));
-	proxy_dev->features = real_dev->features |
-		CLOCK_EVT_FEAT_PERCPU | CLOCK_EVT_FEAT_PROXY;
+	proxy_dev->features = (real_dev->features |
+			CLOCK_EVT_FEAT_PERCPU | CLOCK_EVT_FEAT_PROXY)
+		& ~CLOCK_EVT_FEAT_C3STOP;
 	proxy_dev->name = "proxy";
 	proxy_dev->irq = real_dev->irq;
 	proxy_dev->bound_on = -1;
