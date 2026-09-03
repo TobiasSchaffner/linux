@@ -104,9 +104,9 @@ static inline void arch_handle_irq_pipelined(struct pt_regs *regs)
  */
 #define arch_kentry_test_stalled(__regs)	0
 #define arch_kentry_test_hardirq(__regs)	0
-#define arch_kentry_clear_irq_state(__regs)
-#define arch_kentry_set_stalled(__regs)
-#define arch_kentry_set_hardirq(__regs)
+#define arch_kentry_clear_irq_state(__regs)	do { (void)(__regs); } while(0)
+#define arch_kentry_set_stalled(__regs)		do { (void)(__regs); } while(0)
+#define arch_kentry_set_hardirq(__regs)		do { (void)(__regs); } while(0)
 
 #else  /* !CONFIG_IRQ_PIPELINE */
 
