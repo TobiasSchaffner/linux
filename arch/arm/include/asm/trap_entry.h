@@ -7,6 +7,9 @@
 
 #ifdef CONFIG_MMU
 #ifdef CONFIG_IRQ_PIPELINE
+
+#include <linux/irqstage.h>
+
 /*
  * We need to synchronize the virtual interrupt state with the hard
  * interrupt state we received on entry, then turn hardirqs back on to
