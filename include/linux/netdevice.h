@@ -4853,8 +4853,10 @@ static inline int netif_enable_oob_diversion(struct net_device *dev)
 
 	if (ops->ndo_enable_oob) {
 		ret = ops->ndo_enable_oob(dev);
-		if (ret)
+		if (ret) {
+			clear_bit(__LINK_STATE_OOB, &dev->state);
 			return ret;
+		}
 	}
 
 	return 0;
