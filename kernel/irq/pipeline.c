@@ -1064,8 +1064,9 @@ void copy_timer_regs(struct irq_desc *desc, struct pt_regs *regs)
 {
 	struct irq_pipeline_data *p;
 
-	if (desc->action == NULL || !(desc->action->flags & __IRQF_TIMER))
+	if (!irq_settings_is_tick(desc))
 		return;
+
 	/*
 	 * Given our deferred dispatching model for regular IRQs, we
 	 * record the preempted context registers only for the latest

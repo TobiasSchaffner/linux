@@ -81,6 +81,7 @@ enum irqchip_irq_state;
  *                                when pipelining is enabled (CONFIG_IRQ_PIPELINE),
  *                                regardless of the (virtualized) interrupt state
  *                                maintained by local_irq_save/disable().
+ * IRQ_TICK                     - Interrupt is a timer tick source.
  */
 enum {
 	IRQ_TYPE_NONE		= 0x00000000,
@@ -110,13 +111,14 @@ enum {
 	IRQ_NO_DEBUG		= (1 << 21),
 	IRQ_OOB			= (1 << 22),
 	IRQ_RESERVED		= (1 << 23),
+	IRQ_TICK		= (1 << 24),
 };
 
 #define IRQF_MODIFY_MASK	\
 	(IRQ_TYPE_SENSE_MASK | IRQ_NOPROBE | IRQ_NOREQUEST | \
 	 IRQ_NOAUTOEN | IRQ_LEVEL | IRQ_NO_BALANCING | \
 	 IRQ_PER_CPU | IRQ_NESTED_THREAD | IRQ_NOTHREAD | IRQ_PER_CPU_DEVID | \
-	 IRQ_IS_POLLED | IRQ_DISABLE_UNLAZY | IRQ_HIDDEN | IRQ_OOB)
+	 IRQ_IS_POLLED | IRQ_DISABLE_UNLAZY | IRQ_HIDDEN | IRQ_OOB | IRQ_TICK)
 
 #define IRQ_NO_BALANCING_MASK	(IRQ_PER_CPU | IRQ_NO_BALANCING)
 
@@ -1258,12 +1260,17 @@ static inline struct irq_chip_type *irq_data_get_chip_type(struct irq_data *d)
 
 #ifdef CONFIG_IRQ_PIPELINE
 int irq_switch_oob(unsigned int irq, bool on);
+void irq_switch_tick(unsigned int irq, bool on);
 void irq_clear_deferral(struct irq_desc *desc);
 void irq_clear_forward(struct irq_desc *desc);
 #else
 static inline int irq_switch_oob(unsigned int irq, bool on)
 {
 	return 0;
+}
+
+static inline void irq_switch_tick(unsigned int irq, bool on)
+{
 }
 
 static inline void irq_clear_deferral(struct irq_desc *desc) { }

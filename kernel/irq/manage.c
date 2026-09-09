@@ -950,6 +950,17 @@ int irq_switch_oob(unsigned int irq, bool on)
 }
 EXPORT_SYMBOL_GPL(irq_switch_oob);
 
+void irq_switch_tick(unsigned int irq, bool on)
+{
+	scoped_irqdesc_get_and_lock(irq, 0) {
+		if (on)
+			irq_settings_set_tick(scoped_irqdesc);
+		else
+			irq_settings_clr_tick(scoped_irqdesc);
+	}
+}
+EXPORT_SYMBOL_GPL(irq_switch_tick);
+
 #endif /* CONFIG_IRQ_PIPELINE */
 
 /*
