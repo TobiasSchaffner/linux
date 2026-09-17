@@ -1689,7 +1689,8 @@ void __consume_stateless_skb(struct sk_buff *skb)
 	if (skb_release_oob(skb))
 		return;
 	skb_release_data(skb, SKB_CONSUMED);
-	kfree_skbmem(skb);
+	if (!__skb_oob_free_head(skb))
+		kfree_skbmem(skb);
 }
 
 static void napi_skb_cache_put(struct sk_buff *skb)
