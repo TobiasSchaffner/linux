@@ -380,7 +380,7 @@ do_page_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	irqflags = dovetail_fault_entry(ARM_TRAP_ACCESS, regs);
 
 	/* Enable interrupts if they were enabled in the parent context. */
-	if (interrupts_enabled(regs))
+	if (!arch_kentry_test_stalled(regs))
 		local_irq_enable();
 
 	/*
