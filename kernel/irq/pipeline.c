@@ -75,6 +75,9 @@ struct irq_event_map {
 	unsigned long flat[IRQ_FLAT_MAPSZ];
 };
 
+struct pipeline_percpu_data { };
+static DEFINE_PER_CPU(struct pipeline_percpu_data, pipeline_percpu_data);
+
 #ifdef CONFIG_SMP
 
 static struct irq_event_map bootup_irq_map __initdata;
@@ -91,9 +94,6 @@ DEFINE_PER_CPU(struct irq_pipeline_data, irq_pipeline) = {
 		},
 	},
 };
-
-struct pipeline_percpu_data { };
-static DEFINE_PER_CPU(struct pipeline_percpu_data, pipeline_percpu_data);
 
 static irqreturn_t smp_call_function_ipi_handler(int irq, void *dev_id)
 {
