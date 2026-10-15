@@ -105,16 +105,23 @@ static inline void arch_handle_irq_pipelined(struct pt_regs *regs)
 
 #define arch_kentry_test_stalled(__regs)			\
 ({								\
-	to_svc_pt_regs(__regs)->irqstate & KENTRY_STALL_BIT;	\
+	!user_mode(__regs) &&					\
+	(to_svc_pt_regs(__regs)->irqstate & KENTRY_STALL_BIT);	\
 })
 
 #define arch_kentry_test_hardirq(__regs)			\
-({								\
-	to_svc_pt_regs(__regs)->irqstate & KENTRY_LOCKDEP_BIT;	\
+({							 	\
+	!user_mode(__regs) &&					\
+	(to_svc_pt_regs(__regs)->irqstate & KENTRY_LOCKDEP_BIT); \
 })
 
+/*
+ * Guard against calling this helper from a user-mode exception, this
+ * would be structurally wrong, writing to a random address.
+ */
 #define arch_kentry_clear_irq_state(__regs)			\
 ({								\
+	WARN_ON_ONCE(irq_pipeline_debug() && user_mode(__regs));\
 	to_svc_pt_regs(__regs)->irqstate = 0;			\
 })
 
