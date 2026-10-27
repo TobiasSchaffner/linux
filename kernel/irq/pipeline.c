@@ -1244,8 +1244,8 @@ int handle_irq_pipelined_finish(struct irq_stage_data *prevd,
 	 * Sending MAYDAY is in essence a rare case, so prefer test
 	 * then maybe clear over test_and_clear.
 	 */
-	if (user_mode(regs) && test_thread_flag(TIF_MAYDAY))
-		dovetail_call_mayday(regs);
+	if (user_mode(regs) && running_oob())
+		dovetail_oob_exit_to_user(regs);
 #endif
 
 	return running_inband() && !irqs_disabled();

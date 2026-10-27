@@ -107,6 +107,13 @@ void dovetail_call_mayday(struct pt_regs *regs)
 	hard_local_irq_restore(flags);
 }
 
+/* Returning to user mode on the out-of-band stage. */
+void dovetail_oob_exit_to_user(struct pt_regs *regs)
+{
+	if (test_thread_flag(TIF_MAYDAY))
+		dovetail_call_mayday(regs);
+}
+
 void inband_retuser_notify(void)
 {
 	clear_thread_flag(TIF_RETUSER);
@@ -145,7 +152,6 @@ bool in_oob_syscall(struct pt_regs *regs)
 
 int __pipeline_syscall(struct pt_regs *regs)
 {
-	struct thread_info *ti = current_thread_info();
 	struct irq_stage *caller_stage, *target_stage;
 	struct irq_stage_data *p, *this_context;
 	unsigned long flags;
@@ -197,8 +203,7 @@ next:
 		if (stage_irqs_pending(p))
 			sync_current_irq_stage();
 	} else {
-		if (test_ti_thread_flag(ti, TIF_MAYDAY))
-			call_mayday(ti, regs);
+		dovetail_oob_exit_to_user(regs);
 	}
 
 	hard_local_irq_restore(flags);
@@ -252,8 +257,7 @@ int pipeline_syscall(unsigned int nr, struct pt_regs *regs)
 		local_flags = READ_ONCE(ti_local_flags(ti));
 		if (likely(ret)) {
 			if (local_flags & _TLF_OOB) {
-				if (test_ti_thread_flag(ti, TIF_MAYDAY))
-					dovetail_call_mayday(regs);
+				dovetail_oob_exit_to_user(regs);
 				return 1; /* don't pass down, no tail work. */
 			} else {
 				WARN_ON_ONCE(dovetail_debug() && irqs_disabled());

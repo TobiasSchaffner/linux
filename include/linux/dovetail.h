@@ -206,6 +206,8 @@ struct oob_mm_state *dovetail_mm_state(void)
 
 void dovetail_call_mayday(struct pt_regs *regs);
 
+void dovetail_oob_exit_to_user(struct pt_regs *regs);
+
 static inline void dovetail_send_mayday(struct task_struct *castaway)
 {
 	struct thread_info *ti = task_thread_info(castaway);
