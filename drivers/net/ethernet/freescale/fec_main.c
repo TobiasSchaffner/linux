@@ -410,7 +410,7 @@ static void release_tx_mapping(struct sk_buff *skb,
 			struct fec_enet_priv_tx_q *txq,
 			struct device *dev, dma_addr_t addr, size_t size)
 {
-	dma_sync_single_for_cpu(dev, addr, size, DMA_TO_DEVICE);
+	dma_unmap_single(dev, addr, size, DMA_TO_DEVICE);
 }
 
 static inline void fec_enet_init_ring_oob(struct fec_enet_priv_tx_q *txq)
