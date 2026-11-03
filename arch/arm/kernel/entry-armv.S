@@ -30,7 +30,6 @@
 
 #include "entry-header.S"
 #include <asm/probes.h>
-#include <asm/dovetail.h>
 
 #ifdef CONFIG_HAVE_LD_DEAD_CODE_DATA_ELIMINATION
 #define RELOC_TEXT_NONE .reloc  .text, R_ARM_NONE, .
@@ -298,14 +297,8 @@ __und_svc:
 	svc_entry
 #endif
 #ifdef CONFIG_DOVETAIL
-	get_thread_info tsk
-	ldr	r0, [tsk, #TI_PIPELINE_STATE]	@ get pipeline state
-	tst	r0, #TI_OOB_MASK		@ oob stage?
-	beq	1f
-	mov	r0, #ARM_TRAP_UNDEFINSTR
-	mov	r1, sp				@ r1 = &regs
-	bl	__oob_trap_notify
-1:
+	mov	r0, sp				@ struct pt_regs *regs
+	bl	und_svc_trap_notify
 #endif
 
 	mov	r1, #4				@ PC correction to apply
@@ -317,13 +310,8 @@ __und_svc:
 __und_svc_finish:
 	get_thread_info tsk
 #ifdef CONFIG_DOVETAIL
-	ldr	r0, [tsk, #TI_PIPELINE_STATE]	@ get pipeline state
-	tst	r0, #TI_OOB_MASK		@ oob stage?
-	beq	1f
-	mov	r0, #ARM_TRAP_UNDEFINSTR
-	mov	r1, sp				@ r1 = &regs
-	bl	__oob_trap_unwind
-1:
+	mov	r0, sp				@ struct pt_regs *regs
+	bl	und_svc_trap_unwind
 #endif
 	ldr	r5, [sp, #S_PSR]		@ Get SVC cpsr
 	svc_exit r5				@ return from exception

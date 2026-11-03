@@ -27,6 +27,7 @@
 #include <linux/sched/task_stack.h>
 #include <linux/irq.h>
 #include <linux/vmalloc.h>
+#include <linux/dovetail.h>
 
 #include <linux/atomic.h>
 #include <asm/cacheflush.h>
@@ -494,6 +495,20 @@ die_sig:
 		       SIGILL, ILL_ILLOPC, pc, 0, 6);
 }
 NOKPROBE_SYMBOL(do_undefinstr)
+
+#ifdef CONFIG_DOVETAIL
+asmlinkage void und_svc_trap_notify(struct pt_regs *regs)
+{
+	oob_trap_notify(ARM_TRAP_UNDEFINSTR, regs);
+}
+NOKPROBE_SYMBOL(und_svc_trap_notify)
+
+asmlinkage void und_svc_trap_unwind(struct pt_regs *regs)
+{
+	oob_trap_unwind(ARM_TRAP_UNDEFINSTR, regs);
+}
+NOKPROBE_SYMBOL(und_svc_trap_unwind)
+#endif /* CONFIG_DOVETAIL */
 
 /*
  * Handle FIQ similarly to NMI on x86 systems.

@@ -44,5 +44,7 @@ asmlinkage int arm_syscall(int no, struct pt_regs *regs);
 asmlinkage void baddataabort(int code, unsigned long instr, struct pt_regs *regs);
 asmlinkage void __div0(void);
 asmlinkage void handle_bad_stack(struct pt_regs *regs);
+asmlinkage void und_svc_trap_notify(struct pt_regs *regs);
+asmlinkage void und_svc_trap_unwind(struct pt_regs *regs);
 
 #endif
