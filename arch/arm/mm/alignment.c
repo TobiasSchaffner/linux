@@ -25,6 +25,7 @@
 #include <asm/cp15.h>
 #include <asm/system_info.h>
 #include <asm/system_misc.h>
+#include <asm/trap_entry.h>
 #include <asm/opcodes.h>
 
 #include "fault.h"
@@ -803,6 +804,7 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 {
 	union offset_union offset;
 	unsigned long instrptr;
+	unsigned long irqflags;
 	int (*handler)(unsigned long addr, u32 instr, struct pt_regs *regs);
 	unsigned int type;
 	u32 instr = 0;
@@ -815,7 +817,7 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	if (addr >= TASK_SIZE && user_mode(regs))
 		harden_branch_predictor();
 
-	mark_trap_entry(ARM_TRAP_ALIGNMENT, regs);
+	irqflags = dovetail_fault_entry(ARM_TRAP_ALIGNMENT, regs);
 
 	if (!arch_kentry_test_stalled(regs))
 		local_irq_enable();
@@ -1001,13 +1003,15 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 		 * entry-common.S) and disable the alignment trap only if
 		 * there is no work pending for this thread.
 		 */
+		dovetail_fault_exit(ARM_TRAP_ALIGNMENT, regs, irqflags);
 		hard_local_irq_disable();
 		if (!(read_thread_flags() & _TIF_WORK_MASK))
 			set_cr(cr_no_alignment);
+		return ret;
 	}
 
 out:
-	mark_trap_exit(ARM_TRAP_ALIGNMENT, regs);
+	dovetail_fault_exit(ARM_TRAP_ALIGNMENT, regs, irqflags);
 
 	return ret;
 }
