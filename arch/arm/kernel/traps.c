@@ -483,6 +483,16 @@ asmlinkage void do_undefinstr(struct pt_regs *regs)
 		return;
 
 die_sig:
+	/*
+	 * Dovetail: the companion core may handle an undefined
+	 * instruction raised by an oob thread entirely from the oob
+	 * stage, in which case it does not demote us to in-band and
+	 * we must not apply the in-band fixup. The kernel mode case
+	 * was notified from __und_svc already.
+	 */
+	if (user_mode(regs) &&
+	    !mark_cond_trap_entry(ARM_TRAP_UNDEFINSTR, regs))
+		return;
 #ifdef CONFIG_DEBUG_USER
 	if (user_debug & UDBG_UNDEFINED) {
 		pr_info("%s (%d): undefined instruction: pc=%px\n",
@@ -493,6 +503,8 @@ die_sig:
 #endif
 	arm_notify_die("Oops - undefined instruction", regs,
 		       SIGILL, ILL_ILLOPC, pc, 0, 6);
+	if (user_mode(regs))
+		mark_trap_exit(ARM_TRAP_UNDEFINSTR, regs);
 }
 NOKPROBE_SYMBOL(do_undefinstr)
 

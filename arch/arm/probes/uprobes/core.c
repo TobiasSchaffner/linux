@@ -10,6 +10,7 @@
 #include <linux/sched.h>
 #include <linux/uprobes.h>
 #include <linux/notifier.h>
+#include <linux/dovetail.h>
 
 #include <asm/opcodes.h>
 #include <asm/traps.h>
@@ -185,6 +186,13 @@ static int uprobe_trap_handler(struct pt_regs *regs, unsigned int instr)
 {
 	unsigned long flags;
 
+	/*
+	 * Dovetail: uprobe handling runs from the in-band return to
+	 * user path, which an oob thread would skip. Have the
+	 * companion core demote us first.
+	 */
+	mark_trap_entry(ARM_TRAP_BREAK, regs);
+
 	local_irq_save(flags);
 	instr &= 0x0fffffff;
 	if (instr == (UPROBE_SWBP_ARM_INSN & 0x0fffffff))
@@ -192,6 +200,8 @@ static int uprobe_trap_handler(struct pt_regs *regs, unsigned int instr)
 	else if (instr == (UPROBE_SS_ARM_INSN & 0x0fffffff))
 		uprobe_post_sstep_notifier(regs);
 	local_irq_restore(flags);
+
+	mark_trap_exit(ARM_TRAP_BREAK, regs);
 
 	return 0;
 }

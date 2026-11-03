@@ -23,6 +23,7 @@
 #include <linux/sched/mm.h>
 #include <linux/syscalls.h>
 #include <linux/perf_event.h>
+#include <linux/dovetail.h>
 
 #include <asm/opcodes.h>
 #include <asm/system_info.h>
@@ -161,6 +162,14 @@ static int swp_handler(struct pt_regs *regs, unsigned int instr)
 {
 	unsigned int address, destreg, data, type;
 	unsigned int res = 0;
+	int ret = 0;
+
+	/*
+	 * Dovetail: emulating the access may fault on user memory,
+	 * and failures are reported by signal. We need to run
+	 * in-band for this, have the companion core demote us.
+	 */
+	mark_trap_entry(ARM_TRAP_UNDEFINSTR, regs);
 
 	perf_sw_event(PERF_COUNT_SW_EMULATION_FAULTS, 1, regs, regs->ARM_pc);
 
@@ -171,12 +180,14 @@ static int swp_handler(struct pt_regs *regs, unsigned int instr)
 	case ARM_OPCODE_CONDTEST_FAIL:
 		/* Condition failed - return to next instruction */
 		regs->ARM_pc += 4;
-		return 0;
+		goto out;
 	case ARM_OPCODE_CONDTEST_UNCOND:
 		/* If unconditional encoding - not a SWP, undef */
-		return -EFAULT;
+		ret = -EFAULT;
+		goto out;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
 
 	if (current->pid != previous_pid) {
@@ -220,7 +231,10 @@ static int swp_handler(struct pt_regs *regs, unsigned int instr)
 		set_segfault(regs, address);
 	}
 
-	return 0;
+out:
+	mark_trap_exit(ARM_TRAP_UNDEFINSTR, regs);
+
+	return ret;
 }
 
 /*
