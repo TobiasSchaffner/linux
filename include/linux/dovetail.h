@@ -62,10 +62,18 @@ int pipeline_syscall(unsigned int nr, struct pt_regs *regs);
 void __oob_trap_notify(unsigned int exception,
 		       struct pt_regs *regs);
 
+/*
+ * Trap notifications do not nest: a trap handler running on behalf
+ * of an oob thread may itself trigger a fault (e.g. a user access
+ * from an emulation handler), landing into another annotated trap
+ * handler. Only the outermost trap occurrence notifies the companion
+ * core, which is told about the exit when that same occurrence
+ * unwinds.
+ */
 static __always_inline void oob_trap_notify(unsigned int exception,
 					struct pt_regs *regs)
 {
-	if (running_oob() && !test_thread_local_flags(_TLF_OOBTRAP))
+	if (running_oob() && !current->oob_trap_regs)
 		__oob_trap_notify(exception, regs);
 }
 
@@ -75,7 +83,7 @@ void __oob_trap_unwind(unsigned int exception,
 static __always_inline void oob_trap_unwind(unsigned int exception,
 					struct pt_regs *regs)
 {
-	if (test_thread_local_flags(_TLF_OOBTRAP))
+	if (current->oob_trap_regs == regs)
 		__oob_trap_unwind(exception, regs);
 }
 

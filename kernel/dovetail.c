@@ -22,6 +22,12 @@ void inband_task_init(struct task_struct *p)
 {
 	struct thread_info *ti = task_thread_info(p);
 
+	/*
+	 * A forking parent cannot be inside a trap handler. If oob_trap_regs
+	 * is non-NULL, some trap entry was not balanced by a matching exit.
+	 */
+	WARN_ON_ONCE(dovetail_debug() && p->oob_trap_regs);
+
 	clear_ti_local_flags(ti, _TLF_DOVETAIL|_TLF_OOB|_TLF_OFFSTAGE);
 	clear_ti_thread_flag(ti, TIF_RETUSER);
 	clear_ti_thread_flag(ti, TIF_MAYDAY);
@@ -286,7 +292,7 @@ noinstr void __oob_trap_notify(unsigned int exception,
 	 * to the in-band stage, may return with hard irqs on.
 	 */
 	if (dovetail_enabled) {
-		set_thread_local_flags(_TLF_OOBTRAP);
+		current->oob_trap_regs = regs;
 		flags = hard_local_irq_save();
 		instrumentation_begin();
 		handle_oob_trap_entry(exception, regs);
@@ -308,7 +314,7 @@ noinstr void __oob_trap_unwind(unsigned int exception, struct pt_regs *regs)
 	 * stage. Must return with hard irqs off.
 	 */
 	hard_local_irq_disable();
-	clear_thread_local_flags(_TLF_OOBTRAP);
+	current->oob_trap_regs = NULL;
 	instrumentation_begin();
 	handle_oob_trap_exit(exception, regs);
 	instrumentation_end();

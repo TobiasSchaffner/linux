@@ -140,6 +140,5 @@ int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src);
 #define _TLF_OOB		0x0001
 #define _TLF_DOVETAIL		0x0002
 #define _TLF_OFFSTAGE		0x0004
-#define _TLF_OOBTRAP		0x0008
 
 #endif /* _ASM_RISCV_THREAD_INFO_H */

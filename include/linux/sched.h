@@ -74,6 +74,7 @@ struct perf_event_context;
 struct perf_ctx_data;
 struct pid_namespace;
 struct pipe_inode_info;
+struct pt_regs;
 struct rcu_node;
 struct reclaim_state;
 struct root_domain;
@@ -1301,6 +1302,10 @@ struct task_struct {
 
 #ifdef CONFIG_IRQ_PIPELINE
 	unsigned long			stall_bits;
+#endif
+#ifdef CONFIG_DOVETAIL
+	/* Exception frame owning the pending oob trap notification. */
+	struct pt_regs			*oob_trap_regs;
 #endif
 
 #ifdef CONFIG_LOCKDEP
