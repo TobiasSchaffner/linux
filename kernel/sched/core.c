@@ -10756,6 +10756,8 @@ int dovetail_leave_inband(void)
 	 */
 	if (likely(__schedule(SM_NONE))) {
 		arch_dovetail_switch_finish(false);
+		if (tracepoint_enabled(dovetail_leave_inband_tp))
+			__trace_dovetail_leave_inband(p);
 		return 0;
 	}
 
