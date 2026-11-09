@@ -1,0 +1,23 @@
+digraph state_automaton {
+	center = true;
+	size = "7,11";
+	{node [shape = plaintext, style=invis, label=""] "__init_inband"};
+	{node [shape = doublecircle] "inband"};
+	{node [shape = circle] "oob"};
+	{node [shape = circle] "signaled"};
+	"__init_inband" -> "inband";
+	"inband" [label = "inband", color = green3];
+	"oob" [label = "oob"];
+	"signaled" [label = "signaled"];
+	"inband" -> "inband" [ label = "signal" ];
+	"inband" -> "oob" [ label = "leave_inband" ];
+	"oob" -> "inband" [ label = "leave_oob" ];
+	"oob" -> "oob" [ label = "oob_return\noob_return_mayday" ];
+	"oob" -> "signaled" [ label = "signal" ];
+	"signaled" -> "inband" [ label = "leave_oob" ];
+	"signaled" -> "signaled" [ label = "signal\noob_return_mayday" ];
+	{ rank = min ;
+		"__init_inband";
+		"inband";
+	}
+}
