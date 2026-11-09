@@ -85,10 +85,16 @@ void inband_event_notify(enum inband_event_type,
 
 void inband_clock_was_set(void);
 
+DECLARE_TRACEPOINT(dovetail_signal_notify_tp);
+void __trace_dovetail_signal_notify(struct task_struct *p);
+
 static inline void inband_signal_notify(struct task_struct *p)
 {
-	if (test_ti_local_flags(task_thread_info(p), _TLF_DOVETAIL))
+	if (test_ti_local_flags(task_thread_info(p), _TLF_DOVETAIL)) {
 		inband_event_notify(INBAND_TASK_SIGNAL, p);
+		if (tracepoint_enabled(dovetail_signal_notify_tp))
+			__trace_dovetail_signal_notify(p);
+	}
 }
 
 static inline void inband_migration_notify(struct task_struct *p, int cpu)
