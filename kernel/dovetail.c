@@ -304,6 +304,7 @@ noinstr void __oob_trap_notify(unsigned int exception,
 		set_thread_local_flags(_TLF_OOBTRAP);
 		flags = hard_local_irq_save();
 		instrumentation_begin();
+		trace_dovetail_trap_notify_tp(exception, regs);
 		handle_oob_trap_entry(exception, regs);
 		instrumentation_end();
 		hard_local_irq_restore(flags);
@@ -325,6 +326,7 @@ noinstr void __oob_trap_unwind(unsigned int exception, struct pt_regs *regs)
 	hard_local_irq_disable();
 	clear_thread_local_flags(_TLF_OOBTRAP);
 	instrumentation_begin();
+	trace_dovetail_trap_unwind_tp(exception, regs);
 	handle_oob_trap_exit(exception, regs);
 	instrumentation_end();
 }

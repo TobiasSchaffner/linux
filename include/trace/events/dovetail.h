@@ -7,6 +7,7 @@
 
 #include <linux/tracepoint.h>
 
+struct pt_regs;
 struct task_struct;
 
 DECLARE_TRACE(dovetail_leave_inband,
@@ -16,6 +17,14 @@ DECLARE_TRACE(dovetail_leave_inband,
 DECLARE_TRACE(dovetail_leave_oob,
 	TP_PROTO(struct task_struct *p),
 	TP_ARGS(p));
+
+DECLARE_TRACE(dovetail_trap_notify,
+	TP_PROTO(unsigned int trapnr, struct pt_regs *regs),
+	TP_ARGS(trapnr, regs));
+
+DECLARE_TRACE(dovetail_trap_unwind,
+	TP_PROTO(unsigned int trapnr, struct pt_regs *regs),
+	TP_ARGS(trapnr, regs));
 
 #endif /* _TRACE_DOVETAIL_H */
 
