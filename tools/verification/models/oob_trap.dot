@@ -1,0 +1,14 @@
+digraph state_automaton {
+	{node [shape = plaintext, style=invis, label=""] "__init_idle"};
+	{node [shape = ellipse] "idle"};
+	{node [shape = plaintext] "trapped"};
+	"__init_idle" -> "idle";
+	"idle" [label = "idle", color = green3];
+	"idle" -> "trapped" [ label = "trap_notify;reset(same_trap)" ];
+	"trapped" -> "idle" [ label = "trap_unwind;same_trap == 1" ];
+	"idle" -> "idle" [ label = "leave_inband" ];
+	{ rank = min ;
+		"__init_idle";
+		"idle";
+	}
+}

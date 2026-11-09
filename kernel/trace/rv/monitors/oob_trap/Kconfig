@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+config RV_MON_OOB_TRAP
+	depends on RV
+	depends on RV_MON_DOVETAIL
+	default y
+	select HA_MON_EVENTS_ID
+	bool "oob_trap monitor"
+	help
+	  Per-task monitor checking that every out-of-band trap notification
+	  is unwound for the same trap before the task goes out-of-band again.
+
+	  For further information, see:
+	    Documentation/trace/rv/monitor_dovetail.rst
