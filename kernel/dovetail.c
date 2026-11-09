@@ -25,6 +25,11 @@ void __trace_dovetail_leave_oob(void)
 	trace_dovetail_leave_oob_tp(current);
 }
 
+void __trace_dovetail_signal_notify(struct task_struct *p)
+{
+	trace_dovetail_signal_notify_tp(p);
+}
+
 static bool dovetail_enabled;
 
 void __weak arch_inband_task_init(struct task_struct *p)
@@ -123,6 +128,7 @@ void dovetail_call_mayday(struct pt_regs *regs)
 /* Returning to user mode on the out-of-band stage. */
 void dovetail_oob_exit_to_user(struct pt_regs *regs)
 {
+	trace_dovetail_oob_return_tp(current);
 	if (test_thread_flag(TIF_MAYDAY))
 		dovetail_call_mayday(regs);
 }

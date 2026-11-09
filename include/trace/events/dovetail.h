@@ -26,6 +26,14 @@ DECLARE_TRACE(dovetail_trap_unwind,
 	TP_PROTO(unsigned int trapnr, struct pt_regs *regs),
 	TP_ARGS(trapnr, regs));
 
+DECLARE_TRACE(dovetail_oob_return,
+	TP_PROTO(struct task_struct *p),
+	TP_ARGS(p));
+
+DECLARE_TRACE(dovetail_signal_notify,
+	TP_PROTO(struct task_struct *p),
+	TP_ARGS(p));
+
 #endif /* _TRACE_DOVETAIL_H */
 
 /* This part must be outside protection */
