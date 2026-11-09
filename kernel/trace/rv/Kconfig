@@ -54,6 +54,7 @@ config RV_PER_TASK_MONITORS
 	int "Maximum number of per-task monitor"
 	depends on RV
 	range 1 8
+	default 3 if RV_DOVETAIL
 	default 2
 	help
 	  This option configures the maximum number of per-task RV monitors that can run
@@ -83,6 +84,8 @@ source "kernel/trace/rv/monitors/deadline/Kconfig"
 source "kernel/trace/rv/monitors/nomiss/Kconfig"
 # Add new deadline monitors here
 
+source "kernel/trace/rv/monitors/dovetail/Kconfig"
+source "kernel/trace/rv/monitors/offstage/Kconfig"
 # Add new monitors here
 
 config RV_REACTORS

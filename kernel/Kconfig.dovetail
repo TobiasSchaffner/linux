@@ -18,6 +18,20 @@ config DOVETAIL
 	  running a high-priority software core on the out-of-band
 	  pipeline stage (aka "dual kernel" configuration).
 
+config RV_DOVETAIL
+	bool "Runtime verification of the Dovetail interface"
+	depends on DOVETAIL
+	select RV
+	select RV_REACTORS
+	select RV_REACT_PRINTK
+	select RV_MON_DOVETAIL
+	help
+	  Enable the runtime verification monitors checking the contract
+	  between Dovetail and the companion core, with the printk reactor.
+
+	  For further information, see:
+	    Documentation/trace/rv/monitor_dovetail.rst
+
 config DOVETAIL_LEGACY_SYSCALL_RANGE
        depends on DOVETAIL
        def_bool y

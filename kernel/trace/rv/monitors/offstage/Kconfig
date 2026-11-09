@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+config RV_MON_OFFSTAGE
+	depends on RV
+	depends on RV_MON_DOVETAIL
+	default y
+	select DA_MON_EVENTS_ID
+	bool "offstage monitor"
+	help
+	  Per-task monitor following which stage a dovetailed task runs on,
+	  in-band or out-of-band. It reports a task that Linux schedules, or
+	  that raises a signal on itself, while Dovetail has it out-of-band.
+
+	  For further information, see:
+	    Documentation/trace/rv/monitor_dovetail.rst

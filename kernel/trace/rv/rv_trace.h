@@ -156,6 +156,7 @@ DECLARE_EVENT_CLASS(error_da_monitor_id,
 #include <monitors/snroc/snroc_trace.h>
 #include <monitors/nrp/nrp_trace.h>
 #include <monitors/sssw/sssw_trace.h>
+#include <monitors/offstage/offstage_trace.h>
 // Add new monitors based on CONFIG_DA_MON_EVENTS_ID here
 
 #ifdef CONFIG_HA_MON_EVENTS_ID

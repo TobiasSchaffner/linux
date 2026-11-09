@@ -1,0 +1,14 @@
+digraph state_automaton {
+	{node [shape = plaintext, style=invis, label=""] "__init_inband"};
+	{node [shape = ellipse] "inband"};
+	{node [shape = plaintext] "oob"};
+	"__init_inband" -> "inband";
+	"inband" [label = "inband", color = green3];
+	"inband" -> "inband" [ label = "sched_in\nsignal_self" ];
+	"inband" -> "oob" [ label = "leave_inband" ];
+	"oob" -> "inband" [ label = "leave_oob" ];
+	{ rank = min ;
+		"__init_inband";
+		"inband";
+	}
+}
