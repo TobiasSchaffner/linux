@@ -18,6 +18,7 @@ struct files_struct;
 #include <linux/mm.h>
 #include <linux/thread_info.h>
 #include <linux/irqstage.h>
+#include <linux/tracepoint-defs.h>
 #include <uapi/asm-generic/dovetail.h>
 #include <asm/dovetail.h>
 
@@ -163,8 +164,16 @@ void dovetail_stop_altsched(void);
 
 __must_check int dovetail_leave_inband(void);
 
+DECLARE_TRACEPOINT(dovetail_leave_inband_tp);
+void __trace_dovetail_leave_inband(struct task_struct *p);
+
+DECLARE_TRACEPOINT(dovetail_leave_oob_tp);
+void __trace_dovetail_leave_oob(void);
+
 static inline void dovetail_leave_oob(void)
 {
+	if (tracepoint_enabled(dovetail_leave_oob_tp))
+		__trace_dovetail_leave_oob();
 	clear_thread_local_flags(_TLF_OOB|_TLF_OFFSTAGE);
 	clear_thread_flag(TIF_MAYDAY);
 }

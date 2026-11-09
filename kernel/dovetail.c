@@ -12,6 +12,19 @@
 #include <asm/syscall.h>
 #include <uapi/asm-generic/dovetail.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/dovetail.h>
+
+void __trace_dovetail_leave_inband(struct task_struct *p)
+{
+	trace_dovetail_leave_inband_tp(p);
+}
+
+void __trace_dovetail_leave_oob(void)
+{
+	trace_dovetail_leave_oob_tp(current);
+}
+
 static bool dovetail_enabled;
 
 void __weak arch_inband_task_init(struct task_struct *p)
