@@ -14,6 +14,7 @@ Runtime Verification
    da_monitor_instrumentation.rst
    monitor_wip.rst
    monitor_wwnr.rst
+   monitor_dovetail.rst
    monitor_sched.rst
    monitor_rtapp.rst
    monitor_stall.rst

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+config RV_MON_DOVETAIL
+	depends on RV
+	depends on DOVETAIL
+	bool "dovetail monitor"
+	help
+	  Collection of per-task monitors checking that Dovetail and its
+	  companion core keep their contract: stage switches, out-of-band
+	  traps and signals. Enable this to enable all of them.
+
+	  For further information, see:
+	    Documentation/trace/rv/monitor_dovetail.rst
