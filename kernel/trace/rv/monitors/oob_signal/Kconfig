@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+config RV_MON_OOB_SIGNAL
+	depends on RV
+	depends on RV_MON_DOVETAIL
+	depends on !ARM
+	default y
+	select DA_MON_EVENTS_ID
+	bool "oob_signal monitor"
+	help
+	  Per-task monitor checking that a dovetailed task which receives a
+	  signal while out-of-band does not return to user mode out-of-band
+	  without a mayday pending, since signals are delivered in-band only.
+
+	  For further information, see:
+	    Documentation/trace/rv/monitor_dovetail.rst

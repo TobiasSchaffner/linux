@@ -24,6 +24,7 @@ obj-$(CONFIG_RV_MON_WAKEUP) += monitors/wakeup/wakeup.o
 obj-$(CONFIG_RV_MON_DOVETAIL) += monitors/dovetail/dovetail.o
 obj-$(CONFIG_RV_MON_OFFSTAGE) += monitors/offstage/offstage.o
 obj-$(CONFIG_RV_MON_OOB_TRAP) += monitors/oob_trap/oob_trap.o
+obj-$(CONFIG_RV_MON_OOB_SIGNAL) += monitors/oob_signal/oob_signal.o
 # Add new monitors here
 obj-$(CONFIG_RV_REACTORS) += rv_reactors.o
 obj-$(CONFIG_RV_REACT_PRINTK) += reactor_printk.o

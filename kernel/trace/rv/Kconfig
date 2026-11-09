@@ -88,6 +88,7 @@ source "kernel/trace/rv/monitors/nomiss/Kconfig"
 source "kernel/trace/rv/monitors/dovetail/Kconfig"
 source "kernel/trace/rv/monitors/offstage/Kconfig"
 source "kernel/trace/rv/monitors/oob_trap/Kconfig"
+source "kernel/trace/rv/monitors/oob_signal/Kconfig"
 # Add new monitors here
 
 config RV_REACTORS
