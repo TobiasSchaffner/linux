@@ -3371,7 +3371,7 @@ static int packet_bind_spkt(struct socket *sock, struct sockaddr_unsized *uaddr,
 	name[sizeof(sa->sa_data)] = 0;
 
 	lock_sock(sk);
-	packet_do_bind_unlocked(sk, name, 0, 0);
+	ret = packet_do_bind_unlocked(sk, name, 0, 0);
 	if (!ret && sock_oob_capable(sk->sk_socket))
 		ret = sock_oob_bind(sk, uaddr, addr_len);
 	release_sock(sk);
