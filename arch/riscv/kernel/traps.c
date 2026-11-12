@@ -441,7 +441,7 @@ done_inband:
 /* handle cfi violations */
 bool handle_user_cfi_violation(struct pt_regs *regs)
 {
-	unsigned long tval = csr_read(CSR_TVAL);
+	unsigned long tval = regs->badaddr;
 	bool is_fcfi = (tval == CFI_TVAL_FCFI_CODE && cpu_supports_indirect_br_lp_instr());
 	bool is_bcfi = (tval == CFI_TVAL_BCFI_CODE && cpu_supports_shadow_stack());
 
