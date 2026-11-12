@@ -317,8 +317,11 @@ void handle_page_fault(struct pt_regs *regs, irqentry_state_t state)
 
 	/* Enable interrupts if they were enabled in the parent context. */
 #ifdef CONFIG_IRQ_PIPELINE
-	if (state.stage_info != IRQENTRY_INBAND_STALLED)
-		local_irq_enable_full();
+	if (running_inband() && !regs_irqs_disabled(regs)) {
+		hard_local_irq_enable();
+		if (state.stage_info != IRQENTRY_INBAND_STALLED)
+			local_irq_enable();
+	}
 #else
 	if (!regs_irqs_disabled(regs))
 		local_irq_enable();

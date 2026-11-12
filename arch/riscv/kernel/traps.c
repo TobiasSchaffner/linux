@@ -496,17 +496,14 @@ asmlinkage __visible __trap_section void do_trap_software_check(struct pt_regs *
 asmlinkage __visible noinstr void do_page_fault(struct pt_regs *regs)
 {
 	irqentry_state_t state = irqentry_enter(regs);
+	bool inband = mark_trap_entry(regs);
 
-	mark_trap_entry(regs);
-
-	BUG_ON(dovetail_debug() && !running_inband());
-
-	if (!user_mode(regs))
-		hard_cond_local_irq_enable();
+	BUG_ON(dovetail_debug() && !inband && user_mode(regs));
 
 	handle_page_fault(regs, state);
 
-	local_irq_disable();
+	if (inband)
+		local_irq_disable();
 
 	mark_trap_exit(regs);
 
