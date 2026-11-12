@@ -113,6 +113,11 @@ void die(struct pt_regs *regs, const char *str)
 		make_task_dead(SIGSEGV);
 }
 
+/*
+ * Kernel mode callers ignore the return value: skipping their handler
+ * would trap again on the same instruction, so it runs whether the
+ * core demoted us or not.
+ */
 static __always_inline
 bool mark_trap_entry(struct pt_regs *regs)
 {
@@ -191,10 +196,9 @@ asmlinkage __visible __trap_section void name(struct pt_regs *regs)		\
 		irqentry_exit_to_user_mode(regs);				\
 	} else {								\
 		irqentry_state_t state = irqentry_nmi_enter(regs);		\
-		if (mark_trap_entry(regs)) {					\
-			do_trap_error(regs, signo, code, regs->epc, "Oops - " str); \
-			mark_trap_exit(regs);					\
-		}								\
+		mark_trap_entry(regs);						\
+		do_trap_error(regs, signo, code, regs->epc, "Oops - " str);	\
+		mark_trap_exit(regs);						\
 		irqentry_nmi_exit(regs, state);					\
 	}									\
 }
@@ -229,11 +233,11 @@ asmlinkage __visible __trap_section void do_trap_insn_illegal(struct pt_regs *re
 		irqentry_exit_to_user_mode(regs);
 	} else {
 		irqentry_state_t state = irqentry_nmi_enter(regs);
-		if (mark_trap_entry(regs)) {
-			do_trap_error(regs, SIGILL, ILL_ILLOPC, regs->epc,
-				      "Oops - illegal instruction");
-			mark_trap_exit(regs);
-		}
+
+		mark_trap_entry(regs);
+		do_trap_error(regs, SIGILL, ILL_ILLOPC, regs->epc,
+			      "Oops - illegal instruction");
+		mark_trap_exit(regs);
 		irqentry_nmi_exit(regs, state);
 	}
 }
@@ -270,8 +274,7 @@ static void do_trap_misaligned(struct pt_regs *regs, enum misaligned_access_type
 		local_irq_enable();
 	} else {
 		state = irqentry_nmi_enter(regs);
-		if (!mark_trap_entry(regs))
-			goto out;
+		mark_trap_entry(regs);
 	}
 
 	if (misaligned_handler[type].handler(regs))
@@ -374,10 +377,10 @@ asmlinkage __visible __trap_section void do_trap_break(struct pt_regs *regs)
 		irqentry_exit_to_user_mode(regs);
 	} else {
 		irqentry_state_t state = irqentry_nmi_enter(regs);
-		if (mark_trap_entry(regs)) {
-			handle_break(regs);
-			mark_trap_exit(regs);
-		}
+
+		mark_trap_entry(regs);
+		handle_break(regs);
+		mark_trap_exit(regs);
 		irqentry_nmi_exit(regs, state);
 	}
 }
