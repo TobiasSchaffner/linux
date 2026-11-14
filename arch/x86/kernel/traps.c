@@ -432,12 +432,14 @@ static __always_inline void __user *error_get_trap_addr(struct pt_regs *regs)
 
 DEFINE_IDTENTRY(exc_divide_error)
 {
+	dovetail_trap_entry(X86_TRAP_DE, regs);
 	do_error_trap(regs, 0, "divide error", X86_TRAP_DE, SIGFPE,
 		      FPE_INTDIV, error_get_trap_addr(regs));
 }
 
 DEFINE_IDTENTRY(exc_overflow)
 {
+	dovetail_trap_entry(X86_TRAP_OF, regs);
 	do_error_trap(regs, 0, "overflow", X86_TRAP_OF, SIGSEGV, 0, NULL);
 }
 
@@ -559,6 +561,8 @@ DEFINE_IDTENTRY_RAW(exc_invalid_op)
 	if (!user_mode(regs) && handle_bug(regs))
 		return;
 
+	dovetail_trap_entry(X86_TRAP_UD, regs);
+
 	if (mark_trap_entry_raw(X86_TRAP_UD, regs)) {
 		state = irqentry_enter(regs);
 		instrumentation_begin();
@@ -571,24 +575,28 @@ DEFINE_IDTENTRY_RAW(exc_invalid_op)
 
 DEFINE_IDTENTRY(exc_coproc_segment_overrun)
 {
+	dovetail_trap_entry(X86_TRAP_OLD_MF, regs);
 	do_error_trap(regs, 0, "coprocessor segment overrun",
 		      X86_TRAP_OLD_MF, SIGFPE, 0, NULL);
 }
 
 DEFINE_IDTENTRY_ERRORCODE(exc_invalid_tss)
 {
+	dovetail_trap_entry(X86_TRAP_TS, regs);
 	do_error_trap(regs, error_code, "invalid TSS", X86_TRAP_TS, SIGSEGV,
 		      0, NULL);
 }
 
 DEFINE_IDTENTRY_ERRORCODE(exc_segment_not_present)
 {
+	dovetail_trap_entry(X86_TRAP_NP, regs);
 	do_error_trap(regs, error_code, "segment not present", X86_TRAP_NP,
 		      SIGBUS, 0, NULL);
 }
 
 DEFINE_IDTENTRY_ERRORCODE(exc_stack_segment)
 {
+	dovetail_trap_entry(X86_TRAP_SS, regs);
 	do_error_trap(regs, error_code, "stack segment", X86_TRAP_SS, SIGBUS,
 		      0, NULL);
 }
@@ -596,6 +604,8 @@ DEFINE_IDTENTRY_ERRORCODE(exc_stack_segment)
 DEFINE_IDTENTRY_ERRORCODE(exc_alignment_check)
 {
 	char *str = "alignment check";
+
+	dovetail_trap_entry(X86_TRAP_AC, regs);
 
 	if (!mark_trap_entry(X86_TRAP_AC, regs))
 		return;
@@ -798,6 +808,7 @@ DEFINE_IDTENTRY_DF(exc_double_fault)
 
 DEFINE_IDTENTRY(exc_bounds)
 {
+	dovetail_trap_entry(X86_TRAP_BR, regs);
 	if (!mark_trap_entry(X86_TRAP_BR, regs))
 		return;
 
@@ -1014,6 +1025,8 @@ DEFINE_IDTENTRY_ERRORCODE(exc_general_protection)
 	if (user_mode(regs) && try_fixup_enqcmd_gp())
 		return;
 
+	dovetail_trap_entry(X86_TRAP_GP, regs);
+
 	cond_local_irq_enable(regs);
 
 	if (v8086_mode(regs)) {
@@ -1109,6 +1122,8 @@ DEFINE_IDTENTRY_RAW(exc_int3)
 	 */
 	if (smp_text_poke_int3_handler(regs))
 		return;
+
+	dovetail_trap_entry(X86_TRAP_BP, regs);
 
 	if (!mark_trap_entry_raw(X86_TRAP_BP, regs))
 		return;
@@ -1588,11 +1603,13 @@ exit:
 
 DEFINE_IDTENTRY(exc_coprocessor_error)
 {
+	dovetail_trap_entry(X86_TRAP_MF, regs);
 	math_error(regs, X86_TRAP_MF);
 }
 
 DEFINE_IDTENTRY(exc_simd_coprocessor_error)
 {
+	dovetail_trap_entry(X86_TRAP_XF, regs);
 	math_error(regs, X86_TRAP_XF);
 }
 

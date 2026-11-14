@@ -1,0 +1,50 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# description: Test that out-of-band trap notifications are balanced
+# requires: oob_trap:monitor printk:reactor
+
+reactions() {
+	dmesg | grep -c "monitor oob_trap does not allow" || true
+}
+
+# The core's trap matrix makes a thread running out-of-band take every
+# kind of trap, in the kernel and in user space, and checks what user
+# space sees of each one: smokey's trap_matrix on Cobalt, libevl's
+# trap-matrix on EVL (or its older fault test, which checks nothing).
+if [ -e /proc/xenomai/version ] && command -v smokey > /dev/null; then
+	t="smokey --run=trap_matrix"
+elif command -v trap-matrix > /dev/null; then
+	t=trap-matrix
+elif command -v evl > /dev/null; then
+	t="evl test fault"
+else
+	exit_unsupported
+fi
+
+echo printk > monitors/dovetail/oob_trap/reactors
+echo > ../trace
+echo 1 > ../events/rv/event_oob_trap/enable
+before=$(reactions)
+echo 1 > monitors/dovetail/oob_trap/enable
+
+rc=0
+$t > /tmp/rv_oob_trap.out 2>&1 || rc=$?
+if grep -q "ABI mismatch" /tmp/rv_oob_trap.out; then
+	echo 0 > monitors/dovetail/oob_trap/enable
+	echo 0 > ../events/rv/event_oob_trap/enable
+	exit_unsupported
+fi
+
+echo 0 > monitors/dovetail/oob_trap/enable
+echo 0 > ../events/rv/event_oob_trap/enable
+echo nop > monitors/dovetail/oob_trap/reactors
+
+[ "$t" = "evl test fault" ] || [ $rc -eq 0 ] || { cat /tmp/rv_oob_trap.out; false; }
+
+# The traps were seen, both ways, and the monitor accepted them.
+grep -q "idle x trap_entry -> entered" ../trace
+grep -q "entered x trap_notify -> trapped" ../trace
+grep -q "trapped x leave_oob -> demoted" ../trace
+grep -q "demoted x trap_unwind -> unwinding_demoted" ../trace
+grep -q "unwinding_demoted x trap_exit_user -> idle" ../trace
+[ "$(reactions)" -eq "$before" ]

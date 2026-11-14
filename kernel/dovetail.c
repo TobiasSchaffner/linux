@@ -30,6 +30,14 @@ void __trace_dovetail_signal_notify(struct task_struct *p)
 	trace_dovetail_signal_notify_tp(p);
 }
 
+/* Traced like oob trap notifications, from the same contexts. */
+noinstr void __dovetail_trap_entry(unsigned long syndrome, struct pt_regs *regs)
+{
+	instrumentation_begin();
+	trace_dovetail_trap_entry_tp(syndrome, regs);
+	instrumentation_end();
+}
+
 static bool dovetail_enabled;
 
 void __weak arch_inband_task_init(struct task_struct *p)
@@ -296,7 +304,7 @@ void __weak handle_oob_trap_entry(unsigned int trapnr, struct pt_regs *regs)
 }
 
 noinstr void __oob_trap_notify(unsigned int exception,
-			       struct pt_regs *regs)
+			       struct pt_regs *regs, unsigned long frame)
 {
 	unsigned long flags;
 
@@ -310,7 +318,7 @@ noinstr void __oob_trap_notify(unsigned int exception,
 		set_thread_local_flags(_TLF_OOBTRAP);
 		flags = hard_local_irq_save();
 		instrumentation_begin();
-		trace_dovetail_trap_notify_tp(exception, regs);
+		trace_dovetail_trap_notify_tp(exception, regs, frame);
 		handle_oob_trap_entry(exception, regs);
 		instrumentation_end();
 		hard_local_irq_restore(flags);
@@ -321,7 +329,8 @@ void __weak handle_oob_trap_exit(unsigned int trapnr, struct pt_regs *regs)
 {
 }
 
-noinstr void __oob_trap_unwind(unsigned int exception, struct pt_regs *regs)
+noinstr void __oob_trap_unwind(unsigned int exception, struct pt_regs *regs,
+			       unsigned long frame)
 {
 	/*
 	 * The trap_exit handler runs only if trap_entry was called
@@ -332,8 +341,9 @@ noinstr void __oob_trap_unwind(unsigned int exception, struct pt_regs *regs)
 	hard_local_irq_disable();
 	clear_thread_local_flags(_TLF_OOBTRAP);
 	instrumentation_begin();
-	trace_dovetail_trap_unwind_tp(exception, regs);
+	trace_dovetail_trap_unwind_tp(exception, regs, frame);
 	handle_oob_trap_exit(exception, regs);
+	trace_dovetail_trap_exit_tp(exception, regs);
 	instrumentation_end();
 }
 

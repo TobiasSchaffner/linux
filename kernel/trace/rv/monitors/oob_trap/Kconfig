@@ -7,8 +7,13 @@ config RV_MON_OOB_TRAP
 	select HA_MON_EVENTS_ID
 	bool "oob_trap monitor"
 	help
-	  Per-task monitor checking that every out-of-band trap notification
-	  is unwound for the same trap before the task goes out-of-band again.
+	  Per-task monitor checking the Dovetail trap contract: every
+	  exception the arch code must notify, taken out-of-band, is notified
+	  with its trap number, every out-of-band trap notification is
+	  unwound once for the same trap,
+	  the trap exit handler returns with hard irqs off, no task is demoted
+	  from interrupt or NMI context, and no task schedules out while a
+	  kprobe is being handled, and every trap ends within timeout_ms.
 
 	  For further information, see:
 	    Documentation/trace/rv/monitor_dovetail.rst

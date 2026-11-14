@@ -62,25 +62,67 @@ the companion core demoted the task would::
 Monitor oob_trap
 ++++++++++++++++
 
-Every out-of-band trap notification is unwound for the same trap before the
-task goes out-of-band again. A handler missing the unwind leaves
-``_TLF_OOBTRAP`` set, and the companion core is no longer told about the
-traps of that task::
+The Dovetail trap contract, per task:
 
-                  trap_notify; reset(same_trap)
-          +-------+   ------------------------>   +---------+
-          | idle  |                               | trapped |
-          +-------+   <------------------------   +---------+
-           |     ^    trap_unwind; same_trap == 1
-           +-----+
-         leave_inband
+- an exception the arch code must notify, taken out-of-band, is notified
+  next, with the trap number of the exception: the arch code reports the
+  exception (``trap_entry``, from ``dovetail_trap_entry()``) where it tells
+  exceptions apart, before handling it, so a handler which does not notify,
+  or notifies the wrong trap number (``right_trap``), is reported. The arch
+  code reports the trap number (x86, riscv) or the syndrome (arm64 ESR), x86
+  page faults come from the ``page_fault_{user,kernel}`` events, and the
+  monitor picks those it must notify (``oob_trap_arch.h``): x86 user mode
+  exceptions, breakpoints and page faults on user addresses, arm64 aborts on user
+  addresses, alignment, undefined instruction, BTI, FP, SVE/SME and debug
+  exceptions, every riscv exception but syscalls. A nested exception taken
+  out-of-band while a notified trap is handled (e.g. a faulting kprobe fetch
+  in a kernel trap the core did not demote for) is not notified again;
+- every out-of-band trap notification is unwound once, for the same trap and
+  by the same handler level: the trap key folds in the stack frame of the
+  arch code issuing the notify and the unwind (``oob_trap_notify()`` and
+  ``oob_trap_unwind()`` are inlined into it), so a nested handler unwinding
+  the trap of its caller is reported;
+- the core's trap exit handler returns with hard irqs off (``trap_exit_*``,
+  traced right after ``handle_oob_trap_exit()``). The core may demote the
+  task for the trap (``leave_oob`` while trapped) and promote it again after
+  the unwind; a second demotion, or a promotion before the unwind, are
+  reported;
+- a trap ends within ``timeout_ms`` (module parameter, default 1000, 0 turns
+  the check off), which catches a trap handler that hangs;
+- a task does not return to user mode out-of-band (``oob_return``) with a
+  notification open;
+- no task is demoted from interrupt or NMI context (``leave_oob`` while on
+  the pipeline entry or in NMI), e.g. by a trap hit in an out-of-band
+  interrupt handler;
+- no interrupt is taken in NMI context (``irq_entry``, from the
+  ``irq_pipeline_entry`` event), which means hard irqs were enabled there, e.g. by a fault handler
+  nested in a kernel trap the core did not demote for;
+- a monitored task does not schedule out while a kprobe is being handled on
+  its CPU, which would let another task reenter the kprobe::
 
-A trap is identified by its number and register frame, so an unwind with the
-wrong number, and the unwind of a trap nested in the in-band handling of
-another one, are reported too. A leak is only seen once the task goes
-out-of-band again. Traps taken in NMI context are ignored. The model uses no
-clock, so the hybrid automaton core arms no timer and is safe on the
-out-of-band stage.
+        idle --trap_entry; reset(clk)--> entered
+        entered --trap_notify [right_trap]; reset(same_trap), reset(clk)--> trapped
+        idle --trap_notify; reset(same_trap), reset(clk)--> trapped
+        trapped, unwinding --trap_entry--> (same state)   (nested)
+        trapped --leave_oob [task_ctx]--> demoted            (core demotes)
+        trapped --trap_unwind [same_trap]--> unwinding       (core declined)
+        demoted --trap_unwind [same_trap]--> unwinding_demoted
+        unwinding_demoted --leave_inband--> unwinding        (core promotes)
+        unwinding, unwinding_demoted --trap_exit_* [irqs_off]--> idle
+
+  in every state:  sched_switch [no_kprobe], irq_entry [not_nmi]
+  idle:            leave_inband, oob_return, leave_oob [task_ctx]
+  other states:    clk < timeout_ns
+  entered:         nothing else (the exception was not notified)
+
+A leaked notification is seen when the task goes out-of-band again or
+returns to user mode out-of-band. Traps notified in NMI context (riscv kernel
+mode traps) are monitored like any other. Only tasks seen trapping or
+switching stage are checked on ``sched_switch`` and ``irq_entry``. Arming a
+timer is not safe out-of-band or in NMI, so the monitor arms none: it checks
+the clock invariant on the task's next event (``irq_entry`` ticks while the
+trap runs) with the NMI safe ``ktime_get_mono_fast_ns()``. A trap blocked in
+the kernel is reported only once the task runs again.
 
 Monitor oob_signal
 ++++++++++++++++++

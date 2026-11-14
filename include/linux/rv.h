@@ -87,9 +87,9 @@ struct ltl_monitor {};
  * In the future, hybrid automata may rely on multiple
  * environment variables, e.g. different clocks started at
  * different times or running at different speed.
- * For now we support only 1 variable.
+ * For now we support up to 2 variables.
  */
-#define MAX_HA_ENV_LEN 1
+#define MAX_HA_ENV_LEN 2
 
 /*
  * Monitors can pick the preferred timer implementation:

@@ -139,6 +139,14 @@ void mark_trap_exit(struct pt_regs *regs)
 		hard_cond_local_irq_disable();
 }
 
+#ifdef CONFIG_DOVETAIL
+/* Every exception handler notifies the cause as the trap number. */
+asmlinkage __visible noinstr void do_dovetail_trap_entry(struct pt_regs *regs)
+{
+	dovetail_trap_entry(regs->cause, regs);
+}
+#endif
+
 void do_trap(struct pt_regs *regs, int signo, int code, unsigned long addr)
 {
 	struct task_struct *tsk = current;

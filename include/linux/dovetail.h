@@ -60,24 +60,47 @@ void inband_task_init(struct task_struct *p);
 
 int pipeline_syscall(unsigned int nr, struct pt_regs *regs);
 
-void __oob_trap_notify(unsigned int exception,
-		       struct pt_regs *regs);
+DECLARE_TRACEPOINT(dovetail_trap_entry_tp);
+void __dovetail_trap_entry(unsigned long syndrome, struct pt_regs *regs);
 
+/*
+ * The arch code reports an exception taken over the oob stage before
+ * handling it, from the point where it tells exceptions apart. The
+ * @syndrome is arch specific: the trap number on x86 and riscv, ESR_EL1
+ * on arm64. Tracers check that the notification follows;
+ * nothing else depends on it.
+ */
+static __always_inline void dovetail_trap_entry(unsigned long syndrome,
+					struct pt_regs *regs)
+{
+	if (tracepoint_enabled(dovetail_trap_entry_tp) && running_oob())
+		__dovetail_trap_entry(syndrome, regs);
+}
+
+void __oob_trap_notify(unsigned int exception,
+		       struct pt_regs *regs, unsigned long frame);
+
+/*
+ * The frame address of the arch code calling us (we are inlined into it)
+ * tells tracers which handler level notified a trap and which unwound it.
+ */
 static __always_inline void oob_trap_notify(unsigned int exception,
 					struct pt_regs *regs)
 {
 	if (running_oob() && !test_thread_local_flags(_TLF_OOBTRAP))
-		__oob_trap_notify(exception, regs);
+		__oob_trap_notify(exception, regs,
+				  (unsigned long)__builtin_frame_address(0));
 }
 
 void __oob_trap_unwind(unsigned int exception,
-		struct pt_regs *regs);
+		struct pt_regs *regs, unsigned long frame);
 
 static __always_inline void oob_trap_unwind(unsigned int exception,
 					struct pt_regs *regs)
 {
 	if (test_thread_local_flags(_TLF_OOBTRAP))
-		__oob_trap_unwind(exception, regs);
+		__oob_trap_unwind(exception, regs,
+				  (unsigned long)__builtin_frame_address(0));
 }
 
 void inband_event_notify(enum inband_event_type,
@@ -296,6 +319,7 @@ static inline void arch_dovetail_exec_prepare(void)
  * Keep the trap helpers as macros, we might not be able to resolve
  * trap numbers if CONFIG_DOVETAIL is off.
  */
+#define dovetail_trap_entry(__syndrome, __regs)	do { } while (0)
 #define oob_trap_notify(__exception, __regs)	do { } while (0)
 #define oob_trap_unwind(__exception, __regs)	do { } while (0)
 

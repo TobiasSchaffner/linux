@@ -6,6 +6,7 @@
  */
 
 #include <linux/context_tracking.h>
+#include <linux/dovetail.h>
 #include <linux/irq-entry-common.h>
 #include <linux/kasan.h>
 #include <linux/linkage.h>
@@ -601,6 +602,8 @@ asmlinkage void noinstr el1h_64_sync_handler(struct pt_regs *regs)
 {
 	unsigned long esr = read_sysreg(esr_el1);
 
+	dovetail_trap_entry(esr, regs);
+
 	switch (ESR_ELx_EC(esr)) {
 	case ESR_ELx_EC_DABT_CUR:
 	case ESR_ELx_EC_IABT_CUR:
@@ -915,6 +918,10 @@ asmlinkage void noinstr el0t_64_sync_handler(struct pt_regs *regs)
 {
 	unsigned long esr = read_sysreg(esr_el1);
 
+	/* Syscalls are no traps, spare tracers the most frequent case. */
+	if (ESR_ELx_EC(esr) != ESR_ELx_EC_SVC64)
+		dovetail_trap_entry(esr, regs);
+
 	switch (ESR_ELx_EC(esr)) {
 	case ESR_ELx_EC_SVC64:
 		el0_svc(regs);
@@ -1068,6 +1075,9 @@ static void noinstr el0_bkpt32(struct pt_regs *regs, unsigned long esr)
 asmlinkage void noinstr el0t_32_sync_handler(struct pt_regs *regs)
 {
 	unsigned long esr = read_sysreg(esr_el1);
+
+	if (ESR_ELx_EC(esr) != ESR_ELx_EC_SVC32)
+		dovetail_trap_entry(esr, regs);
 
 	switch (ESR_ELx_EC(esr)) {
 	case ESR_ELx_EC_SVC32:
