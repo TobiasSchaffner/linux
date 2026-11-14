@@ -86,7 +86,8 @@ The Dovetail trap contract, per task:
   traced right after ``handle_oob_trap_exit()``). The core may demote the
   task for the trap (``leave_oob`` while trapped) and promote it again after
   the unwind; a second demotion, or a promotion before the unwind, are
-  reported;
+  reported. With Cobalt (``demotes_user``), the task must also be demoted
+  for every user mode trap: Cobalt relaxes the thread for each of them;
 - a trap ends within ``timeout_ms`` (module parameter, default 1000, 0 turns
   the check off), which catches a trap handler that hangs;
 - a task does not return to user mode out-of-band (``oob_return``) with a
@@ -108,7 +109,9 @@ The Dovetail trap contract, per task:
         trapped --trap_unwind [same_trap]--> unwinding       (core declined)
         demoted --trap_unwind [same_trap]--> unwinding_demoted
         unwinding_demoted --leave_inband--> unwinding        (core promotes)
-        unwinding, unwinding_demoted --trap_exit_* [irqs_off]--> idle
+        unwinding --trap_exit_kernel [irqs_off]--> idle
+        unwinding --trap_exit_user [irqs_off, !demotes_user]--> idle
+        unwinding_demoted --trap_exit_* [irqs_off]--> idle
 
   in every state:  sched_switch [no_kprobe], irq_entry [not_nmi]
   idle:            leave_inband, oob_return, leave_oob [task_ctx]

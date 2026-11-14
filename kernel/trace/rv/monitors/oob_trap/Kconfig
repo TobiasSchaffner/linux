@@ -13,7 +13,8 @@ config RV_MON_OOB_TRAP
 	  unwound once for the same trap,
 	  the trap exit handler returns with hard irqs off, no task is demoted
 	  from interrupt or NMI context, and no task schedules out while a
-	  kprobe is being handled, and every trap ends within timeout_ms.
+	  kprobe is being handled, and every trap ends within timeout_ms. With
+	  Cobalt, the task must also be demoted for every user mode trap.
 
 	  For further information, see:
 	    Documentation/trace/rv/monitor_dovetail.rst

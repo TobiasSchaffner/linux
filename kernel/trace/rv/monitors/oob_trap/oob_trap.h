@@ -40,6 +40,7 @@ enum envs_oob_trap {
 	no_kprobe_oob_trap,
 	not_nmi_oob_trap,
 	task_ctx_oob_trap,
+	demotes_user_oob_trap,
 	right_trap_oob_trap,
 	env_max_oob_trap,
 	env_max_stored_oob_trap = irqs_off_oob_trap,
@@ -84,6 +85,7 @@ static const struct automaton_oob_trap automaton_oob_trap = {
 		"no_kprobe",
 		"not_nmi",
 		"task_ctx",
+		"demotes_user",
 		"right_trap",
 	},
 	.function = {
