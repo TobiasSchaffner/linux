@@ -987,6 +987,7 @@ void arch_trigger_cpumask_backtrace(const cpumask_t *mask, int exclude_cpu)
 void kgdb_roundup_cpus(void)
 {
 	int this_cpu = raw_smp_processor_id();
+	struct ipi_index ipi;
 	int cpu;
 
 	for_each_online_cpu(cpu) {
@@ -994,7 +995,8 @@ void kgdb_roundup_cpus(void)
 		if (cpu == this_cpu)
 			continue;
 
-		__ipi_send_single(get_ipi_desc(cpu, IPI_KGDB_ROUNDUP), cpu);
+		ipi = mkipi_inband(IPI_KGDB_ROUNDUP, cpumask_of(cpu));
+		__ipi_send_single(get_ipi_desc(cpu, ipi.sgi), cpu);
 	}
 }
 #endif
