@@ -1199,12 +1199,6 @@ static inline struct ipi_index mkipi_inband(unsigned int ipi,
 	return (struct ipi_index){ .sgi = ipi };
 }
 
-static inline struct ipi_index mkipi_oob(unsigned int ipi)
-{
-	WARN_ON_ONCE(1);
-	return (struct ipi_index){ .sgi = ipi };
-}
-
 static inline void ipi_setup_oob_sgi(void)
 { }
 
