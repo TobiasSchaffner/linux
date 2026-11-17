@@ -284,8 +284,9 @@ local_restart:
 	cmp	scno, #__NR_prctl
 	bne	slow_path
 	ldr	r0, [sp, #S_OLD_R0]
-	tst	r0, #__OOB_SYSCALL_BIT
-	beq	slow_path
+	ldr	r1, =#PR_OOB_SYSCALL
+	cmp	r0, r1
+	bne	slow_path
 fastcall_try:
 	tst	r10, #_TLF_OOB
 	beq	slow_path
@@ -316,8 +317,9 @@ slow_path:
 	cmp	scno, #__NR_prctl
 	bne	root_syscall
 	ldr	r0, [sp, #S_OLD_R0]
-	tst	r0, #__OOB_SYSCALL_BIT
-	beq	root_syscall
+	ldr	r1, =#PR_OOB_SYSCALL
+	cmp	r0, r1
+	bne	root_syscall
 pipeline_syscall:
 	mov	r0, sp				@ regs
 	bl	__pipeline_syscall
