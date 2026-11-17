@@ -350,6 +350,7 @@ static irqreturn_t exynos4_mct_comp_isr(int irq, void *dev_id)
 static int exynos4_clockevent_init(void)
 {
 	mct_comp_device.cpumask = cpumask_of(0);
+	mct_comp_device.irq = mct_irqs[MCT_G0_IRQ];
 	clockevents_config_and_register(&mct_comp_device, clk_rate,
 					0xf, 0xffffffff);
 	if (request_irq(mct_irqs[MCT_G0_IRQ], exynos4_mct_comp_isr,
@@ -487,6 +488,7 @@ static int exynos4_mct_starting_cpu(unsigned int cpu)
 		irq_force_affinity(evt->irq, cpumask_of(cpu));
 		enable_irq(evt->irq);
 	} else {
+		evt->irq = mct_irqs[MCT_L0_IRQ];
 		enable_percpu_irq(mct_irqs[MCT_L0_IRQ], 0);
 	}
 	clockevents_config_and_register(evt, clk_rate / (TICK_BASE_CNT + 1),
