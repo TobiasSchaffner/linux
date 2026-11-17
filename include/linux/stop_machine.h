@@ -165,12 +165,12 @@ int stop_machine_from_inactive_cpu(cpu_stop_fn_t fn, void *data,
 static __always_inline int stop_machine_cpuslocked(cpu_stop_fn_t fn, void *data,
 					  const struct cpumask *cpus)
 {
-	unsigned long flags;
+	unsigned long flags, hflags;
 	int ret;
 	local_irq_save(flags);
-	hard_irq_disable();
+	hflags = hard_cond_local_irq_save();
 	ret = fn(data);
-	hard_irq_enable();
+	hard_cond_local_irq_restore(hflags);
 	local_irq_restore(flags);
 	return ret;
 }

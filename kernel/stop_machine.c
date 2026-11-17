@@ -601,15 +601,15 @@ int stop_machine_cpuslocked(cpu_stop_fn_t fn, void *data,
 		 * early in boot before stop_machine() has been
 		 * initialized.
 		 */
-		unsigned long flags;
+		unsigned long flags, hflags;
 		int ret;
 
 		WARN_ON_ONCE(msdata.num_threads != 1);
 
 		local_irq_save(flags);
-		hard_irq_disable();
+		hflags = hard_cond_local_irq_save();
 		ret = (*fn)(data);
-		hard_irq_enable();
+		hard_cond_local_irq_restore(hflags);
 		local_irq_restore(flags);
 
 		return ret;
