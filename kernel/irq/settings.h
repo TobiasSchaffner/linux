@@ -218,11 +218,6 @@ static inline bool irq_settings_is_tick(struct irq_desc *desc)
 	return desc->status_use_accessors & _IRQ_TICK;
 }
 
-static inline void irq_settings_clr_tick(struct irq_desc *desc)
-{
-	desc->status_use_accessors &= ~_IRQ_TICK;
-}
-
 static inline void irq_settings_set_tick(struct irq_desc *desc)
 {
 	desc->status_use_accessors |= _IRQ_TICK;

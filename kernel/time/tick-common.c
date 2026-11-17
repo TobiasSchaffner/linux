@@ -245,8 +245,13 @@ static void tick_setup_device(struct tick_device *td,
 	if (!cpumask_equal(newdev->cpumask, cpumask))
 		irq_set_affinity(newdev->irq, cpumask);
 
+	/*
+	 * This mark is never cleared: tick devices may be shut down and
+	 * restarted without passing here again (suspend, periodic broadcast),
+	 * and per-CPU devices share a single interrupt descriptor.
+	 */
 	if (newdev->features & CLOCK_EVT_FEAT_PIPELINE)
-		irq_switch_tick(newdev->irq, true);
+		irq_mark_tick(newdev->irq);
 
 	/*
 	 * When global broadcasting is active, check if the current
