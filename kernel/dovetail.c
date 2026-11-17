@@ -23,6 +23,8 @@ void inband_task_init(struct task_struct *p)
 	struct thread_info *ti = task_thread_info(p);
 
 	clear_ti_local_flags(ti, _TLF_DOVETAIL|_TLF_OOB|_TLF_OFFSTAGE);
+	clear_ti_thread_flag(ti, TIF_RETUSER);
+	clear_ti_thread_flag(ti, TIF_MAYDAY);
 	arch_inband_task_init(p);
 }
 
