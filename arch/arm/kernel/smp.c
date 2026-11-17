@@ -779,6 +779,22 @@ void irq_send_oob_ipi(unsigned int irq,
 }
 EXPORT_SYMBOL_GPL(irq_send_oob_ipi);
 
+static irqreturn_t backtrace_ipi_handler(int irq, void *data)
+{
+	nmi_cpu_backtrace(get_irq_regs());
+	return IRQ_HANDLED;
+}
+
+static void setup_backtrace_ipi(int ipi_base)
+{
+	int err;
+
+	err = request_percpu_irq_affinity_flags(ipi_base + IPI_CPU_BACKTRACE,
+					backtrace_ipi_handler, IRQF_OOB,
+					"IPI_BACKTRACE", NULL, &irq_stat);
+	WARN_ON(err);
+}
+
 #else
 
 static irqreturn_t ipi_handler(int irq, void *data)
@@ -796,6 +812,9 @@ static unsigned int get_ipi_count(struct irq_desc *desc, unsigned int cpu)
 {
 	return irq_desc_kstat_cpu(desc, cpu);
 }
+
+static inline void setup_backtrace_ipi(int ipi_base)
+{ }
 
 #endif /* CONFIG_IRQ_PIPELINE */
 
@@ -836,6 +855,7 @@ void __init set_smp_ipi_range(int ipi_base, int n)
 	}
 
 	ipi_irq_base = ipi_base;
+	setup_backtrace_ipi(ipi_base);
 
 	/* Setup the boot CPU immediately */
 	ipi_setup(smp_processor_id());
