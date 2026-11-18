@@ -959,7 +959,7 @@ static void arm64_send_ipi(const cpumask_t *mask, struct ipi_index ipi)
 
 static void arm64_backtrace_ipi(cpumask_t *mask)
 {
-	arm64_send_ipi(mask, mkipi_inband(IPI_CPU_BACKTRACE, mask));
+	arm64_send_ipi(mask, (struct ipi_index){ .sgi = IPI_CPU_BACKTRACE });
 }
 
 void arch_trigger_cpumask_backtrace(const cpumask_t *mask, int exclude_cpu)
@@ -1157,6 +1157,39 @@ void irq_send_oob_ipi(unsigned int irq, const struct cpumask *target)
 }
 EXPORT_SYMBOL_GPL(irq_send_oob_ipi);
 
+static irqreturn_t backtrace_ipi_handler(int irq, void *data)
+{
+	nmi_cpu_backtrace(get_irq_regs());
+	return IRQ_HANDLED;
+}
+
+static void setup_backtrace_ipi(int ncpus)
+{
+	int err, irq, cpu;
+
+	if (!percpu_ipi_descs) {
+		irq = ipi_irq_base + IPI_CPU_BACKTRACE;
+		err = request_percpu_irq_affinity_flags(irq, backtrace_ipi_handler,
+						IRQF_OOB, "IPI_BACKTRACE", NULL, &irq_stat);
+		WARN(err, "Could not request IRQ %d as IRQ, err=%d\n", irq, err);
+		for_each_possible_cpu(cpu)
+			get_ipi_desc(cpu, IPI_CPU_BACKTRACE) = irq_to_desc(irq);
+		irq_set_status_flags(irq, IRQ_HIDDEN);
+		return;
+	}
+
+	for (cpu = 0; cpu < ncpus; cpu++) {
+		irq = ipi_irq_base + (cpu * nr_ipi) + IPI_CPU_BACKTRACE;
+		err = irq_force_affinity(irq, cpumask_of(cpu));
+		WARN(err, "Could not force affinity IRQ %d, err=%d\n", irq, err);
+		err = request_irq(irq, backtrace_ipi_handler,
+				IRQF_NO_AUTOEN | IRQF_OOB, "IPI_BACKTRACE", NULL);
+		WARN(err, "Could not request IRQ %d, err=%d\n", irq, err);
+		irq_set_status_flags(irq, (IRQ_HIDDEN | IRQ_NO_BALANCING_MASK));
+		get_ipi_desc(cpu, IPI_CPU_BACKTRACE) = irq_to_desc(irq);
+	}
+}
+
 #else
 
 static inline struct ipi_index mkipi_inband(unsigned int ipi,
@@ -1191,6 +1224,9 @@ static unsigned int get_ipi_count(int ipi, unsigned int cpu)
   	struct irq_desc *desc = get_ipi_desc(cpu, ipi);
 	return irq_desc_kstat_cpu(desc, cpu);
 }
+
+static inline void setup_backtrace_ipi(int ncpus)
+{ }
 
 #endif /* CONFIG_IRQ_PIPELINE */
 
@@ -1338,6 +1374,8 @@ void __init set_smp_ipi_range_percpu(int ipi_base, int n, int ncpus)
 		ipi_setup_oob_sgi();
 	else
 		ipi_setup_oob_lpi(ncpus);
+
+	setup_backtrace_ipi(ncpus);
 
 	/* Setup the boot CPU immediately */
 	ipi_setup(smp_processor_id());
