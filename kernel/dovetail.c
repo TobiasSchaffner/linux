@@ -329,7 +329,7 @@ void __weak handle_oob_trap_entry(unsigned int trapnr, struct pt_regs *regs)
 }
 
 noinstr void __oob_trap_notify(unsigned int exception,
-			       struct pt_regs *regs)
+			       struct pt_regs *regs, unsigned long frame)
 {
 	unsigned long flags;
 
@@ -343,7 +343,7 @@ noinstr void __oob_trap_notify(unsigned int exception,
 		current->oob_trap_regs = regs;
 		flags = hard_local_irq_save();
 		instrumentation_begin();
-		trace_dovetail_trap_notify_tp(exception, regs);
+		trace_dovetail_trap_notify_tp(exception, regs, frame);
 		handle_oob_trap_entry(exception, regs);
 		instrumentation_end();
 		hard_local_irq_restore(flags);
@@ -354,7 +354,8 @@ void __weak handle_oob_trap_exit(unsigned int trapnr, struct pt_regs *regs)
 {
 }
 
-noinstr void __oob_trap_unwind(unsigned int exception, struct pt_regs *regs)
+noinstr void __oob_trap_unwind(unsigned int exception, struct pt_regs *regs,
+			       unsigned long frame)
 {
 	/*
 	 * The trap_exit handler runs only if trap_entry was called
@@ -365,7 +366,7 @@ noinstr void __oob_trap_unwind(unsigned int exception, struct pt_regs *regs)
 	hard_local_irq_disable();
 	current->oob_trap_regs = NULL;
 	instrumentation_begin();
-	trace_dovetail_trap_unwind_tp(exception, regs);
+	trace_dovetail_trap_unwind_tp(exception, regs, frame);
 	handle_oob_trap_exit(exception, regs);
 	trace_dovetail_trap_exit_tp(exception, regs);
 	instrumentation_end();

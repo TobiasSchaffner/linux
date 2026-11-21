@@ -26,13 +26,14 @@ DECLARE_TRACE(dovetail_trap_entry,
 	TP_PROTO(unsigned int trapnr, struct pt_regs *regs),
 	TP_ARGS(trapnr, regs));
 
+/* frame: frame address of the arch code issuing the notify/unwind. */
 DECLARE_TRACE(dovetail_trap_notify,
-	TP_PROTO(unsigned int trapnr, struct pt_regs *regs),
-	TP_ARGS(trapnr, regs));
+	TP_PROTO(unsigned int trapnr, struct pt_regs *regs, unsigned long frame),
+	TP_ARGS(trapnr, regs, frame));
 
 DECLARE_TRACE(dovetail_trap_unwind,
-	TP_PROTO(unsigned int trapnr, struct pt_regs *regs),
-	TP_ARGS(trapnr, regs));
+	TP_PROTO(unsigned int trapnr, struct pt_regs *regs, unsigned long frame),
+	TP_ARGS(trapnr, regs, frame));
 
 DECLARE_TRACE(dovetail_trap_exit,
 	TP_PROTO(unsigned int trapnr, struct pt_regs *regs),

@@ -100,7 +100,7 @@ static __always_inline void dovetail_irqoff_exit(struct pt_regs *regs)
 }
 
 void __oob_trap_notify(unsigned int exception,
-		       struct pt_regs *regs);
+		       struct pt_regs *regs, unsigned long frame);
 
 /*
  * Trap notifications do not nest: a trap handler running on behalf
@@ -108,23 +108,27 @@ void __oob_trap_notify(unsigned int exception,
  * from an emulation handler), landing into another annotated trap
  * handler. Only the outermost trap occurrence notifies the companion
  * core, which is told about the exit when that same occurrence
- * unwinds.
+ * unwinds. The frame address of the arch code calling us (we are
+ * inlined into it) tells tracers which handler level notified a trap
+ * and which unwound it.
  */
 static __always_inline void oob_trap_notify(unsigned int exception,
 					struct pt_regs *regs)
 {
 	if (running_oob() && !current->oob_trap_regs)
-		__oob_trap_notify(exception, regs);
+		__oob_trap_notify(exception, regs,
+				  (unsigned long)__builtin_frame_address(0));
 }
 
 void __oob_trap_unwind(unsigned int exception,
-		struct pt_regs *regs);
+		struct pt_regs *regs, unsigned long frame);
 
 static __always_inline void oob_trap_unwind(unsigned int exception,
 					struct pt_regs *regs)
 {
 	if (current->oob_trap_regs == regs)
-		__oob_trap_unwind(exception, regs);
+		__oob_trap_unwind(exception, regs,
+				  (unsigned long)__builtin_frame_address(0));
 }
 
 void inband_event_notify(enum inband_event_type,
