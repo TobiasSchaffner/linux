@@ -10,6 +10,9 @@
  *  - the core demotes the task at most once per trap, and promotes it
  *    again only after the unwind;
  *  - the core's trap exit handler returns with hard irqs off;
+ *  - EVL: a kernel mode trap ends on the stage it was notified from, so
+ *    if EVL demoted the task for it, EVL promoted it again;
+ *  - EVL: the task is demoted for every user mode trap;
  *  - a trap ends within timeout_ms (0: unbounded);
  *  - a task does not return to user mode with a notification open;
  *  - no interrupt is taken in NMI context (hard irqs on there);
@@ -95,6 +98,12 @@ static u64 ha_get_env(struct ha_monitor *ha_mon, enum envs_oob_trap env, u64 tim
 		return !in_nmi() && !on_pipeline_entry();
 	if (env == not_nmi_oob_trap)
 		return !in_nmi();
+	/* EVL policy, not Dovetail's: other cores may end kernel traps in-band. */
+	if (env == same_stage_oob_trap)
+		return IS_ENABLED(CONFIG_EVL);
+	/* EVL policy: a user mode trap is handled in-band. */
+	if (env == demotes_user_oob_trap)
+		return IS_ENABLED(CONFIG_EVL);
 	if (env == right_trap_oob_trap)
 		return __this_cpu_read(oob_trap_expected) == __this_cpu_read(oob_trap_nr);
 	if (env == irqs_kept_oob_trap)
@@ -138,7 +147,14 @@ static inline bool ha_verify_guards(struct ha_monitor *ha_mon,
 		return ha_monitor_env_invalid(ha_mon, same_trap_oob_trap) ||
 		       ha_get_env(ha_mon, same_trap_oob_trap, time_ns) == 1ull;
 	case trap_exit_kernel_oob_trap:
+		if (curr_state == unwinding_demoted_oob_trap &&
+		    ha_get_env(ha_mon, same_stage_oob_trap, time_ns) == 1ull)
+			return false;
+		return ha_get_env(ha_mon, irqs_off_oob_trap, time_ns) == 1ull;
 	case trap_exit_user_oob_trap:
+		if (curr_state == unwinding_oob_trap &&
+		    ha_get_env(ha_mon, demotes_user_oob_trap, time_ns) == 1ull)
+			return false;
 		return ha_get_env(ha_mon, irqs_off_oob_trap, time_ns) == 1ull;
 	case leave_oob_oob_trap:
 		return ha_get_env(ha_mon, task_ctx_oob_trap, time_ns) == 1ull;

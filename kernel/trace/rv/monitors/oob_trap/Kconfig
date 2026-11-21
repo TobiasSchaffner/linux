@@ -14,7 +14,9 @@ config RV_MON_OOB_TRAP
 	  kernel mode exception over a context with hard irqs off keeps them
 	  off, no task is demoted from interrupt or NMI context, no task
 	  schedules out while a kprobe is being handled, and every trap ends
-	  within timeout_ms.
+	  within timeout_ms. With EVL, a kernel mode trap must also end on
+	  the stage it was notified from, and the task must be demoted for
+	  every user mode trap.
 
 	  For further information, see:
 	    Documentation/trace/rv/monitor_dovetail.rst

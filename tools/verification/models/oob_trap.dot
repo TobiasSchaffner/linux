@@ -23,8 +23,8 @@ digraph state_automaton {
 	"trapped" -> "unwinding" [ label = "trap_unwind;same_trap == 1" ];
 	"demoted" -> "unwinding_demoted" [ label = "trap_unwind;same_trap == 1" ];
 	"unwinding_demoted" -> "unwinding" [ label = "leave_inband" ];
-	"unwinding" -> "idle" [ label = "trap_exit_kernel;irqs_off == 1\ntrap_exit_user;irqs_off == 1" ];
-	"unwinding_demoted" -> "idle" [ label = "trap_exit_kernel;irqs_off == 1\ntrap_exit_user;irqs_off == 1" ];
+	"unwinding" -> "idle" [ label = "trap_exit_kernel;irqs_off == 1\ntrap_exit_user;irqs_off == 1 && demotes_user == 0" ];
+	"unwinding_demoted" -> "idle" [ label = "trap_exit_kernel;irqs_off == 1 && same_stage == 0\ntrap_exit_user;irqs_off == 1" ];
 	"idle" -> "idle" [ label = "leave_inband\noob_return" ];
 	"idle" -> "idle" [ label = "leave_oob;task_ctx == 1" ];
 	"idle" -> "idle" [ label = "sched_switch;no_kprobe == 1 && irqs_kept == 1" ];
