@@ -101,9 +101,9 @@ static u64 ha_get_env(struct ha_monitor *ha_mon, enum envs_oob_trap env, u64 tim
 	/* EVL policy, not Dovetail's: other cores may end kernel traps in-band. */
 	if (env == same_stage_oob_trap)
 		return IS_ENABLED(CONFIG_EVL);
-	/* EVL policy: a user mode trap is handled in-band. */
+	/* EVL and Cobalt policy: a user mode trap is handled in-band. */
 	if (env == demotes_user_oob_trap)
-		return IS_ENABLED(CONFIG_EVL);
+		return IS_ENABLED(CONFIG_EVL) || IS_ENABLED(CONFIG_XENOMAI);
 	if (env == right_trap_oob_trap)
 		return __this_cpu_read(oob_trap_expected) == __this_cpu_read(oob_trap_nr);
 	if (env == irqs_kept_oob_trap)
