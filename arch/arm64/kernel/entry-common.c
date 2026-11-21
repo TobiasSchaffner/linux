@@ -6,6 +6,7 @@
  */
 
 #include <linux/context_tracking.h>
+#include <linux/dovetail.h>
 #include <linux/irq-entry-common.h>
 #include <linux/kasan.h>
 #include <linux/linkage.h>
@@ -624,9 +625,78 @@ static void noinstr el1_fpac(struct pt_regs *regs, unsigned long esr)
 	arm64_exit_to_kernel_mode(regs, state);
 }
 
+#ifdef CONFIG_DOVETAIL
+/*
+ * The trap number the handlers of a synchronous exception notify, -1
+ * for the classes they may handle over the oob stage without telling
+ * (syscalls, system register emulation, external aborts, kernel mode
+ * undefined instructions...). Kernel mode aborts count on user
+ * addresses only, the exception table fixes up the others in place.
+ */
+static __always_inline int dovetail_sync_trapnr(unsigned long esr, bool user)
+{
+	switch (ESR_ELx_EC(esr)) {
+	case ESR_ELx_EC_DABT_LOW:
+	case ESR_ELx_EC_IABT_LOW:
+	case ESR_ELx_EC_DABT_CUR:
+	case ESR_ELx_EC_IABT_CUR:
+		if (!user && !is_ttbr0_addr(read_sysreg(far_el1)))
+			return -1;
+		if (esr_fsc_is_translation_fault(esr) ||
+		    esr_fsc_is_permission_fault(esr) ||
+		    esr_fsc_is_access_flag_fault(esr) ||
+		    (esr & ESR_ELx_FSC) == 0x21)	/* alignment fault */
+			return ARM64_TRAP_ACCESS;
+		return -1;
+	case ESR_ELx_EC_SP_ALIGN:
+	case ESR_ELx_EC_PC_ALIGN:
+		return ARM64_TRAP_ALIGN;
+	case ESR_ELx_EC_UNKNOWN:
+		return user ? ARM64_TRAP_UNDI : -1;
+	case ESR_ELx_EC_BTI:
+		return user ? ARM64_TRAP_BTI : -1;
+	case ESR_ELx_EC_FP_EXC64:
+	case ESR_ELx_EC_FP_EXC32:
+		return ARM64_TRAP_FPE;
+	case ESR_ELx_EC_SVE:
+		return ARM64_TRAP_SVE;
+	case ESR_ELx_EC_SME:
+		return ARM64_TRAP_SME;
+	case ESR_ELx_EC_BREAKPT_LOW:
+	case ESR_ELx_EC_BREAKPT_CUR:
+	case ESR_ELx_EC_SOFTSTP_LOW:
+	case ESR_ELx_EC_SOFTSTP_CUR:
+	case ESR_ELx_EC_WATCHPT_LOW:
+	case ESR_ELx_EC_WATCHPT_CUR:
+	case ESR_ELx_EC_BRK64:
+	case ESR_ELx_EC_BKPT32:
+		return ARM64_TRAP_DEBUG;
+	default:
+		return -1;
+	}
+}
+
+static __always_inline void dovetail_sync_entry(struct pt_regs *regs,
+						unsigned long esr, bool user)
+{
+	int trapnr;
+
+	if (!tracepoint_enabled(dovetail_trap_entry_tp) || !running_oob())
+		return;
+
+	trapnr = dovetail_sync_trapnr(esr, user);
+	if (trapnr >= 0)
+		__dovetail_trap_entry(trapnr, regs);
+}
+#else
+#define dovetail_sync_entry(__regs, __esr, __user)	do { } while (0)
+#endif
+
 asmlinkage void noinstr el1h_64_sync_handler(struct pt_regs *regs)
 {
 	unsigned long esr = read_sysreg(esr_el1);
+
+	dovetail_sync_entry(regs, esr, false);
 
 	switch (ESR_ELx_EC(esr)) {
 	case ESR_ELx_EC_DABT_CUR:
@@ -944,6 +1014,8 @@ asmlinkage void noinstr el0t_64_sync_handler(struct pt_regs *regs)
 {
 	unsigned long esr = read_sysreg(esr_el1);
 
+	dovetail_sync_entry(regs, esr, true);
+
 	switch (ESR_ELx_EC(esr)) {
 	case ESR_ELx_EC_SVC64:
 		el0_svc(regs);
@@ -1097,6 +1169,8 @@ static void noinstr el0_bkpt32(struct pt_regs *regs, unsigned long esr)
 asmlinkage void noinstr el0t_32_sync_handler(struct pt_regs *regs)
 {
 	unsigned long esr = read_sysreg(esr_el1);
+
+	dovetail_sync_entry(regs, esr, true);
 
 	switch (ESR_ELx_EC(esr)) {
 	case ESR_ELx_EC_SVC32:

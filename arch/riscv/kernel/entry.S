@@ -226,6 +226,14 @@ SYM_CODE_START(handle_exception)
 	call do_irq
 	j ret_from_exception
 1:
+#ifdef CONFIG_DOVETAIL
+	/* Report exceptions but syscalls to tracers, a0 is still pt_regs. */
+	li t0, EXC_SYSCALL
+	beq s4, t0, 4f
+	call do_dovetail_trap_entry
+	move a0, sp
+4:
+#endif
 	/* Handle other exceptions */
 	slli t0, s4, RISCV_LGPTR
 	la t1, excp_vect_table

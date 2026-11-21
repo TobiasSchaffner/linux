@@ -1608,6 +1608,10 @@ DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 	 */
 	state = irqentry_enter(regs);
 
+	/* Faults on user addresses must be notified, in either mode. */
+	if (!fault_in_kernel_space(address))
+		dovetail_trap_entry(X86_TRAP_PF, regs);
+
 	instrumentation_begin();
 	handle_page_fault(regs, error_code, address, state);
 	instrumentation_end();
