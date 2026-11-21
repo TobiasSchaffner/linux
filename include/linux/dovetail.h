@@ -60,6 +60,45 @@ void inband_task_init(struct task_struct *p);
 
 int pipeline_syscall(unsigned int nr, struct pt_regs *regs);
 
+DECLARE_TRACEPOINT(dovetail_trap_entry_tp);
+void __dovetail_trap_entry(unsigned int exception, struct pt_regs *regs);
+
+/*
+ * The arch code reports an exception taken over the oob stage, which it
+ * must notify as @exception, from the point where it tells exceptions
+ * apart, before handling it. Tracers check that the notification
+ * follows; nothing else depends on it.
+ */
+static __always_inline void dovetail_trap_entry(unsigned int exception,
+					struct pt_regs *regs)
+{
+	if (tracepoint_enabled(dovetail_trap_entry_tp) && running_oob())
+		__dovetail_trap_entry(exception, regs);
+}
+
+DECLARE_TRACEPOINT(dovetail_irqoff_entry_tp);
+DECLARE_TRACEPOINT(dovetail_irqoff_exit_tp);
+void __dovetail_irqoff_entry(struct pt_regs *regs);
+void __dovetail_irqoff_exit(struct pt_regs *regs);
+
+/*
+ * The generic entry code reports kernel mode entries over a context
+ * running with hard irqs off (regs_irqs_disabled(), the hard irq state
+ * of @regs), and every kernel mode exit: tracers match an exit with its
+ * entry by @regs, the handler may have changed the saved irq state.
+ */
+static __always_inline void dovetail_irqoff_entry(struct pt_regs *regs)
+{
+	if (tracepoint_enabled(dovetail_irqoff_entry_tp))
+		__dovetail_irqoff_entry(regs);
+}
+
+static __always_inline void dovetail_irqoff_exit(struct pt_regs *regs)
+{
+	if (tracepoint_enabled(dovetail_irqoff_exit_tp))
+		__dovetail_irqoff_exit(regs);
+}
+
 void __oob_trap_notify(unsigned int exception,
 		       struct pt_regs *regs);
 
@@ -304,6 +343,9 @@ static inline void arch_dovetail_exec_prepare(void)
  * Keep the trap helpers as macros, we might not be able to resolve
  * trap numbers if CONFIG_DOVETAIL is off.
  */
+#define dovetail_trap_entry(__exception, __regs)	do { } while (0)
+#define dovetail_irqoff_entry(__regs)	do { } while (0)
+#define dovetail_irqoff_exit(__regs)	do { } while (0)
 #define oob_trap_notify(__exception, __regs)	do { } while (0)
 #define oob_trap_unwind(__exception, __regs)	do { } while (0)
 

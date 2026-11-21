@@ -18,6 +18,7 @@
 #include <linux/inband_work.h>
 #include <dovetail/irq.h>
 #include <trace/events/irq.h>
+#include <trace/events/dovetail.h>
 #include "internals.h"
 
 #ifdef CONFIG_DEBUG_IRQ_PIPELINE
@@ -1148,6 +1149,12 @@ int generic_pipeline_irq_desc(struct irq_desc *desc)
 struct irq_stage_data *handle_irq_pipelined_prepare(struct pt_regs *regs)
 {
 	struct irq_stage_data *prevd;
+
+#ifdef CONFIG_DOVETAIL
+	/* The oob fast path may run where RCU is not watching. */
+	if (trace_dovetail_irq_entry_tp_enabled() && rcu_is_watching())
+		trace_dovetail_irq_entry_tp(regs);
+#endif
 
 	/*
 	 * Running with the oob stage stalled implies hardirqs off.

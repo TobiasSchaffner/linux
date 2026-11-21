@@ -30,6 +30,31 @@ void __trace_dovetail_signal_notify(struct task_struct *p)
 	trace_dovetail_signal_notify_tp(p);
 }
 
+/* Traced like oob trap notifications, from the same contexts. */
+noinstr void __dovetail_trap_entry(unsigned int exception, struct pt_regs *regs)
+{
+	instrumentation_begin();
+	trace_dovetail_trap_entry_tp(exception, regs);
+	instrumentation_end();
+}
+
+/* From the generic entry code, after/before establishing RCU. */
+noinstr void __dovetail_irqoff_entry(struct pt_regs *regs)
+{
+	instrumentation_begin();
+	if (rcu_is_watching())
+		trace_dovetail_irqoff_entry_tp(regs);
+	instrumentation_end();
+}
+
+noinstr void __dovetail_irqoff_exit(struct pt_regs *regs)
+{
+	instrumentation_begin();
+	if (rcu_is_watching())
+		trace_dovetail_irqoff_exit_tp(regs);
+	instrumentation_end();
+}
+
 static bool dovetail_enabled;
 
 void __weak arch_inband_task_init(struct task_struct *p)
@@ -342,6 +367,7 @@ noinstr void __oob_trap_unwind(unsigned int exception, struct pt_regs *regs)
 	instrumentation_begin();
 	trace_dovetail_trap_unwind_tp(exception, regs);
 	handle_oob_trap_exit(exception, regs);
+	trace_dovetail_trap_exit_tp(exception, regs);
 	instrumentation_end();
 }
 

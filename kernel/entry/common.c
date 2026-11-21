@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 
+#include <linux/dovetail.h>
 #include <linux/futex.h>
 #include <linux/highmem.h>
 #include <linux/irq-entry-common.h>
@@ -113,6 +114,17 @@ __always_inline unsigned long exit_to_user_mode_loop(struct pt_regs *regs,
 	}
 }
 
+/* Dovetail: tracers check that nothing preempts a hard irqs off context. */
+static __always_inline irqentry_state_t irqentry_enter_kernel(struct pt_regs *regs)
+{
+	irqentry_state_t ret = irqentry_enter_from_kernel_mode(regs);
+
+	if (regs_irqs_disabled(regs))
+		dovetail_irqoff_entry(regs);
+
+	return ret;
+}
+
 noinstr irqentry_state_t irqentry_enter(struct pt_regs *regs)
 {
 	if (user_mode(regs)) {
@@ -134,7 +146,7 @@ noinstr irqentry_state_t irqentry_enter(struct pt_regs *regs)
 		return ret;
 	}
 
-	return irqentry_enter_from_kernel_mode(regs);
+	return irqentry_enter_kernel(regs);
 }
 
 /**
@@ -178,6 +190,10 @@ void dynamic_irqentry_exit_cond_resched(void)
 
 noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 {
+	/* The handler may have changed the saved irq state (kprobes do). */
+	if (!user_mode(regs))
+		dovetail_irqoff_exit(regs);
+
 	if (running_oob())
 		return;
 
@@ -204,11 +220,16 @@ irqentry_state_t noinstr irqentry_nmi_enter(struct pt_regs *regs)
 	ftrace_nmi_enter();
 	instrumentation_end();
 
+	if (regs_irqs_disabled(regs))
+		dovetail_irqoff_entry(regs);
+
 	return irq_state;
 }
 
 void noinstr irqentry_nmi_exit(struct pt_regs *regs, irqentry_state_t irq_state)
 {
+	dovetail_irqoff_exit(regs);
+
 	instrumentation_begin();
 	ftrace_nmi_exit();
 	if (irq_state.lockdep) {

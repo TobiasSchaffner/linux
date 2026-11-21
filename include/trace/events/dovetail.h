@@ -18,6 +18,14 @@ DECLARE_TRACE(dovetail_leave_oob,
 	TP_PROTO(struct task_struct *p),
 	TP_ARGS(p));
 
+/*
+ * The arch code took an exception over the oob stage which it must
+ * notify as @trapnr, before doing so.
+ */
+DECLARE_TRACE(dovetail_trap_entry,
+	TP_PROTO(unsigned int trapnr, struct pt_regs *regs),
+	TP_ARGS(trapnr, regs));
+
 DECLARE_TRACE(dovetail_trap_notify,
 	TP_PROTO(unsigned int trapnr, struct pt_regs *regs),
 	TP_ARGS(trapnr, regs));
@@ -25,6 +33,27 @@ DECLARE_TRACE(dovetail_trap_notify,
 DECLARE_TRACE(dovetail_trap_unwind,
 	TP_PROTO(unsigned int trapnr, struct pt_regs *regs),
 	TP_ARGS(trapnr, regs));
+
+DECLARE_TRACE(dovetail_trap_exit,
+	TP_PROTO(unsigned int trapnr, struct pt_regs *regs),
+	TP_ARGS(trapnr, regs));
+
+/*
+ * A kernel mode entry over a context running with hard irqs off, an
+ * exception or an NMI, and its exit. Nothing may preempt the interrupted
+ * context in between.
+ */
+DECLARE_TRACE(dovetail_irqoff_entry,
+	TP_PROTO(struct pt_regs *regs),
+	TP_ARGS(regs));
+
+DECLARE_TRACE(dovetail_irqoff_exit,
+	TP_PROTO(struct pt_regs *regs),
+	TP_ARGS(regs));
+
+DECLARE_TRACE(dovetail_irq_entry,
+	TP_PROTO(struct pt_regs *regs),
+	TP_ARGS(regs));
 
 DECLARE_TRACE(dovetail_oob_return,
 	TP_PROTO(struct task_struct *p),
