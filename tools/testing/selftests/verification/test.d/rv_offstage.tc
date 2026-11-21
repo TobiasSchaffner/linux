@@ -1,0 +1,34 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# description: Test that Linux does in-band work for a task only while it is in-band
+# requires: offstage:monitor printk:reactor evl:program
+
+reactions() {
+	dmesg | grep -c "monitor offstage does not allow" || true
+}
+
+echo printk > monitors/dovetail/offstage/reactors
+echo > ../trace
+echo 1 > ../events/rv/event_offstage/enable
+before=$(reactions)
+echo 1 > monitors/dovetail/offstage/enable
+
+# libevl's fault test makes an out-of-band thread fault, so that it is
+# demoted and sent a signal, then go back out-of-band.
+if command -v fault > /dev/null; then fault; else evl test fault; fi \
+	> /tmp/rv_offstage.out 2>&1 || true
+if grep -q "ABI mismatch" /tmp/rv_offstage.out; then
+	echo 0 > monitors/dovetail/offstage/enable
+	echo 0 > ../events/rv/event_offstage/enable
+	exit_unsupported
+fi
+
+echo 0 > monitors/dovetail/offstage/enable
+echo 0 > ../events/rv/event_offstage/enable
+echo nop > monitors/dovetail/offstage/reactors
+
+# Both stage changes and the signal were seen, and the monitor accepted them.
+grep -q "inband x leave_inband -> oob" ../trace
+grep -q "oob x leave_oob -> inband" ../trace
+grep -q "inband x signal_self -> inband" ../trace
+[ "$(reactions)" -eq "$before" ]

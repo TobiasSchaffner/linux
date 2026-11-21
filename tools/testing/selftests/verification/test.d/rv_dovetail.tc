@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# description: Test that the dovetail container enables all its monitors
+# requires: dovetail:monitor
+
+echo 1 > monitors/dovetail/enable
+for m in offstage oob_trap oob_signal; do
+	! grep -qw "$m" available_monitors || grep -qx "dovetail:$m" enabled_monitors
+done
+echo 0 > monitors/dovetail/enable
+! grep -q "^dovetail" enabled_monitors

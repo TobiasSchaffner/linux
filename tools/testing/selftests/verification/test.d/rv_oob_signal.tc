@@ -1,0 +1,34 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# description: Test that a signal moves an out-of-band task in-band
+# requires: oob_signal:monitor printk:reactor evl:program
+
+reactions() {
+	dmesg | grep -c "monitor oob_signal does not allow" || true
+}
+
+echo printk > monitors/dovetail/oob_signal/reactors
+echo > ../trace
+echo 1 > ../events/rv/event_oob_signal/enable
+before=$(reactions)
+echo 1 > monitors/dovetail/oob_signal/enable
+
+# libevl's thread-suspend test sends SIGHUP to a thread blocked out-of-band,
+# which must be kicked in-band to handle it.
+if command -v thread-suspend > /dev/null; then thread-suspend; else evl test thread-suspend; fi \
+	> /tmp/rv_oob_signal.out 2>&1 || true
+if grep -q "ABI mismatch" /tmp/rv_oob_signal.out; then
+	echo 0 > monitors/dovetail/oob_signal/enable
+	echo 0 > ../events/rv/event_oob_signal/enable
+	exit_unsupported
+fi
+
+echo 0 > monitors/dovetail/oob_signal/enable
+echo 0 > ../events/rv/event_oob_signal/enable
+echo nop > monitors/dovetail/oob_signal/reactors
+
+# The signal was seen and the task left; a kicked thread on the sender's CPU
+# may leave before the notification returns.
+grep -q " x signal -> " ../trace
+grep -q " x leave_oob -> inband" ../trace
+[ "$(reactions)" -eq "$before" ]
